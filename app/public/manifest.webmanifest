@@ -1,0 +1,15 @@
+{
+  "name": "tovo",
+  "short_name": "tovo",
+  "description": "Time tracking for tasks and projects.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#efe9e2",
+  "theme_color": "#efe9e2",
+  "lang": "en",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+  ]
+}

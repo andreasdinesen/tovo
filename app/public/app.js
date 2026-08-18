@@ -1,0 +1,2804 @@
+/* ---- shared/beregn.js ---- */
+/* tovo - alle udregninger. Ét sted, to koeresteder.
+ *
+ * Denne fil koeres BEGGE steder: serveren require'r den, og build_rune.py
+ * praeplacerer den i app.js. Webappen og MCP skal give SAMME tal - ellers er
+ * der to sandheder, og det er den fejl, hele modulet findes for at forhindre
+ * (Beanledger v28).
+ *
+ * Modulet kender hverken databasen eller frontendens state. Soemmen er de
+ * data, kaldsstedet leverer ind - intet andet.
+ *
+ * **Skriv aldrig en beregning i app/parts/ - heller ikke en lille.**
+ *
+ * Soemmen mod omverdenen er `opret({items, entries, settings})`. Modulet
+ * kender hverken databasen eller frontendens state - kun de tre funktioner,
+ * kaldsstedet giver det.
+ *
+ * NB: planen skrev soemmen som `items(kind)` og `settings()`. Tidsposter fik
+ * senere i samme plan deres EGEN tabel (de forespoerges paa tidsinterval og
+ * summeres), saa `entries()` er kommet til. Det er den samme tanke: modulet
+ * faar data ind og regner - det henter aldrig selv.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.tovoBeregn = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /**
+   * Tolker en varighed til MINUTTER.
+   *
+   * Forstaar: `2t` `2 timer` `2h` `2 hours` · `90m` `90 min` · `1,5t` `1.5t`
+   * `1t30m` `1h 30m` · `1:30` · og et bart tal, der laeses som TIMER.
+   *
+   * Dansk decimalkomma er ikke valgfrit. `10.000` er ti tusinde og `14,25` er
+   * fjorten en kvart - en naiv parseFloat laeser `1,5` som 1 og taber en halv
+   * time i hver eneste registrering (§7's num()-laerdom).
+   *
+   * @returns {number|null} minutter, eller null hvis teksten ikke er en varighed
+   */
+  function parseVarighed(raa) {
+    const t = String(raa == null ? '' : raa).trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!t) return null;
+
+    // 1:30 = én time og tredive minutter. Skal staa foer tal-tolkningen,
+    // ellers spises "1" og ":30" bliver til ingenting.
+    let m = t.match(/^(\d{1,3}):([0-5]\d)$/);
+    if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+
+    // Sammensat: "1t30m", "1 h 30 min", "2 timer 15 minutter".
+    m = t.match(/^(\d+)\s*(?:t|h|time(?:r)?|hour(?:s)?)\s*(\d{1,2})\s*(?:m|min(?:ut(?:ter|es?)?)?)?$/);
+    if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+
+    // Ét tal med en enhed. Kommaet skiftes til punktum FOER parseFloat.
+    m = t.match(/^(\d+(?:[.,]\d+)?)\s*(t|h|time(?:r)?|hour(?:s)?|m|min(?:ut(?:ter|es?)?)?)?$/);
+    if (!m) return null;
+    const tal = parseFloat(m[1].replace(',', '.'));
+    if (!isFinite(tal) || tal < 0) return null;
+    const enhed = m[2] || '';
+    // Uden enhed er det TIMER. "~2" betyder to timer, ikke to minutter -
+    // ingen skriver et estimat i minutter uden at skrive m.
+    const minutter = /^m/.test(enhed) ? tal : tal * 60;
+    const rundet = Math.round(minutter);
+    // Et estimat paa nul er ikke et estimat, og et paa et aar er en tastefejl.
+    if (rundet <= 0 || rundet > 365 * 24 * 60) return null;
+    return rundet;
+  }
+
+  /**
+   * Minutter -> laesbar tekst. Interfacet er engelsk, saa udskriften er det.
+   *
+   * @param {object} [opt] {lang: 'kort'|'decimal'} - decimal giver "1.5 h",
+   *   som er det, en afstemning mod et andet system skal bruge.
+   */
+  function formatVarighed(minutter, opt) {
+    const m = Math.round(Number(minutter) || 0);
+    if (m <= 0) return '0m';
+    if (opt && opt.form === 'decimal') return `${(m / 60).toFixed(2).replace(/\.?0+$/, '')}h`;
+    const t = Math.floor(m / 60);
+    const rest = m % 60;
+    if (!t) return `${rest}m`;
+    if (!rest) return `${t}h`;
+    return `${t}h ${rest}m`;
+  }
+
+  /* ------------------------------------------------------- tidsrum */
+
+  /**
+   * Tolker et manuelt tidsrum: enten et INTERVAL eller en VARIGHED.
+   *
+   * Forstaar `9-11.30`, `9:00-11:30`, `09-11`, og alt hvad parseVarighed kan
+   * (`1,5t`, `90m`, `1t30m`). Det er to forskellige maader at huske den samme
+   * time paa, og folk bruger dem i floeng - derfor ét felt, ikke to.
+   *
+   * @param {string} raa
+   * @param {string} isoDato  YYYY-MM-DD, dagen posten hoerer til
+   * @returns {{minutter, fra, til}|null} fra/til er "HH:MM" ved et interval,
+   *   null ved en ren varighed (saa vaelger kaldsstedet placeringen).
+   */
+  function parseTidsrum(raa, isoDato) {
+    const t = String(raa == null ? '' : raa).trim().toLowerCase().replace(/\s+/g, '');
+    if (!t) return null;
+
+    const klokke = (timer, min) => {
+      const h = parseInt(timer, 10);
+      const m = min === undefined || min === '' ? 0 : parseInt(min, 10);
+      if (h > 23 || m > 59) return null;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+
+    // 9-11.30 · 9:00-11:30 · 09.15 - 11.45  (baade . og : som skilletegn)
+    const m = t.match(/^(\d{1,2})(?:[.:](\d{2}))?-(\d{1,2})(?:[.:](\d{2}))?$/);
+    if (m) {
+      const fra = klokke(m[1], m[2]);
+      const til = klokke(m[3], m[4]);
+      if (!fra || !til) return null;
+      const minutter = tilMinutter(til) - tilMinutter(fra);
+      // Et interval, der slutter foer det begynder, er en tastefejl - ikke en
+      // vagt hen over midnat. Den ville ellers give en negativ dag i en
+      // ugesum, og DET er svaert at faa oeje paa.
+      if (minutter <= 0) return null;
+      return { minutter, fra, til, dato: isoDato || null };
+    }
+
+    const minutter = parseVarighed(raa);
+    return minutter ? { minutter, fra: null, til: null, dato: isoDato || null } : null;
+  }
+
+  function tilMinutter(hhmm) {
+    const [h, m] = String(hhmm).split(':');
+    return parseInt(h, 10) * 60 + parseInt(m, 10);
+  }
+
+  /**
+   * Hvor paa dagen lander en post, der kun har en VARIGHED?
+   *
+   * Efter dagens sidste post, ellers kl. 9. Reglen er et valg, ikke en
+   * sandhed - men et valg er noedvendigt: uden det ville tre poster paa
+   * samme dag ligge oven i hinanden, og dagsvisningen i fase 9 ville vise
+   * tre samtidige stykker arbejde.
+   *
+   * @param {array} dagensPoster poster PAA den dato, sorteret eller ej
+   * @param {string} isoDato
+   * @param {number} minutter
+   * @returns {{startedAt, stoppedAt}} unix-sekunder i LOKAL tid
+   */
+  function placerVarighed(dagensPoster, isoDato, minutter) {
+    const [aa, mm, dd] = String(isoDato).split('-').map(Number);
+    const sidste = (dagensPoster || []).reduce(
+      (n, p) => Math.max(n, p.stoppedAt || p.startedAt || 0), 0);
+    const kl9 = Math.floor(new Date(aa, mm - 1, dd, 9, 0, 0).getTime() / 1000);
+    const start = sidste > kl9 ? sidste : kl9;
+    return { startedAt: start, stoppedAt: start + minutter * 60 };
+  }
+
+  /** Klokkeslaet paa en dato -> unix-sekunder i LOKAL tid. Aldrig UTC. */
+  function tidspunkt(isoDato, hhmm) {
+    const [aa, mm, dd] = String(isoDato).split('-').map(Number);
+    const [t, m] = String(hhmm).split(':').map(Number);
+    return Math.floor(new Date(aa, mm - 1, dd, t, m, 0).getTime() / 1000);
+  }
+
+  /* ------------------------------------------------------- afrunding */
+
+  /**
+   * Afrunding til naermeste N minutter.
+   *
+   * Anvendes ved VISNING og i rapporter - aldrig destruktivt paa den gemte
+   * post. Den rigtige tid staar altid i databasen, og en aendret regel skal
+   * kunne aendre alle tal med tilbagevirkende kraft.
+   *
+   * En post paa 2 minutter med 15-minutters afrunding bliver til 15, ikke 0:
+   * et stykke arbejde, der er registreret, maa ikke kunne runde sig selv vaek.
+   */
+  function afrund(minutter, regel) {
+    const n = Number(regel) || 0;
+    const m = Math.round(Number(minutter) || 0);
+    if (n <= 1 || m <= 0) return m;
+    return Math.max(n, Math.round(m / n) * n);
+  }
+
+  /* --------------------------------------------------------- modulet */
+
+  /**
+   * @param {object} kilder
+   *   items(kind)  -> array af projekter/opgaver/kommentarer/tags
+   *   entries()    -> array af tidsposter {id, taskId, startedAt, stoppedAt, source}
+   *   settings()   -> {rounding, normWeekHours, timerWarnHours}
+   */
+  function opret(kilder) {
+    const items = (kind) => kilder.items(kind) || [];
+    const entries = () => kilder.entries() || [];
+    const settings = () => kilder.settings() || {};
+
+    const afrunding = () => Number(settings().rounding) || 0;
+
+    /** Varigheden af ÉN post. En koerende post maales mod nu. */
+    function varighed(post, nu) {
+      const slut = post.stoppedAt || Math.floor((nu || Date.now()) / 1000);
+      return Math.max(0, Math.round((slut - post.startedAt) / 60));
+    }
+
+    /** Summen af en raekke poster, med afrunding pr. POST. */
+    function sum(poster, nu) {
+      const r = afrunding();
+      return poster.reduce((n, p) => n + afrund(varighed(p, nu), r), 0);
+    }
+
+    function forbrugPaaOpgave(taskId, nu) {
+      return sum(entries().filter((e) => e.taskId === taskId), nu);
+    }
+
+    function forbrugPaaProjekt(projectId, nu) {
+      const iProjektet = new Set(items('task')
+        .filter((t) => t.projectId === projectId).map((t) => t.id));
+      return sum(entries().filter((e) => iProjektet.has(e.taskId)), nu);
+    }
+
+    /**
+     * De TRE niveauer, et projekt skal kunne svare paa (fase 4):
+     * summen af opgaveestimater, den manuelle projektramme, og det forbrugte.
+     *
+     * De er tre forskellige ting, og forskellen mellem dem er hele pointen:
+     * naar estimaterne overstiger rammen, er der fundet mere arbejde end der
+     * er solgt - og det skal ses, foer timerne er brugt.
+     */
+    function rollupProjekt(projectId, nu) {
+      const opgaver = items('task').filter((t) => t.projectId === projectId);
+      const projekt = items('project').find((p) => p.id === projectId) || {};
+      const estimat = opgaver.reduce((n, t) => n + (Number(t.estimateMinutes) || 0), 0);
+      const ramme = Math.round((Number(projekt.budgetHours) || 0) * 60);
+      const forbrugt = forbrugPaaProjekt(projectId, nu);
+      return {
+        estimat,
+        ramme,
+        forbrugt,
+        // Uden en ramme er der intet at vaere over eller under - saa er
+        // resten null frem for et tal, der ligner en sandhed.
+        resterende: ramme ? ramme - forbrugt : null,
+        procent: ramme ? Math.round((forbrugt / ramme) * 100) : null,
+        estimatOverRamme: !!(ramme && estimat > ramme),
+        aabne: opgaver.filter((t) => t.status !== 'done').length,
+        opgaver: opgaver.length,
+      };
+    }
+
+    /**
+     * Summen i en periode, grupperet pr. projekt og opgave.
+     *
+     * @param {number} fra  unix-sekunder, med i perioden
+     * @param {number} til  unix-sekunder, IKKE med (halvaabent interval, saa
+     *   to naboperioder hverken taeller en post to gange eller taber den)
+     */
+    function sumPeriode(fra, til, nu) {
+      const opgaver = new Map(items('task').map((t) => [t.id, t]));
+      const projekter = new Map(items('project').map((p) => [p.id, p]));
+      const r = afrunding();
+      const iPerioden = entries().filter((e) => e.startedAt >= fra && e.startedAt < til);
+
+      const pr = new Map();
+      let total = 0;
+      for (const e of iPerioden) {
+        const minutter = afrund(varighed(e, nu), r);
+        total += minutter;
+        const opgave = opgaver.get(e.taskId);
+        const pid = opgave && opgave.projectId ? opgave.projectId : null;
+        if (!pr.has(pid)) {
+          const p = pid ? projekter.get(pid) : null;
+          pr.set(pid, { projectId: pid, name: p ? p.name : 'Ad hoc', minutter: 0, tasks: new Map() });
+        }
+        const gruppe = pr.get(pid);
+        gruppe.minutter += minutter;
+        const nuvaerende = gruppe.tasks.get(e.taskId) || {
+          taskId: e.taskId,
+          title: opgave ? opgave.title : 'Deleted task',
+          minutter: 0,
+          estimateMinutes: opgave ? (opgave.estimateMinutes || null) : null,
+          completedIPerioden: !!(opgave && opgave.completedAt >= fra && opgave.completedAt < til),
+        };
+        nuvaerende.minutter += minutter;
+        gruppe.tasks.set(e.taskId, nuvaerende);
+      }
+
+      return {
+        total,
+        entries: iPerioden.length,
+        projects: [...pr.values()]
+          .map((g) => ({ ...g, tasks: [...g.tasks.values()].sort((a, b) => b.minutter - a.minutter) }))
+          .sort((a, b) => b.minutter - a.minutter),
+      };
+    }
+
+    /** Minutter pr. dato i perioden - grundlaget for dagsvisningen. */
+    function sumPrDag(fra, til, nu) {
+      const r = afrunding();
+      const dage = new Map();
+      for (const e of entries()) {
+        if (e.startedAt < fra || e.startedAt >= til) continue;
+        const d = new Date(e.startedAt * 1000);
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        dage.set(iso, (dage.get(iso) || 0) + afrund(varighed(e, nu), r));
+      }
+      return dage;
+    }
+
+    return {
+      varighed, forbrugPaaOpgave, forbrugPaaProjekt, rollupProjekt,
+      sumPeriode, sumPrDag, afrunding,
+    };
+  }
+
+  return { parseVarighed, formatVarighed, parseTidsrum, placerVarighed, tidspunkt, afrund, opret };
+}));
+
+/* ---- shared/parse.js ---- */
+/* tovo - faelles parser for genvejssyntaks og dansk datosprog.
+ *
+ * Kopieret fra doda (app/shared/parse.js) og AENDRET paa ét sted: markoererne.
+ * Datosproget og gentagelses-motoren staar ordret som i doda - de er
+ * gennemtestede, og en omskrivning ville kun koste fejl.
+ *
+ * Denne fil koeres BEGGE steder: serveren require'r den, og build_rune.py
+ * praeplacerer den i app.js. Fangst fra webappen, fra et start-link og fra
+ * MCP skal tolke praecis den samme tekst. Retter du noget her, gaelder det
+ * alle veje ind i appen.
+ *
+ * FORSKELLEN FRA DODA, som man skal kende for ikke at kopiere forkert:
+ *
+ *   doda:  # kontekst   @ // projekt   ! dato/gentagelse   ~ UDSKUDT DATO
+ *   tovo:  # tag        @ // projekt   ! dato/gentagelse   ~ ESTIMAT
+ *
+ * tovo har ingen udskudt dato, saa `~` er genbrugt. Defer-grenen er FJERNET,
+ * ikke ladt ligge: en parser, der producerer et felt, modtageren ikke har,
+ * taber tekst tavst (doda 2026-08-18).
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.tovoParse = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /* Varighedsregningen bor i beregn.js - ALLE udregninger goer det, saa
+     webappen og MCP ikke kan komme til at svare forskelligt. Build'et samler
+     app/shared/*.js alfabetisk, saa beregn.js ligger foer denne fil i app.js
+     og er defineret, naar `~` skal tolkes. */
+  const beregn = (typeof module === 'object' && module.exports)
+    ? require('./beregn.js')
+    : (typeof self !== 'undefined' ? self.tovoBeregn : this.tovoBeregn);
+
+  /* Parseren er TOSPROGET. Interfacet er engelsk, saa engelsk er det primaere
+     sprog - men de danske ord bliver ved med at virke, sa gammel vane og
+     aeldre fangster ikke pludselig fejler. Det koster kun opslag i tabellerne.
+     Se DESIGN.md §3. */
+
+  const UGEDAGE = {
+    monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6, sunday: 7,
+    mon: 1, tue: 2, tues: 2, wed: 3, thu: 4, thur: 4, thurs: 4, fri: 5, sat: 6, sun: 7,
+    mandag: 1, tirsdag: 2, onsdag: 3, torsdag: 4, fredag: 5, lørdag: 6, lordag: 6, søndag: 7, sondag: 7,
+    man: 1, tir: 2, ons: 3, tor: 4, fre: 5, lør: 6, lor: 6, søn: 7, son: 7,
+  };
+
+  const MAANEDER = {
+    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+    januar: 1, februar: 2, marts: 3, maj: 5, juni: 6, juli: 7, oktober: 10,
+    jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8,
+    sep: 9, sept: 9, oct: 10, okt: 10, nov: 11, dec: 12,
+  };
+
+  const TALORD = {
+    one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+    nine: 9, ten: 10, eleven: 11, twelve: 12, a: 1, an: 1,
+    en: 1, et: 1, to: 2, tre: 3, fire: 4, fem: 5, seks: 6, syv: 7, otte: 8, ni: 9, ti: 10,
+    elleve: 11, tolv: 12, anden: 2, andet: 2, tredje: 3, fjerde: 4, femte: 5,
+  };
+
+  /* ------------------------------------------------------------ datoer */
+
+  // Datoer regnes i LOKAL tid og gemmes som YYYY-MM-DD. Aldrig som
+  // UTC-tidsstempel - ellers driver "hver mandag kl. 8" hen over
+  // sommertidsskiftet (DESIGN.md §4).
+  function fmtDato(d) {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dag = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${dag}`;
+  }
+
+  function isoUgedag(d) {
+    const n = d.getDay();
+    return n === 0 ? 7 : n;
+  }
+
+  function plusDage(d, n) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+  }
+
+  function plusMaaneder(d, n) {
+    const maal = new Date(d.getFullYear(), d.getMonth() + n, 1);
+    // Klem dagen ned, saa 31. januar + 1 maaned bliver 28./29. februar
+    // og ikke smutter over i marts.
+    const sidste = new Date(maal.getFullYear(), maal.getMonth() + 1, 0).getDate();
+    return new Date(maal.getFullYear(), maal.getMonth(), Math.min(d.getDate(), sidste));
+  }
+
+  function sidsteIMaaned(d) {
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  }
+
+  function tal(ord) {
+    if (/^\d+$/.test(ord)) return parseInt(ord, 10);
+    return TALORD[ord] || null;
+  }
+
+  function findKlokkeslaet(tekst) {
+    // "at 8", "at 8pm", "kl 8", "kl. 8.30", eller et bart "14:30".
+    let m = tekst.match(/\b(?:at|kl\.?)\s*(\d{1,2})(?:[.:](\d{2}))?\s*(am|pm)?\b/i);
+    if (!m) m = tekst.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)?\b/);
+    if (!m) return { tid: null, rest: tekst };
+    let t = parseInt(m[1], 10);
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    const suffiks = (m[3] || '').toLowerCase();
+    if (suffiks === 'pm' && t < 12) t += 12;
+    if (suffiks === 'am' && t === 12) t = 0;
+    if (t > 23 || min > 59) return { tid: null, rest: tekst };
+    return {
+      tid: `${String(t).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+      rest: (tekst.slice(0, m.index) + ' ' + tekst.slice(m.index + m[0].length)).replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  /**
+   * Tolker en dansk datofrase. Returnerer {dato, tid} eller null.
+   * Omfanget er bevidst lille - se DESIGN.md §3. Kan en frase ikke tolkes,
+   * skal fangsten stadig lykkes; det er kaldsstedets ansvar.
+   */
+  function tolkDato(frase, nu) {
+    const base = nu ? new Date(nu) : new Date();
+    const iDag = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+
+    const k = findKlokkeslaet(String(frase || ''));
+    const tid = k.tid;
+    let t = k.rest.toLowerCase().trim().replace(/\.$/, '');
+    if (!t) return tid ? { dato: fmtDato(iDag), tid } : null;
+
+    const svar = (d) => ({ dato: fmtDato(d), tid });
+
+    if (/^(today|i\s?dag)$/.test(t)) return svar(iDag);
+    if (/^(tomorrow|tmr|i\s?morgen)$/.test(t)) return svar(plusDage(iDag, 1));
+    if (/^(day\s+after\s+tomorrow|(i\s?)?overmorgen)$/.test(t)) return svar(plusDage(iDag, 2));
+    if (/^(yesterday|i\s?går)$/.test(t)) return svar(plusDage(iDag, -1));
+
+    if (/^next\s+week$|^næste\s+uge$/.test(t)) return svar(plusDage(iDag, 7));
+    if (/^next\s+month$|^næste\s+måned$/.test(t)) return svar(plusMaaneder(iDag, 1));
+    if (/^(end\s+of\s+(the\s+)?month|ultimo|sidste\s+dag\s+i)\s*(måneden|denne\s+måned)?$/.test(t)) {
+      return svar(sidsteIMaaned(iDag));
+    }
+    if (/^(start\s+of\s+next\s+month|primo)\s*(måneden|næste\s+måned)?$/.test(t)) {
+      const n = plusMaaneder(iDag, 1);
+      return svar(new Date(n.getFullYear(), n.getMonth(), 1));
+    }
+    if (/^(the\s+)?weekend(en)?$/.test(t)) {
+      const diff = (6 - isoUgedag(iDag) + 7) % 7;
+      return svar(plusDage(iDag, diff === 0 ? 7 : diff));
+    }
+
+    // "in 3 days", "in two weeks", "om 3 dage", "om en måned"
+    let m = t.match(/^(?:in|om)\s+(\S+)\s+(day|days|week|weeks|month|months|year|years|dag|dage|uge|uger|måned|måneder|år)$/);
+    if (m) {
+      const n = tal(m[1]);
+      if (n === null) return null;
+      if (/^(day|dag)/.test(m[2])) return svar(plusDage(iDag, n));
+      if (/^(week|uge)/.test(m[2])) return svar(plusDage(iDag, n * 7));
+      if (/^(month|måned)/.test(m[2])) return svar(plusMaaneder(iDag, n));
+      return svar(plusMaaneder(iDag, n * 12));
+    }
+
+    // Ugedag. "monday" = naeste forekomst, i dag hvis i dag er mandag.
+    // "next monday" = altid en uge senere end det. Reglen er et valg,
+    // ikke en sandhed - den staar dokumenteret i DESIGN.md §3.
+    m = t.match(/^(on\s+|this\s+|next\s+|på\s+|næste\s+|nu\s+på\s+)?([a-zæøå]+)$/);
+    if (m && UGEDAGE[m[2]]) {
+      const maal = UGEDAGE[m[2]];
+      let diff = (maal - isoUgedag(iDag) + 7) % 7;
+      if (/next|næste/.test(m[1] || '')) diff += 7;
+      return svar(plusDage(iDag, diff));
+    }
+
+    // 3/9, 3/9-2027, 3/9/2027, 03.09.2027
+    m = t.match(/^(\d{1,2})[/.](\d{1,2})(?:[-/.](\d{2,4}))?$/);
+    if (m) {
+      const dag = parseInt(m[1], 10);
+      const maaned = parseInt(m[2], 10);
+      if (dag < 1 || dag > 31 || maaned < 1 || maaned > 12) return null;
+      let aar = m[3] ? parseInt(m[3], 10) : iDag.getFullYear();
+      if (aar < 100) aar += 2000;
+      const d = new Date(aar, maaned - 1, dag);
+      if (d.getMonth() !== maaned - 1) return null; // fx 31/2
+      // Uden aarstal: en dato der allerede er passeret, menes naeste aar.
+      if (!m[3] && d < iDag) return svar(new Date(aar + 1, maaned - 1, dag));
+      return svar(d);
+    }
+
+    // Maanedsnavn i begge ordstillinger: "3 sep" / "3. september" (dansk vane)
+    // og "sep 3" / "december 24" (engelsk vane).
+    let dag = null;
+    let maanedsnavn = null;
+    m = t.match(/^(\d{1,2})\.?\s+([a-zæøå]+)\.?(?:,?\s+(\d{4}))?$/);
+    if (m) { dag = parseInt(m[1], 10); maanedsnavn = m[2]; }
+    else {
+      m = t.match(/^([a-zæøå]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\.?(?:,?\s+(\d{4}))?$/);
+      if (m) { dag = parseInt(m[2], 10); maanedsnavn = m[1]; }
+    }
+    if (m && MAANEDER[maanedsnavn]) {
+      const maaned = MAANEDER[maanedsnavn];
+      const aar = m[3] ? parseInt(m[3], 10) : iDag.getFullYear();
+      const d = new Date(aar, maaned - 1, dag);
+      if (d.getMonth() !== maaned - 1) return null;
+      if (!m[3] && d < iDag) return svar(new Date(aar + 1, maaned - 1, dag));
+      return svar(d);
+    }
+
+    return null;
+  }
+
+  /* ------------------------------------------------------- gentagelser */
+
+  // F1 genkender kun at der ER tale om en gentagelse, sa chippen kan sige det
+  // aerligt. Selve grammatikken og motoren bygges i F4.
+  function erGentagelse(frase) {
+    const t = String(frase || '').trim();
+    return /^(every|hvert?)\s*!?\s*\S/i.test(t) || BARE_FORMER.test(t);
+  }
+
+  /**
+   * Tolker en gentagelsesfrase til en regel.
+   *
+   * Syntaksen er Todoists (Andreas' valg): et `!` lige efter "every"/"hver"
+   * betyder **fra fuldfoerelse** - naeste forekomst opstar foerst, nar den
+   * forrige er markeret udfoert. Uden `!` er det en **fast plan**, der
+   * forfalder pa sin dato, uanset om den forrige blev lavet.
+   *
+   * @returns regel-objekt eller null
+   */
+  // "last workday of the month" er en gentagelse i sig selv - den giver ingen
+  // mening som engangsdato, og Todoist tillader den uden "every". Formerne
+  // star ÉT sted, sa erGentagelse() og tolkGentagelse() ikke kan komme i utakt.
+  const BARE_FORMER = /^(last|first|sidste|første|foerste)\s+(day|dag|workday|weekday|hverdag)\s+(of the|i)\s+(month|måneden|maaneden)$/i;
+
+  function tolkGentagelse(frase, nu) {
+    const raa = String(frase || '').trim();
+    const m = raa.match(/^(every|hvert?)\s*(!?)\s*(.*)$/i);
+    // Uden "every" accepteres kun de bare former - ellers ville "monday"
+    // blive laest som en ugentlig gentagelse i stedet for en dato.
+    if (!m && !BARE_FORMER.test(raa)) return null;
+
+    const base = nu ? new Date(nu) : new Date();
+    const iDag = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+    const mode = m && m[2] === '!' ? 'completion' : 'schedule';
+
+    const k = findKlokkeslaet(m ? m[3] : raa);
+    const tid = k.tid;
+    let t = k.rest.toLowerCase().trim().replace(/\s+/g, ' ');
+    if (!t) return null;
+
+    const regel = {
+      mode, freq: null, interval: 1, weekdays: null, monthday: null,
+      month: null, day: null, time: tid, text: raa, anchor: fmtDato(iDag),
+    };
+
+    // "other"/"anden" = hver anden. Ordenstal skrives ogsaa som "2." og "2nd".
+    t = t.replace(/^(other|anden|andet)\s+/, '2 ');
+
+    // "15th of the month" SKAL afgoeres foer intervallet trakkes ud - ellers
+    // laeses tallet som "hver 15." noget, og dag-i-maaneden forsvinder.
+    const dagIMaaned = t.match(/^(?:the\s+|den\s+)?(\d{1,2})[.]?(?:st|nd|rd|th)?\s+(?:of the month|i måneden|i maaneden)$/);
+    if (dagIMaaned) {
+      const dag = parseInt(dagIMaaned[1], 10);
+      if (dag < 1 || dag > 31) return null;
+      return Object.assign(regel, { freq: 'month', monthday: dag });
+    }
+
+    const antal = t.match(/^(\d+)[.]?(?:st|nd|rd|th)?\s+(.*)$/);
+    if (antal) { regel.interval = Math.min(Math.max(parseInt(antal[1], 10), 1), 999); t = antal[2]; }
+
+    // Maanedens sidste/foerste (hver)dag - staar uden "every" i praksis,
+    // men vi tillader begge dele.
+    if (/^(last|sidste) (workday|weekday|hverdag) (of the |i )?(month|måneden|maaneden)$/.test(t)) {
+      return Object.assign(regel, { freq: 'month', monthday: 'lastworkday' });
+    }
+    if (/^(first|første|foerste) (workday|weekday|hverdag) (of the |i )?(month|måneden|maaneden)$/.test(t)) {
+      return Object.assign(regel, { freq: 'month', monthday: 'firstworkday' });
+    }
+    if (/^(last|sidste) (day|dag) (of the |i )?(month|måneden|maaneden)$/.test(t)) {
+      return Object.assign(regel, { freq: 'month', monthday: 'last' });
+    }
+
+    // Ugedagsliste: "monday", "mon, thu", "mandag og torsdag"
+    const stykker = t.split(/\s*(?:,|\band\b|\bog\b)\s*/).filter(Boolean);
+    if (stykker.length && stykker.every((s) => UGEDAGE[s])) {
+      const dage = [...new Set(stykker.map((s) => UGEDAGE[s]))].sort((a, b) => a - b);
+      return Object.assign(regel, { freq: 'week', weekdays: dage });
+    }
+    if (/^(weekday|workday|hverdag)e?r?$/.test(t)) {
+      return Object.assign(regel, { freq: 'week', weekdays: [1, 2, 3, 4, 5] });
+    }
+    if (/^(weekend|weekenden)$/.test(t)) {
+      return Object.assign(regel, { freq: 'week', weekdays: [6, 7] });
+    }
+
+    // "month on the 3rd", "måned den 3.", "3rd of the month", "den 3. i måneden"
+    let md = t.match(/^(?:month|måned|maaned)s?\s*(?:on the|den|d\.)\s*(\d{1,2})[.]?(?:st|nd|rd|th)?$/);
+    if (!md) md = t.match(/^(?:the\s+|den\s+)?(\d{1,2})[.]?(?:st|nd|rd|th)?\s+(?:of the month|i måneden|i maaneden)$/);
+    if (md) {
+      const dag = parseInt(md[1], 10);
+      if (dag < 1 || dag > 31) return null;
+      return Object.assign(regel, { freq: 'month', monthday: dag });
+    }
+
+    // "year on 24/12", "år 24/12", "year on december 24"
+    const aarlig = t.match(/^(?:year|år|aar)s?\s*(?:on|den|d\.)?\s*(.+)$/);
+    if (aarlig) {
+      // Foerst rent dag/maaned. tolkDato ville afvise "29/2" i et ikke-skudaar,
+      // men for en AARLIG regel er aarstallet uden betydning.
+      const dm = aarlig[1].trim().match(/^(\d{1,2})[/.](\d{1,2})$/);
+      if (dm) {
+        const dd = parseInt(dm[1], 10);
+        const mm = parseInt(dm[2], 10);
+        if (dd < 1 || dd > 31 || mm < 1 || mm > 12) return null;
+        return Object.assign(regel, { freq: 'year', month: mm, day: dd });
+      }
+      const d = tolkDato(aarlig[1], iDag);
+      if (!d) return null;
+      const [, m2, d2] = d.dato.split('-').map(Number);
+      return Object.assign(regel, { freq: 'year', month: m2, day: d2 });
+    }
+
+    if (/^(day|days|dag|dage)$/.test(t)) return Object.assign(regel, { freq: 'day' });
+    if (/^(week|weeks|uge|uger)$/.test(t)) {
+      // "hver 2. uge" uden ugedag: samme ugedag som i dag.
+      return Object.assign(regel, { freq: 'week', weekdays: [isoUgedag(iDag)] });
+    }
+    if (/^(month|months|måned|måneder|maaned|maaneder)$/.test(t)) {
+      return Object.assign(regel, { freq: 'month', monthday: iDag.getDate() });
+    }
+    if (/^(year|years|år|aar)$/.test(t)) {
+      return Object.assign(regel, { freq: 'year', month: iDag.getMonth() + 1, day: iDag.getDate() });
+    }
+
+    return null;
+  }
+
+  /* ---------------------------------------------------------- motoren */
+
+  function sidsteHverdag(aar, maaned0) {
+    const d = new Date(aar, maaned0 + 1, 0);
+    while (isoUgedag(d) > 5) d.setDate(d.getDate() - 1);
+    return d;
+  }
+
+  function foersteHverdag(aar, maaned0) {
+    const d = new Date(aar, maaned0, 1);
+    while (isoUgedag(d) > 5) d.setDate(d.getDate() + 1);
+    return d;
+  }
+
+  /** Mandagen i den uge, datoen ligger i. Bruges som fast maalepunkt. */
+  function ugeStart(d) {
+    return plusDage(d, -(isoUgedag(d) - 1));
+  }
+
+  /**
+   * Naeste forekomst STRENGT efter `fra`.
+   *
+   * Al regning sker pa (ar, maned, dag) i lokal tid - aldrig pa
+   * millisekunder. Det er dét, der gor, at "hver mandag kl. 8" ikke driver
+   * en time hen over sommertidsskiftet (handover §5.6).
+   */
+  function naesteForekomst(regel, fra) {
+    if (!regel || !regel.freq) return null;
+    const [fy, fm, fd] = String(fra).split('-').map(Number);
+    const efter = new Date(fy, fm - 1, fd);
+    const interval = Math.max(regel.interval || 1, 1);
+
+    if (regel.freq === 'day') return fmtDato(plusDage(efter, interval));
+
+    if (regel.freq === 'week') {
+      const dage = (regel.weekdays && regel.weekdays.length) ? regel.weekdays : [isoUgedag(efter)];
+      const ankerUge = ugeStart(regel.anchor
+        ? new Date(...regel.anchor.split('-').map((n, i) => (i === 1 ? Number(n) - 1 : Number(n))))
+        : efter);
+      // Gennemloeb dag for dag. Loftet er interval uger + 7 dage, sa selv
+      // "hver 52. uge" finder sit svar uden at kunne loebe loebsk.
+      for (let i = 1; i <= interval * 7 + 7; i++) {
+        const k = plusDage(efter, i);
+        if (!dage.includes(isoUgedag(k))) continue;
+        const uger = Math.round((ugeStart(k) - ankerUge) / (7 * 86400000));
+        if (((uger % interval) + interval) % interval === 0) return fmtDato(k);
+      }
+      return null;
+    }
+
+    if (regel.freq === 'month') {
+      // Start i INDEVAERENDE maaned: "hver maaned den 20." set fra den 13.
+      // forfalder den 20. i denne maaned, ikke foerst i den naeste.
+      for (let i = 0; i <= interval * 2 + 24; i++) {
+        const p = new Date(efter.getFullYear(), efter.getMonth() + i, 1);
+        // Kun hver interval'te maaned taeller.
+        const maanederFra = (p.getFullYear() - efter.getFullYear()) * 12 + (p.getMonth() - efter.getMonth());
+        if (maanederFra % interval !== 0) continue;
+        let k;
+        if (regel.monthday === 'last') k = new Date(p.getFullYear(), p.getMonth() + 1, 0);
+        else if (regel.monthday === 'lastworkday') k = sidsteHverdag(p.getFullYear(), p.getMonth());
+        else if (regel.monthday === 'firstworkday') k = foersteHverdag(p.getFullYear(), p.getMonth());
+        else {
+          const sidste = new Date(p.getFullYear(), p.getMonth() + 1, 0).getDate();
+          // Den 31. i en maaned med 30 dage klemmes ned til den sidste -
+          // aldrig ud i den naeste maaned.
+          k = new Date(p.getFullYear(), p.getMonth(), Math.min(regel.monthday || 1, sidste));
+        }
+        if (k > efter) return fmtDato(k);
+      }
+      return null;
+    }
+
+    if (regel.freq === 'year') {
+      for (let i = 0; i <= interval + 1; i++) {
+        const aar = efter.getFullYear() + i;
+        if ((aar - efter.getFullYear()) % interval !== 0) continue;
+        const sidste = new Date(aar, regel.month, 0).getDate();
+        const k = new Date(aar, regel.month - 1, Math.min(regel.day, sidste));
+        if (k > efter) return fmtDato(k);
+      }
+      return null;
+    }
+    return null;
+  }
+
+  /** 1st, 2nd, 3rd, 4th … 11th-13th er undtagelserne. Interfacet er engelsk. */
+  function ordenstal(n) {
+    const r10 = n % 10;
+    const r100 = n % 100;
+    if (r10 === 1 && r100 !== 11) return `${n}st`;
+    if (r10 === 2 && r100 !== 12) return `${n}nd`;
+    if (r10 === 3 && r100 !== 13) return `${n}rd`;
+    return `${n}th`;
+  }
+
+  /** Menneskelig beskrivelse af en regel - den, brugeren ser i chippen. */
+  function beskrivGentagelse(regel) {
+    if (!regel || !regel.freq) return '';
+    const NAVNE = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const n = regel.interval > 1 ? `every ${regel.interval} ` : 'every ';
+    let s;
+    if (regel.freq === 'day') s = `${n}${regel.interval > 1 ? 'days' : 'day'}`;
+    else if (regel.freq === 'week') {
+      const d = (regel.weekdays || []).map((x) => NAVNE[x]);
+      const alle = (regel.weekdays || []).join(',');
+      if (alle === '1,2,3,4,5') s = 'every weekday';
+      else if (alle === '6,7') s = 'every weekend';
+      else s = `${n}${regel.interval > 1 ? 'weeks on ' : ''}${d.join(' and ')}`;
+    } else if (regel.freq === 'month') {
+      if (regel.monthday === 'last') s = `${n}${regel.interval > 1 ? 'months, ' : ''}last day of the month`;
+      else if (regel.monthday === 'lastworkday') s = `${n}${regel.interval > 1 ? 'months, ' : ''}last workday of the month`;
+      else if (regel.monthday === 'firstworkday') s = `${n}${regel.interval > 1 ? 'months, ' : ''}first workday of the month`;
+      else s = `${n}${regel.interval > 1 ? 'months ' : 'month '}on the ${ordenstal(regel.monthday)}`;
+    } else {
+      s = `${n}${regel.interval > 1 ? 'years ' : 'year '}on ${regel.day}/${regel.month}`;
+    }
+    if (regel.time) s += ` at ${regel.time}`;
+    return s + (regel.mode === 'completion' ? ' · from completion' : ' · fixed schedule');
+  }
+
+  /* ------------------------------------------------------------ fangst */
+
+  // BAADE @ og / peger paa et projekt. Paletten laerer brugeren "/ projects" i
+  // legenden, og saa skal / ogsaa virke midt i en saetning - ellers lover
+  // interfacet noget, parseren ikke holder.
+  //
+  // Det er ufarligt, fordi en markoer SKAL have mellemrum eller linjestart
+  // foran sig: "https://dr.dk/nyheder", "3/9" og "and/or" har alle et tegn
+  // foer skraastregen og roeres derfor ikke. Samme guard redder
+  // "nogen@eksempel.dk" fra at blive laest som et projekt.
+  const MARKOERER = '#@!~/';
+
+  /**
+   * Tolker en fangst-tekst til felter.
+   *
+   * @param {string} raa      fx "+ opsaetning af server @Nordvind ~2,5t !fredag"
+   * @param {object} [opts]   {now: Date|number} til testbarhed
+   * @returns {{title, note, tags, project, due, estimateMinutes,
+   *            recurrenceRule, recurrenceText, warnings}}
+   */
+  function tolkFangst(raa, opts) {
+    opts = opts || {};
+    const ud = {
+      title: '', note: '',
+      tags: [], project: null,
+      due: null, estimateMinutes: null,
+      recurrenceRule: null, recurrenceText: null,
+      warnings: [],
+    };
+
+    let tekst = String(raa == null ? '' : raa).replace(/\r\n/g, '\n');
+
+    // Beskrivelse: alt efter foerste linjeskift, ellers efter foerste " // ".
+    // Mellemrummene omkring // er vigtige - ellers spises "https://".
+    const nl = tekst.indexOf('\n');
+    if (nl >= 0) {
+      ud.note = tekst.slice(nl + 1).trim();
+      tekst = tekst.slice(0, nl);
+    } else {
+      const sep = tekst.indexOf(' // ');
+      if (sep >= 0) {
+        ud.note = tekst.slice(sep + 4).trim();
+        tekst = tekst.slice(0, sep);
+      }
+    }
+
+    // Type-praefiks. tovo har kun opgaver, saa `+` betyder "opret" og
+    // ingenting andet - men den skal spises, ellers staar den i titlen.
+    const p = tekst.match(/^\s*\+\s*/);
+    if (p) tekst = tekst.slice(p[0].length);
+
+    const fundne = [];
+    const re = new RegExp(`(^|\\s)([${MARKOERER}])`, 'g');
+    let fund;
+    while ((fund = re.exec(tekst)) !== null) {
+      fundne.push({ pos: fund.index + fund[1].length, tegn: fund[2] });
+      re.lastIndex = fund.index + fund[0].length;
+    }
+
+    const spis = [];
+    for (let i = 0; i < fundne.length; i++) {
+      const her = fundne[i];
+      const slut = i + 1 < fundne.length ? fundne[i + 1].pos : tekst.length;
+      const raat = tekst.slice(her.pos + 1, slut);
+
+      if (her.tegn === '#' || her.tegn === '@' || her.tegn === '/') {
+        // Tag og projekt er ÉT ord, og det skal klaebe DIREKTE til markoeren -
+        // medmindre navnet staar i anfoerselstegn: @"Nordvind TRIO 11".
+        //
+        // Ingen trim her. "kurset i C # og F" er almindelig tekst, ikke taget
+        // "og"; og trimmer man foerst og maaler laengden bagefter, rammer
+        // fjernelsen ved siden af og spiser tegn ud af titlen (doda F1).
+        let vaerdi;
+        let laengde;
+        const citat = raat.match(/^"([^"]*)"/);
+        if (citat) { vaerdi = citat[1].trim(); laengde = citat[0].length; }
+        else {
+          const ord = raat.match(/^[\p{L}\p{N}_-]+/u);
+          vaerdi = ord ? ord[0] : '';
+          laengde = vaerdi.length;
+        }
+        if (!vaerdi) continue;
+        if (her.tegn === '#') { if (!ud.tags.includes(vaerdi)) ud.tags.push(vaerdi); }
+        else ud.project = vaerdi;      // baade @ og /
+        spis.push([her.pos, her.pos + 1 + laengde]);
+        continue;
+      }
+
+      // ! og ~ tager hele frasen frem til naeste markoer, og der maa gerne
+      // staa et mellemrum efter markoeren: baade "!i morgen" og "! i morgen".
+      const vaerdi = raat.trim();
+      if (!vaerdi) continue;
+
+      if (her.tegn === '~') {
+        // ~ er ESTIMAT i tovo (i doda er det udskudt dato - se hovedet).
+        const minutter = beregn.parseVarighed(vaerdi);
+        if (minutter) ud.estimateMinutes = minutter;
+        else {
+          // Teksten bliver STAAENDE i titlen, naar den ikke kunne tolkes.
+          // Et estimat, der forsvinder, er tavst datatab.
+          ud.warnings.push(`forstod ikke varigheden "${vaerdi}"`);
+          continue;
+        }
+      } else if (erGentagelse(vaerdi)) {
+        // Gentagelsesreglen GEMMES allerede nu (opgaven har feltet), men
+        // motoren, der laver naeste forekomst, bygges i fase 7.
+        const regel = tolkGentagelse(vaerdi, opts.now);
+        if (regel) {
+          ud.recurrenceRule = regel;
+          ud.recurrenceText = beskrivGentagelse(regel);
+        } else {
+          ud.warnings.push(`forstod ikke gentagelsen "${vaerdi}"`);
+          continue;
+        }
+      } else {
+        const d = tolkDato(vaerdi, opts.now);
+        if (d) ud.due = d;
+        else {
+          ud.warnings.push(`forstod ikke datoen "${vaerdi}"`);
+          continue;
+        }
+      }
+      spis.push([her.pos, slut]);
+    }
+
+    // Fjern de spiste stykker BAGFRA, saa indeksene holder.
+    spis.sort((a, b) => b[0] - a[0]);
+    for (const [fra, til] of spis) tekst = tekst.slice(0, fra) + tekst.slice(til);
+
+    ud.title = tekst.replace(/\s+/g, ' ').trim();
+    return ud;
+  }
+
+  /**
+   * Fjerner PRAECIS én markoer med en kendt vaerdi fra en tekst.
+   *
+   * Bruges naar en titel, der ALLEREDE findes, redigeres: dér ma kun det,
+   * der faktisk kunne tolkes, forsvinde. tolkFangst spiser fx `!vigtigt` og
+   * noejes med en advarsel - fint i paletten, hvor chippen ses med det samme,
+   * men tavst datatab i en titel, man retter.
+   *
+   * @param {string} tegn  Ét eller flere markoer-tegn, fx '#' eller '@/'.
+   */
+  function fjernMarkoer(tekst, tegn, vaerdi) {
+    if (!tekst || !vaerdi) return tekst;
+    const undslip = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Vaerdier med mellemrum staar i anfoerselstegn: /"Sommerhus i Rørvig".
+    const v = `(?:"${undslip(vaerdi)}"|${undslip(vaerdi)})`;
+    // Samme regel som i tolkFangst: en markoer skal have linjestart eller et
+    // mellemrum foran sig, ellers er nogen@eksempel.dk et projekt.
+    const re = new RegExp(`(^|\\s)[${undslip(tegn)}]${v}(?=\\s|$)`, 'i');
+    return tekst.replace(re, '$1').replace(/\s{2,}/g, ' ').trim();
+  }
+
+  return {
+    tolkFangst,
+    fjernMarkoer,
+    MARKOERER,
+    tolkDato,
+    tolkGentagelse,
+    naesteForekomst,
+    beskrivGentagelse,
+    erGentagelse,
+    fmtDato,
+    isoUgedag,
+    plusDage,
+    plusMaaneder,
+    sidsteIMaaned,
+    UGEDAGE,
+    MAANEDER,
+  };
+}));
+
+/* ---- p1_core.js ---- */
+'use strict';
+/* tovo - kerne: opstart, tema, login, app-skal.
+   Denne fil samles til public/app.js af build_rune.py. Redigér aldrig app.js.
+
+   NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
+   men koden, kommentarerne og dokumenterne er dansk. */
+
+const APP_VERSION = 1;
+
+/* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
+   folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
+   overlay (RUNE-ERFARINGER §4). */
+const SMAL_SKAERM = 900;
+const smalSkaerm = () => window.matchMedia(`(max-width: ${SMAL_SKAERM}px)`).matches;
+
+const state = {
+  user: null,
+  config: { appName: 'tovo', needsSetup: false, allowRegistration: false, secureContext: false },
+  view: 'today',
+  today: '',
+  settings: {},
+  projects: [],
+  tags: [],
+  items: [],
+  counts: {},
+  todayMinutes: 0,
+  openProject: null,
+};
+
+/* ------------------------------------------------------------ hjaelpere */
+
+// crypto.randomUUID() findes KUN i secure contexts. Panelet tilgaas paa
+// IP:port over http, hvor alt der opretter id'er ellers doer stille (§4).
+function nyId() {
+  if (window.crypto && crypto.randomUUID && window.isSecureContext) return crypto.randomUUID();
+  const b = new Uint8Array(16);
+  if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(b);
+  else for (let i = 0; i < 16; i++) b[i] = Math.random() * 256 | 0;
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Goer URL'er og [tekst](url) klikbare.
+ *
+ * Teksten escapes FOERST, og der matches derefter kun paa http(s). Saa kan
+ * javascript: og data: aldrig slippe igennem fra en import eller en
+ * MCP-klient - og en attribut-udbrydning er umulig, fordi " allerede er
+ * blevet &quot; (doda F1).
+ *
+ * NB: onenote:-links gemmes paa opgaver (fase 1) og bliver med vilje IKKE
+ * linkificeret her - de tegnes som et <a href> af link-visningen, hvor
+ * skemaet er hvidlistet. Fri tekst maa kun blive til http(s).
+ */
+function linkify(tekst) {
+  let ud = esc(tekst);
+  ud = ud.replace(/\[([^\]\n]{1,120})\]\((https?:\/\/[^)\s]{1,500})\)/g,
+    (_, navn, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${navn}</a>`);
+  ud = ud.replace(/(^|[\s(])(https?:\/\/[^\s<]{1,500})/g, (helt, foer, url) => {
+    const hale = url.match(/[.,;:!?)]+$/);
+    const ren = hale ? url.slice(0, -hale[0].length) : url;
+    const vis = ren.replace(/^https?:\/\//, '').slice(0, 60);
+    return `${foer}<a href="${ren}" target="_blank" rel="noopener noreferrer">${vis}</a>${hale ? hale[0] : ''}`;
+  });
+  return ud;
+}
+
+async function api(method, path, body) {
+  const opts = { method, credentials: 'same-origin' };
+  if (body !== undefined) {
+    opts.body = JSON.stringify(body);
+    // Saet headers EFTER en evt. merge - en shallow merge har foer slettet
+    // Authorization, fordi hele header-objektet blev erstattet (Kokkeri v15).
+    opts.headers = { 'Content-Type': 'application/json' };
+  }
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch {
+    // Browserens egen tekst er ubrugelig for et menneske: Safari siger
+    // "Load failed", Chrome "Failed to fetch". Oversaettelsen hoerer hjemme
+    // HER - ét sted - og ikke i hvert kaldssted (doda v11).
+    //
+    // Ingen `status`: den, der skal skelne netvaerksbrud fra afslag, kigger
+    // netop paa fravaeret af en status.
+    throw Object.assign(new Error('No connection — this needs the network. Try again when you are back.'),
+      { offline: true });
+  }
+  let data = {};
+  try { data = await res.json(); } catch { /* tomt svar er i orden */ }
+  if (!res.ok) {
+    throw Object.assign(new Error(data.message || data.error || `Error ${res.status}`),
+      { status: res.status, code: data.error });
+  }
+  return data;
+}
+
+/**
+ * Kopiér til udklipsholderen.
+ *
+ * `navigator.clipboard` kraever et secure context, og panelet tilgaas paa
+ * IP:port over http. Uden fallbacken kan brugeren ikke kopiere det link, han
+ * kom for at hente - og fejlen er tavs (doda F2).
+ */
+async function kopier(tekst) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(tekst);
+      return true;
+    }
+  } catch { /* falder igennem til den gamle vej */ }
+  try {
+    const felt = document.createElement('textarea');
+    felt.value = tekst;
+    felt.setAttribute('readonly', '');
+    felt.style.position = 'fixed';
+    felt.style.top = '-1000px';
+    document.body.appendChild(felt);
+    felt.select();
+    const ok = document.execCommand('copy');
+    felt.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function toast(besked, handling) {
+  const host = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<span>${esc(besked)}</span>`;
+  if (handling) {
+    const knap = document.createElement('button');
+    knap.className = 'toast-action';
+    knap.textContent = handling.label;
+    knap.addEventListener('click', () => { el.remove(); handling.run(); });
+    el.appendChild(knap);
+  }
+  host.appendChild(el);
+  // Fortryd skal kunne naas i ro og mag - 10 sek. er kravet i fase 2.
+  setTimeout(() => el.remove(), handling ? 10000 : 3200);
+}
+
+/* --------------------------------------------------------------- tema */
+
+function anvendTema(valg) {
+  if (valg === 'light' || valg === 'dark') document.documentElement.setAttribute('data-theme', valg);
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('tovo_theme', valg); } catch { /* privat tilstand */ }
+}
+
+function nuvaerendeTema() {
+  try { return localStorage.getItem('tovo_theme') || 'auto'; } catch { return 'auto'; }
+}
+
+/* Det tema, man rent faktisk SER. "Follow system" er ikke en tredje farve. */
+function visuelTema() {
+  const valg = nuvaerendeTema();
+  if (valg === 'light' || valg === 'dark') return valg;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+/* -------------------------------------------------------------- ikoner */
+
+const ICONS = {
+  logo: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.4 2"/>',
+  today: '<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 1.8"/>',
+  projects: '<path d="M6.5 20L12 4l5.5 16"/>',
+  report: '<path d="M5 19.5h14"/><path d="M7.5 19.5v-6M12 19.5V6M16.5 19.5v-9"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18 6l-1.4 1.4M7.4 16.6L6 18M18 18l-1.4-1.4M7.4 7.4L6 6"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/>',
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  plus: '<path d="M12 5.5v13M5.5 12h13"/>',
+  play: '<path d="M8.5 6.5l9 5.5-9 5.5z"/>',
+  stop: '<rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>',
+  link: '<path d="M10.5 13.5a3.5 3.5 0 005 0l3-3a3.5 3.5 0 00-5-5l-1 1"/><path d="M13.5 10.5a3.5 3.5 0 00-5 0l-3 3a3.5 3.5 0 005 5l1-1"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4M17.8 17.8l-1.4-1.4M7.6 7.6L6.2 6.2"/>',
+  moon: '<path d="M20 14.6A8.6 8.6 0 019.4 4 8.6 8.6 0 1020 14.6z"/>',
+  pin: '<path d="M9 3.5h6l-1 5 3 3.5H7l3-3.5z"/><path d="M12 12v8.5"/>',
+  out: '<path d="M14.5 4.5H18a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-3.5"/><path d="M4.5 12h10M11 8.5l3.5 3.5-3.5 3.5"/>',
+};
+
+function icon(name, size = 18) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+}
+
+/* --------------------------------------------------------------- sider */
+
+// Raekkefoelgen her er ogsaa sidebarens.
+const VIEWS = [
+  { id: 'today', label: 'Today', icon: 'today', group: 1 },
+  { id: 'projects', label: 'Projects', icon: 'projects', group: 1 },
+  { id: 'report', label: 'Report', icon: 'report', group: 2 },
+  // group: 0 = staar IKKE i navigationen. Settings naas fra menuen paa
+  // brugerknappen, hvor kontoen i forvejen bor - to indgange til det samme
+  // sted er én for meget (§9c).
+  { id: 'settings', label: 'Settings', icon: 'settings', group: 0 },
+];
+
+const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
+const BUND = ['today', 'projects', 'report'];
+
+const BESKRIVELSER = {
+  today: 'What you have registered today, and what is running right now.',
+  projects: 'Estimate, budget and hours spent — per project.',
+  report: 'Hours per project and task for a week you choose.',
+  settings: 'Appearance, account and access.',
+};
+
+/* ------------------------------------------------------------ optegning */
+
+/** Fuld optegning. Kun ved login/logout - ellers mister soegefeltet fokus. */
+function render() {
+  const root = document.getElementById('root');
+  if (!state.user) { root.innerHTML = gateHtml(); bindGate(); return; }
+  root.innerHTML = shellHtml();
+  bindShell();
+  tegnSide();
+}
+
+function gateHtml() {
+  const setup = state.config.needsSetup;
+  return `
+  <div class="gate">
+    <div class="card">
+      <div class="brand">${icon('logo', 26)} tovo</div>
+      <p class="lead" style="text-align:center;margin-bottom:22px">
+        ${setup ? 'Pick a username and a password, and you are in.' : 'Sign in to continue.'}
+      </p>
+      <p class="gate-error" id="gateError" hidden></p>
+      <form id="gateForm">
+        <label class="field"><span>Username</span>
+          <input class="input" id="gateUser" autocomplete="username" autocapitalize="none" required></label>
+        <label class="field"><span>Password</span>
+          <input class="input" id="gatePass" type="password"
+            autocomplete="${setup || state.gateNy ? 'new-password' : 'current-password'}" required></label>
+        <button class="btn primary" type="submit" style="width:100%">
+          ${setup || state.gateNy ? 'Create account' : 'Sign in'}</button>
+      </form>
+      ${!setup && !state.gateNy && state.config.passkeys && state.config.hasPasskeys ? `
+        <div class="gate-or"><span>or</span></div>
+        <button class="btn" id="gatePasskey" style="width:100%">Sign in with a passkey</button>` : ''}
+      ${gateSkiftHtml(setup)}
+    </div>
+  </div>`;
+}
+
+/* Registreringslinket vises kun, naar serveren faktisk tager imod en ny
+   bruger. Ellers ville det foere til en 403, og det er en daarlig maade at
+   fortaelle, at serveren er lukket (§3). */
+function gateSkiftHtml(setup) {
+  if (setup) return '<p class="gate-note">The first account becomes the administrator.</p>';
+  if (!state.config.allowRegistration) return '';
+  return state.gateNy
+    ? '<p class="gate-note"><button class="linkbtn" id="gateSkift">I already have an account</button></p>'
+    : '<p class="gate-note"><button class="linkbtn" id="gateSkift">Create an account</button></p>';
+}
+
+function bindGate() {
+  const form = document.getElementById('gateForm');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = document.getElementById('gateError');
+    err.hidden = true;
+    try {
+      const nyKonto = state.config.needsSetup || state.gateNy;
+      const data = await api('POST', nyKonto ? '/api/register' : '/api/login', {
+        username: document.getElementById('gateUser').value,
+        password: document.getElementById('gatePass').value,
+      });
+      state.user = data.user;
+      state.config.needsSetup = false;
+      state.gateNy = false;
+      await hentState();
+      render();
+    } catch (ex) {
+      err.textContent = ex.message;
+      err.hidden = false;
+    }
+  });
+
+  const skift = document.getElementById('gateSkift');
+  if (skift) skift.addEventListener('click', () => { state.gateNy = !state.gateNy; render(); });
+
+  const pk = document.getElementById('gatePasskey');
+  if (pk) {
+    pk.addEventListener('click', async () => {
+      const err = document.getElementById('gateError');
+      err.hidden = true;
+      try {
+        const d = await loginMedPasskey();
+        state.user = d.user;
+        await hentState();
+        render();
+      } catch (ex) {
+        // Brugeren afbroed selv - det er ikke en fejl, der skal vises.
+        if (ex.name === 'NotAllowedError') return;
+        err.textContent = ex.message || 'The passkey did not work';
+        err.hidden = false;
+      }
+    });
+  }
+  document.getElementById('gateUser').focus();
+}
+
+/* ------------------------------------------------------------ passkeys */
+
+const b64uTilBuf = (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+const bufTilB64u = (b) => btoa(String.fromCharCode(...new Uint8Array(b)))
+  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+async function loginMedPasskey() {
+  const o = await api('POST', '/api/webauthn/login/options', {});
+  const pk = Object.assign({}, o.publicKey, { challenge: b64uTilBuf(o.publicKey.challenge) });
+  const cred = await navigator.credentials.get({ publicKey: pk });
+  return api('POST', '/api/webauthn/login/verify', {
+    challengeId: o.challengeId,
+    id: cred.id,
+    clientDataJSON: bufTilB64u(cred.response.clientDataJSON),
+    authenticatorData: bufTilB64u(cred.response.authenticatorData),
+    signature: bufTilB64u(cred.response.signature),
+  });
+}
+
+async function opretPasskey(navn) {
+  const o = await api('POST', '/api/webauthn/register/options', {});
+  const pk = Object.assign({}, o.publicKey, {
+    challenge: b64uTilBuf(o.publicKey.challenge),
+    user: Object.assign({}, o.publicKey.user, { id: b64uTilBuf(o.publicKey.user.id) }),
+    excludeCredentials: (o.publicKey.excludeCredentials || []).map((c) => ({ type: c.type, id: b64uTilBuf(c.id) })),
+  });
+  const cred = await navigator.credentials.create({ publicKey: pk });
+  return api('POST', '/api/webauthn/register/verify', {
+    challengeId: o.challengeId,
+    name: navn,
+    clientDataJSON: bufTilB64u(cred.response.clientDataJSON),
+    attestationObject: bufTilB64u(cred.response.attestationObject),
+  });
+}
+
+/* ------------------------------------------------------------- skallen */
+
+function navHtml() {
+  const iNav = VIEWS.filter((v) => v.group > 0);
+  const grupper = [...new Set(iNav.map((v) => v.group))];
+  return grupper.map((g) => `<nav class="nav">${iNav.filter((v) => v.group === g).map((v) => `
+      <button class="nav-item" data-view="${v.id}" ${v.id === state.view ? 'aria-current="page"' : ''}>
+        ${icon(v.icon)}<span>${esc(v.label)}</span>
+      </button>`).join('')}</nav>`).join('');
+}
+
+function shellHtml() {
+  return `
+  <button class="btn navtoggle" id="navToggle" aria-label="Menu">${icon('menu')}</button>
+  <div class="backdrop" id="backdrop"></div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">${icon('logo', 24)} <span style="flex:1">tovo</span>
+        <button class="pinbtn" id="pinBtn" aria-label="Hide the menu"
+          title="Hide the menu">${icon('pin', 16)}</button></div>
+      <div id="navHost">${navHtml()}</div>
+      <div class="sidebar-foot">
+        <button class="nav-item" id="userBtn"
+          ${state.view === 'settings' ? 'aria-current="page"' : ''}>${icon('settings')}<span>${esc(state.user.username)}</span></button>
+        <div class="foot-row" id="footRow">${versionHtml()}${temaKnapHtml()}</div>
+      </div>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <div class="toprow">
+          <div class="stats meta" id="statsHost">${statsHtml()}</div>
+        </div>
+        <div class="omni-card" id="omniCard">
+          <div class="omni-field">
+            <span class="omni-icon">${icon('search', 22)}</span>
+            <span class="omni-mode" id="omniMode" hidden></span>
+            <input class="omni-input" id="omni" autocomplete="off" spellcheck="false"
+              placeholder="Search — or start a line with + to create">
+          </div>
+          <div class="omni-panel" id="omniPanel" hidden></div>
+          <div class="omni-legend meta" id="omniLegend"></div>
+        </div>
+        <div class="omni-chips" id="omniChips"></div>
+      </div>
+      <div id="pageHost"></div>
+    </main>
+  </div>
+  <nav class="bottomnav" id="bottomNav">
+    ${BUND.map((id) => {
+    const v = viewById(id);
+    return `<button class="bottomnav-item" data-view="${v.id}" ${v.id === state.view ? 'aria-current="page"' : ''}>
+        ${icon(v.icon, 21)}<span>${esc(v.label)}</span></button>`;
+  }).join('')}
+  </nav>`;
+}
+
+/*
+ * Versionen, altid synlig. Det er SAMME tal som runens version: i panelet -
+ * build_rune.py stempler APP_VERSION i index.html og i runen paa én gang.
+ *
+ * Serveren melder sit eget tal i /api/public-config. Er de to forskellige,
+ * er app.js i browserens cache aeldre end den, serveren udleverer - og saa er
+ * det dét, brugeren skal vide.
+ */
+function versionHtml() {
+  const server = state.config.version;
+  if (server && server !== APP_VERSION) {
+    return `<button class="version-line meta version-old" id="versionBtn"
+      title="Your browser is running v${APP_VERSION}, but the server has v${server}. Click to reload.">
+      v${APP_VERSION} · v${server} available — reload</button>`;
+  }
+  return `<div class="version-line meta">v${esc(String(APP_VERSION))}</div>`;
+}
+
+/* Knappen viser det tema, man skifter TIL - ikke det, man er i. */
+function temaKnapHtml() {
+  const naeste = visuelTema() === 'dark' ? 'light' : 'dark';
+  return `<button class="temabtn" id="temaBtn" data-naeste="${naeste}"
+    aria-label="Switch to ${naeste} theme" title="Switch to ${naeste} theme">
+    ${icon(naeste === 'dark' ? 'moon' : 'sun', 16)}</button>`;
+}
+
+function opdaterTemaKnap() {
+  const gammel = document.getElementById('temaBtn');
+  if (!gammel) return;
+  gammel.outerHTML = temaKnapHtml();
+  bindTemaKnap();
+}
+
+function bindTemaKnap() {
+  const el = document.getElementById('temaBtn');
+  if (!el) return;
+  el.addEventListener('click', () => {
+    anvendTema(el.dataset.naeste);
+    opdaterTemaKnap();
+    if (state.view === 'settings') tegnSide();
+  });
+}
+
+function statsHtml() {
+  const c = state.counts || {};
+  const flertal = (n, ord) => `${n} ${ord}${n === 1 ? '' : 's'}`;
+  const dele = [`${c.tasks || 0} open`, flertal(c.projects || 0, 'project')];
+  if (c.done) dele.push(`${c.done} done`);
+  return dele.map((d) => `<span>${esc(d)}</span>`).join('');
+}
+
+function opdaterNav() {
+  // Taellerne staar i skallen, som render() kun tegner ved login/logout.
+  // Uden denne linje blev de staaende paa 0, mens listen viste opgaver -
+  // og et tal, der ser rigtigt ud, men er forkert, er vaerre end intet.
+  const stats = document.getElementById('statsHost');
+  if (stats) stats.innerHTML = statsHtml();
+  const host = document.getElementById('navHost');
+  if (host) host.innerHTML = navHtml();
+  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil(el.dataset.view));
+  });
+  document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
+    el.setAttribute('aria-current', el.dataset.view === state.view ? 'page' : 'false');
+  });
+  const ub = document.getElementById('userBtn');
+  if (ub) ub.setAttribute('aria-current', state.view === 'settings' ? 'page' : 'false');
+}
+
+function bindShell() {
+  saetNavSkjult(navErSkjult());
+  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil(el.dataset.view));
+  });
+  document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil(el.dataset.view));
+  });
+  document.getElementById('userBtn').addEventListener('click', visBrugerMenu);
+  document.getElementById('pinBtn').addEventListener('click', () => {
+    const skjul = !document.body.classList.contains('navskjult');
+    saetNavSkjult(skjul);
+    if (skjul) document.body.classList.remove('navopen');
+  });
+  bindTemaKnap();
+  const vBtn = document.getElementById('versionBtn');
+  if (vBtn) {
+    vBtn.addEventListener('click', async () => {
+      try {
+        if (window.caches) await Promise.all((await caches.keys()).map((n) => caches.delete(n)));
+      } catch { /* uden cache-api er der ikke noget at rydde */ }
+      location.reload();
+    });
+  }
+  document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
+  document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
+  bindOmni();
+}
+
+function gaaTil(view, opt) {
+  const skifter = state.view !== view;
+  state.view = view;
+  if (skifter) state.openProject = null;
+  if (opt && opt.project !== undefined) state.openProject = opt.project;
+  document.body.classList.remove('navopen');
+  opdaterNav();
+  // Feltet arbejder i den side, man staar paa - og skal vise det.
+  opdaterOmniKontekst();
+  tegnSide();
+  // Scroll kun til toppen ved REELT sideskift - ellers kastes brugeren op,
+  // hver gang en inline-redigering gentegner samme side (Beanledger v24).
+  if (skifter) window.scrollTo(0, 0);
+}
+
+async function genindlaes() {
+  await hentState();
+  opdaterNav();
+  await tegnSide();
+}
+
+async function hentState() {
+  try {
+    const d = await api('GET', '/api/v1/state');
+    state.user = d.user || state.user;
+    state.today = d.today;
+    state.settings = d.settings || {};
+    state.projects = d.projects || [];
+    state.tags = d.tags || [];
+    state.counts = d.counts || {};
+    state.todayMinutes = d.todayMinutes || 0;
+    // Den koerende timer foelger med hvert state-kald, saa bjaelken er rigtig
+    // i enhver visning - ogsaa hvis timeren blev startet fra en anden fane.
+    timerState.data = d.timer || null;
+    tegnTimerBjaelke();
+    if (d.global) state.config.allowRegistration = d.global.allowRegistration;
+  } catch (ex) {
+    if (ex.status !== 401) toast(ex.message);
+  }
+}
+
+/* ------------------------------------------------------ sidebaren */
+
+/*
+ * Sidebaren kan foldes helt vaek, saa der kun staar en hamburger tilbage.
+ * Skjult ligger den som et OVERLAY over indholdet i stedet for at skubbe det -
+ * ellers hopper hele siden, hver gang man kigger i menuen (§9c).
+ */
+function navErSkjult() {
+  try { return localStorage.getItem('tovo_nav_skjult') === '1'; } catch { return false; }
+}
+
+function saetNavSkjult(skjult) {
+  try { localStorage.setItem('tovo_nav_skjult', skjult ? '1' : '0'); } catch { /* privat */ }
+  document.body.classList.toggle('navskjult', skjult);
+  if (!skjult) document.body.classList.remove('navopen');
+  // Popovers haenger fast paa knapper i sidebaren. Foldes den vaek, mens en
+  // menu staar aaben, bliver menuen svaevende tilbage over ingenting.
+  const menu = document.getElementById('userMenu');
+  if (menu) menu.remove();
+  const knap = document.getElementById('pinBtn');
+  if (knap) {
+    const tekst = skjult ? 'Keep the menu open' : 'Hide the menu';
+    knap.setAttribute('aria-label', tekst);
+    knap.title = tekst;
+    knap.classList.toggle('off', skjult);
+  }
+}
+
+/* --------------------------------------------------- brugermenuen */
+
+function visBrugerMenu() {
+  const gammel = document.getElementById('userMenu');
+  if (gammel) { gammel.remove(); return; }
+  const anker = document.getElementById('userBtn');
+  if (!anker) return;
+
+  const host = document.createElement('div');
+  host.className = 'usermenu';
+  host.id = 'userMenu';
+  host.innerHTML = `
+    <div class="usermenu-head">
+      <div class="usermenu-name">${esc(state.user.username)}</div>
+      <div class="meta">${state.user.isAdmin ? 'Administrator' : 'Signed in'}${state.config.secureContext ? '' : ' · plain http'}</div>
+    </div>
+    <button class="usermenu-item" data-go="settings">${icon('settings', 17)}<span>Settings</span></button>
+    <button class="usermenu-item danger" data-go="logout">${icon('out', 17)}<span>Log out</span></button>`;
+
+  const r = anker.getBoundingClientRect();
+  host.style.left = `${Math.round(r.left)}px`;
+  host.style.bottom = `${Math.round(window.innerHeight - r.top + 8)}px`;
+  document.body.appendChild(host);
+
+  const luk = () => host.remove();
+  host.querySelectorAll('[data-go]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const hvad = el.dataset.go;
+      luk();
+      if (hvad === 'settings') gaaTil('settings');
+      else {
+        await api('POST', '/api/logout', {});
+        state.user = null;
+        render();
+      }
+    });
+  });
+  // setTimeout, saa klikket der AABNEDE menuen ikke lukker den med det samme.
+  setTimeout(() => {
+    document.addEventListener('click', function udenfor(e) {
+      if (host.isConnected && !host.contains(e.target) && e.target !== anker) {
+        luk();
+        document.removeEventListener('click', udenfor);
+      }
+    });
+  }, 0);
+}
+
+/* --------------------------------------------------------------- sider */
+
+async function tegnSide() {
+  const host = document.getElementById('pageHost');
+  if (!host) return;
+  const v = viewById(state.view);
+  // .page er dodas indholdsbredde (760 px). .main centrerer sine boern, saa
+  // uden wrapperen bliver siden shrink-to-fit og staar midt paa skaermen.
+  if (state.view === 'settings') {
+    host.innerHTML = `<div class="page">${await settingsHtml()}</div>`;
+    bindSettings();
+    return;
+  }
+  if (state.view === 'today') { await tegnIDag(); return; }
+  if (state.view === 'projects') { await tegnProjekter(); return; }
+  host.innerHTML = `<div class="page">
+    <h1>${esc(v.label)}</h1>
+    <p class="lead">${esc(BESKRIVELSER[v.id] || '')}</p>
+    ${tomHtml(v.id)}</div>`;
+}
+
+/* Aerlige tomme tilstande. De skal sige hvad der KOMMER, ikke lade som om
+   siden er faerdig - fase 0 er skelettet. */
+function tomHtml(view) {
+  // Kun de sider, der endnu ikke findes. Tomme tilstande for de RIGTIGE sider
+  // hoerer hjemme i visningen selv, hvor de kender indholdet.
+  const tekst = { report: 'The weekly report arrives in phase 6.' }[view];
+  return `<div class="empty"><p>${esc(tekst || '')}</p></div>`;
+}
+
+async function settingsHtml() {
+  const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
+  const tema = nuvaerendeTema();
+  const knap = (id, navn) => `<button class="btn ${tema === id ? 'primary' : ''}" data-tema="${id}">${navn}</button>`;
+  return `
+    <h1>Settings</h1>
+    <p class="lead">${esc(BESKRIVELSER.settings)}</p>
+
+    <div class="card">
+      <h2>Appearance</h2>
+      <div class="row">${knap('auto', 'Follow system')}${knap('light', 'Light')}${knap('dark', 'Dark')}</div>
+    </div>
+
+    <div class="card">
+      <h2>Account</h2>
+      <p class="meta">${esc(state.user.username)}${state.user.isAdmin ? ' · administrator' : ''}</p>
+      <form id="pwForm">
+        <label class="field"><span>Current password</span>
+          <input class="input" id="pwCur" type="password" autocomplete="current-password"></label>
+        <label class="field"><span>New password</span>
+          <input class="input" id="pwNew" type="password" autocomplete="new-password"></label>
+        <button class="btn" type="submit">Change password</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Passkeys</h2>
+      ${pk.blocked ? `<p class="meta">${esc(pk.blocked)}</p>` : `
+        <p class="meta">A passkey is an extra way in — it never replaces the password.</p>
+        <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
+      ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
+        <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
+    </div>
+
+    ${state.user.isAdmin ? `
+    <div class="card">
+      <h2>This server</h2>
+      <label class="check"><input type="checkbox" id="setReg" ${state.config.allowRegistration ? 'checked' : ''}>
+        <span>Let new users sign up</span></label>
+      <p class="meta">Users never see each other's data — not even the administrator.</p>
+    </div>` : ''}`;
+}
+
+function bindSettings() {
+  document.querySelectorAll('[data-tema]').forEach((el) => {
+    el.addEventListener('click', () => { anvendTema(el.dataset.tema); opdaterTemaKnap(); tegnSide(); });
+  });
+
+  const pw = document.getElementById('pwForm');
+  if (pw) {
+    pw.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('POST', '/api/password', {
+          current: document.getElementById('pwCur').value,
+          next: document.getElementById('pwNew').value,
+        });
+        toast('Password changed.');
+        pw.reset();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+
+  const add = document.getElementById('pkAdd');
+  if (add) {
+    add.addEventListener('click', async () => {
+      try {
+        await opretPasskey('Passkey');
+        toast('Passkey added.');
+        tegnSide();
+      } catch (ex) {
+        if (ex.name === 'NotAllowedError') return;
+        toast(ex.message || 'The passkey did not work');
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-pk]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/passkeys/${encodeURIComponent(el.dataset.pk)}`);
+        tegnSide();
+      } catch (ex) { toast(ex.message); }
+    });
+  });
+
+  const reg = document.getElementById('setReg');
+  if (reg) {
+    reg.addEventListener('change', async () => {
+      try {
+        const d = await api('POST', '/api/v1/settings', { allow_registration: reg.checked });
+        state.config.allowRegistration = d.global.allowRegistration;
+        toast(reg.checked ? 'Sign-up is open.' : 'Sign-up is closed.');
+      } catch (ex) { toast(ex.message); reg.checked = !reg.checked; }
+    });
+  }
+}
+
+/* --------------------------------------------------------------- start */
+
+(async function start() {
+  anvendTema(nuvaerendeTema());
+  try {
+    state.config = await api('GET', '/api/public-config');
+    document.title = state.config.appName || 'tovo';
+    const me = await api('GET', '/api/me');
+    state.user = me.user;
+    if (state.user) await hentState();
+  } catch (ex) {
+    document.getElementById('root').innerHTML =
+      `<div class="gate"><div class="card"><div class="brand">${icon('logo', 26)} tovo</div>
+       <p class="lead" style="text-align:center">Could not reach the server.<br>${esc(ex.message)}</p></div></div>`;
+    return;
+  }
+  render();
+}());
+
+/* ---- p2_omni.js ---- */
+'use strict';
+/* tovo - kommandopaletten. Ét felt der baade soeger og opretter.
+ *
+ * Oprettelse staar ALTID oeverst og kan altid naas med Enter: soegning maa
+ * aldrig komme i vejen for fangst. Paletten er dodas, med tovos markoerer.
+ */
+
+/* Foerste tegn vaelger en TILSTAND. Pillen i feltet og legenden nedenunder
+   viser hvilken, saa man aldrig er i tvivl om, hvad Enter kommer til at goere.
+
+   Legenden skal naevne ALT, parseren kan i den tilstand. Naevner den mindre,
+   findes funktionen i praksis ikke - det var praecis derfor "/projekt" laa
+   ubrugt i doda indtil v4, selv om paletten lovede det. */
+const MODER = {
+  '+': {
+    id: 'task', pil: '+ New task', ph: 'Task title… try ~2,5t !friday',
+    legend: ['@ project', '# tag', '! date', '~ estimate'], enter: 'Create',
+  },
+  '/': { id: 'project', pil: '/ Projects', ph: 'Find or create a project…', legend: [], enter: 'Open' },
+  '#': { id: 'tag', pil: '# Tags', ph: 'Find a tag…', legend: [], enter: 'Open' },
+};
+
+const STANDARD_LEGEND = ['+ task', '@ project', '# tag', '! date', '~ estimate'];
+
+const omniState = {
+  mode: null,
+  tolket: null,
+  resultater: { tasks: [], projects: [] },
+  valgt: 0,
+  raekker: [],
+  soegeTimer: null,
+  soegeToken: 0,
+};
+
+function omniEl() { return document.getElementById('omni'); }
+
+/* Tolkningen sker LOKALT med den samme parser, serveren bruger. Ingen
+   netvaerkskald pr. tastetryk - chipsene skal foelge fingrene, og de kan
+   alligevel ikke komme ud af trit med det, der bliver gemt (doda F1). */
+function tolkNu(tekst) {
+  if (typeof tovoParse === 'undefined') return null;
+  return tovoParse.tolkFangst(tekst);
+}
+
+/** Det projekt, feltet arbejder i. Staar man i et projekt, hoerer alt til der. */
+function omniKontekst() {
+  return state.openProject ? state.projects.find((p) => p.id === state.openProject) : null;
+}
+
+function saetMode(tegn) {
+  omniState.mode = tegn;
+  const pille = document.getElementById('omniMode');
+  const el = omniEl();
+  if (!el) return;
+  const m = tegn ? MODER[tegn] : null;
+  if (pille) {
+    pille.textContent = m ? m.pil : '';
+    pille.hidden = !m;
+  }
+  const k = omniKontekst();
+  el.placeholder = m ? m.ph
+    : (k ? `Search or add in ${k.name}…` : 'Search — or start a line with + to create');
+}
+
+function tegnLegend() {
+  const host = document.getElementById('omniLegend');
+  if (!host) return;
+  const m = omniState.mode ? MODER[omniState.mode] : null;
+  const dele = m ? m.legend : STANDARD_LEGEND;
+  const k = omniKontekst();
+  const kontekst = k ? `<span class="chip">in ${esc(k.name)}</span>` : '';
+  host.innerHTML = kontekst + dele.map((d) => `<span>${esc(d)}</span>`).join('');
+}
+
+/* Chips under feltet: det, parseren HAR forstaaet. Et navn, der ikke findes
+   endnu, skal kunne SES med det samme - men foerst oprettes ved Enter. Ellers
+   forsvinder @navn ud af titlen uden at lande et synligt sted, og interfacet
+   lyver (doda 2026-08-18). */
+function tegnChips() {
+  const host = document.getElementById('omniChips');
+  if (!host) return;
+  const t = omniState.tolket;
+  if (!t) { host.innerHTML = ''; return; }
+  const kendteP = new Set(state.projects.map((p) => p.name.toLowerCase()));
+  const kendteT = new Set((state.tags || []).map((x) => x.name.toLowerCase()));
+  const chips = [];
+  if (t.project) {
+    const ny = !kendteP.has(t.project.toLowerCase());
+    chips.push(`<span class="chip">@${esc(t.project)}${ny ? ' — new' : ''}</span>`);
+  }
+  for (const navn of t.tags) {
+    const ny = !kendteT.has(navn.toLowerCase());
+    chips.push(`<span class="chip neutral">#${esc(navn)}${ny ? ' — new' : ''}</span>`);
+  }
+  if (t.estimateMinutes) chips.push(`<span class="chip neutral">~${esc(tovoBeregn.formatVarighed(t.estimateMinutes))}</span>`);
+  if (t.due) chips.push(`<span class="chip neutral">${esc(visDato(t.due.dato))}${t.due.tid ? ` ${esc(t.due.tid)}` : ''}</span>`);
+  if (t.recurrenceText) chips.push(`<span class="chip neutral">${esc(t.recurrenceText)}</span>`);
+  for (const w of t.warnings) chips.push(`<span class="chip neutral">${esc(w)}</span>`);
+  host.innerHTML = chips.join('');
+}
+
+function visDato(iso) {
+  if (!iso) return '';
+  if (iso === state.today) return 'today';
+  const d = new Date(`${iso}T12:00:00`);
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+/* ------------------------------------------------------------ raekker */
+
+function byggRaekker() {
+  const el = omniEl();
+  const raa = el ? el.value : '';
+  const q = raa.trim();
+  const raekker = [];
+  const k = omniKontekst();
+
+  if (omniState.mode === '/' || omniState.mode === '#') {
+    const kilde = omniState.mode === '/' ? state.projects : (state.tags || []);
+    const passer = kilde.filter((x) => !q || x.name.toLowerCase().includes(q.toLowerCase()));
+    for (const x of passer.slice(0, 12)) {
+      raekker.push({ type: 'goto', mode: omniState.mode, id: x.id, titel: x.name,
+        under: omniState.mode === '/' ? 'PROJECT' : 'TAG' });
+    }
+    if (omniState.mode === '/' && q && !kilde.some((x) => x.name.toLowerCase() === q.toLowerCase())) {
+      raekker.push({ type: 'nyt', navn: q, hvad: 'project' });
+    }
+    if (!raekker.length) raekker.push({ type: 'tom', titel: 'Nothing yet', under: 'Type a name to create one' });
+    return raekker;
+  }
+
+  if (q) {
+    const t = omniState.tolket;
+    const titel = (t && t.title) || q;
+    raekker.push({
+      type: 'fangst',
+      titel,
+      under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
+    });
+  }
+
+  for (const it of omniState.resultater.tasks) raekker.push({ type: 'task', item: it });
+  for (const p of omniState.resultater.projects) {
+    raekker.push({ type: 'goto', mode: '/', id: p.id, titel: p.name, under: 'PROJECT' });
+  }
+  if (!raekker.length && q) raekker.push({ type: 'tom', titel: 'No matches', under: 'Enter creates a task' });
+  return raekker;
+}
+
+function tegnPanel() {
+  const panel = document.getElementById('omniPanel');
+  if (!panel) return;
+  omniState.raekker = byggRaekker();
+  if (!omniState.raekker.length) { panel.hidden = true; panel.innerHTML = ''; return; }
+  if (omniState.valgt >= omniState.raekker.length) omniState.valgt = 0;
+
+  panel.innerHTML = omniState.raekker.map((r, i) => {
+    const valgt = i === omniState.valgt ? ' aria-selected="true"' : '';
+    if (r.type === 'task') {
+      const it = r.item;
+      const projekt = state.projects.find((p) => p.id === it.projectId);
+      const under = [projekt ? projekt.name : '', it.dueDate ? visDato(it.dueDate) : '',
+        it.estimateMinutes ? `~${tovoBeregn.formatVarighed(it.estimateMinutes)}` : ''].filter(Boolean).join(' · ');
+      return `<button class="omni-row${it.status === 'done' ? ' dim' : ''}"${valgt} data-i="${i}">
+        ${icon('today')}<span class="omni-row-main">
+        <span class="omni-row-title">${esc(it.title)}</span>
+        <span class="omni-row-sub">${esc(under || 'no project')}</span></span></button>`;
+    }
+    if (r.type === 'tom') {
+      return `<div class="omni-row empty-row"><span class="omni-row-main">
+        <span class="omni-row-title">${esc(r.titel)}</span>
+        <span class="omni-row-sub">${esc(r.under)}</span></span></div>`;
+    }
+    if (r.type === 'goto') {
+      return `<button class="omni-row"${valgt} data-i="${i}">
+        ${icon(r.mode === '/' ? 'projects' : 'link')}<span class="omni-row-main">
+        <span class="omni-row-title">${esc(r.titel)}</span>
+        <span class="omni-row-sub">${esc(r.under)}</span></span></button>`;
+    }
+    if (r.type === 'nyt') {
+      return `<button class="omni-row"${valgt} data-i="${i}">
+        ${icon('plus')}<span class="omni-row-main">
+        <span class="omni-row-title">${esc(r.navn)}</span>
+        <span class="omni-row-sub">NEW PROJECT</span></span></button>`;
+    }
+    return `<button class="omni-row big"${valgt} data-i="${i}">
+      <span class="omni-plus">${icon('plus', 20)}</span>
+      <span class="omni-row-main"><span class="omni-row-title">${esc(r.titel)}</span></span>
+      <span class="omni-badge">${esc(r.under)}</span></button>`;
+  }).join('');
+  panel.hidden = false;
+
+  panel.querySelectorAll('button.omni-row').forEach((el) => {
+    el.addEventListener('mouseenter', () => { omniState.valgt = Number(el.dataset.i); markerValgt(); });
+    el.addEventListener('mousedown', (e) => e.preventDefault());   // behold fokus i feltet
+    el.addEventListener('click', () => { omniState.valgt = Number(el.dataset.i); aktiver(); });
+  });
+}
+
+function markerValgt() {
+  document.querySelectorAll('#omniPanel .omni-row').forEach((el, i) => {
+    if (i === omniState.valgt) el.setAttribute('aria-selected', 'true');
+    else el.removeAttribute('aria-selected');
+  });
+}
+
+/* ------------------------------------------------------------ soegning */
+
+function planlaegSoegning() {
+  clearTimeout(omniState.soegeTimer);
+  const q = omniEl().value.trim();
+  if (q.length < 2 || (omniState.mode && omniState.mode !== '+')) {
+    omniState.resultater = { tasks: [], projects: [] };
+    tegnPanel();
+    return;
+  }
+  omniState.soegeTimer = setTimeout(async () => {
+    const token = ++omniState.soegeToken;
+    const k = omniKontekst();
+    try {
+      const d = await api('GET', `/api/v1/search?q=${encodeURIComponent(q)}`
+        + (k ? `&project=${encodeURIComponent(k.id)}` : ''));
+      // Et AELDRE svar maa aldrig overskrive et nyere - ellers blinker
+      // resultaterne tilbage til noget, brugeren er holdt op med at skrive.
+      if (token !== omniState.soegeToken) return;
+      omniState.resultater = d;
+      tegnPanel();
+    } catch { /* soegning maa aldrig staa i vejen for fangst */ }
+  }, 140);
+}
+
+/* ------------------------------------------------------------ handling */
+
+async function aktiver() {
+  const raekke = omniState.raekker[omniState.valgt];
+  if (!raekke) return;
+  if (raekke.type === 'tom') return;
+  if (raekke.type === 'task') { luk(); aabnOpgave(raekke.item.id); return; }
+  if (raekke.type === 'goto') {
+    luk();
+    if (raekke.mode === '/') gaaTil('projects', { project: raekke.id });
+    else gaaTil('today');
+    return;
+  }
+  if (raekke.type === 'nyt') {
+    const p = await api('POST', '/api/v1/items', { kind: 'project', name: raekke.navn, sections: [] });
+    luk();
+    await genindlaes();
+    gaaTil('projects', { project: p.item.id });
+    return;
+  }
+  await fangstNu();
+}
+
+async function fangstNu() {
+  const el = omniEl();
+  const tekst = el.value.trim();
+  if (!tekst) return;
+  const k = omniKontekst();
+  try {
+    const r = await api('POST', '/api/v1/capture', {
+      text: tekst,
+      projectId: k ? k.id : null,
+    });
+    luk();
+    await genindlaes();
+    // Advarsler fra parseren skal SIGES. Et estimat, der ikke blev forstaaet,
+    // staar stadig i titlen - og det skal brugeren vide nu, ikke om en uge.
+    if (r.warnings && r.warnings.length) toast(r.warnings[0]);
+    else toast(`Added: ${r.item.title}`, { label: 'Open', run: () => aabnOpgave(r.item.id) });
+  } catch (ex) {
+    toast(ex.message);
+  }
+}
+
+function luk() {
+  const el = omniEl();
+  if (el) { el.value = ''; el.blur(); }
+  omniState.tolket = null;
+  omniState.valgt = 0;
+  omniState.resultater = { tasks: [], projects: [] };
+  saetMode(null);
+  tegnLegend();
+  tegnChips();
+  const panel = document.getElementById('omniPanel');
+  if (panel) { panel.hidden = true; panel.innerHTML = ''; }
+}
+
+function opdaterOmni() {
+  const el = omniEl();
+  if (!el) return;
+  // Foerste tegn vaelger tilstand og fjernes fra feltet, saa pillen baerer den.
+  if (!omniState.mode && el.value.length === 1 && MODER[el.value]) {
+    saetMode(el.value);
+    el.value = '';
+    tegnLegend();
+  }
+  omniState.tolket = (!omniState.mode || omniState.mode === '+') ? tolkNu(el.value) : null;
+  omniState.valgt = 0;
+  tegnChips();
+  planlaegSoegning();
+  tegnPanel();
+}
+
+/*
+ * Feltet skal SIGE, hvor det arbejder.
+ *
+ * Kontekstbevidstheden virkede fra foerste faerd - en fangst inde i et
+ * projekt landede rigtigt - men pladsholderen og legenden blev staaende paa
+ * den generelle tekst, fordi de kun blev tegnet ved skallens optegning.
+ * En funktion, der opfoerer sig anderledes, end interfacet siger, er den
+ * slags, brugeren opdager som en fejl, selv naar den goer det rigtige.
+ */
+function opdaterOmniKontekst() {
+  if (!omniEl()) return;
+  saetMode(omniState.mode);
+  tegnLegend();
+}
+
+function bindOmni() {
+  const el = omniEl();
+  if (!el) return;
+  saetMode(null);
+  tegnLegend();
+  tegnChips();
+
+  el.addEventListener('input', opdaterOmni);
+  el.addEventListener('focus', tegnPanel);
+  el.addEventListener('blur', () => {
+    // Lille forsinkelse, saa et klik paa en raekke naar at blive registreret.
+    setTimeout(() => {
+      if (document.activeElement === el) return;
+      const p = document.getElementById('omniPanel');
+      if (p) p.hidden = true;
+    }, 150);
+  });
+
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); luk(); return; }
+    // Backspace i et TOMT felt forlader tilstanden i stedet for ingenting.
+    if (e.key === 'Backspace' && !el.value && omniState.mode) {
+      e.preventDefault();
+      saetMode(null);
+      tegnLegend();
+      opdaterOmni();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!omniState.raekker.length) return;
+      e.preventDefault();
+      const n = omniState.raekker.length;
+      omniState.valgt = (omniState.valgt + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      markerValgt();
+      return;
+    }
+    if (e.key === 'Enter') { e.preventDefault(); aktiver(); }
+  });
+}
+
+/*
+ * Genvejene til feltet.
+ *
+ * Cmd/Ctrl+K aabner det overalt. Og skriver man bare et bogstav, aabner det
+ * ogsaa - men undtagelserne er vigtigere end reglen: uden dem stjaeler
+ * paletten tastetryk fra ethvert felt i appen.
+ */
+document.addEventListener('keydown', (e) => {
+  if (!state.user) return;
+  const omni = omniEl();
+  if (!omni) return;
+
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    omni.focus();
+    omni.select();
+    tegnPanel();
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (document.querySelector('.modal')) return;
+  /*
+   * Her afviger tovo fra doda med vilje.
+   *
+   * doda traekker sig, saa snart fokus staar i en `[data-keynav]`-liste,
+   * fordi dodas raekker EJER bogstaverne (n = next, w = waiting, x = slet).
+   * tovos raekker bruger kun Enter og mellemrum, saa den samme regel ville
+   * betyde, at bogstaver blev aedt: man staar i listen, skriver, og der sker
+   * ingenting. Planen siger det modsatte - bogstaver skal kunne skrives i
+   * soegefeltet, uanset hvor man staar.
+   *
+   * Derfor: kun en liste, der SELV siger, at den vil have bogstaverne
+   * (`data-keynav-letters`), faar lov at beholde dem. Kommer der en saadan
+   * liste i en senere fase, er mekanismen der allerede.
+   */
+  if (el && el.closest && el.closest('[data-keynav-letters]')) return;
+
+  if (e.key.length !== 1) return;
+  e.preventDefault();
+  omni.focus();
+  omni.value += e.key;
+  opdaterOmni();
+});
+
+/*
+ * Vejen IND i listen er piletaster - aldrig bogstaver.
+ *
+ * doda havde genveje paa raekkerne, som kun virkede naar en raekke havde
+ * fokus, og fokus kunne kun komme fra et klik, der samtidig aabnede opgaven.
+ * Genvejene var i praksis uopnaaelige (doda v7). Bogstaver maa ikke foere ind
+ * i listen: i en app, hvor man bare kan begynde at skrive, ville det betyde,
+ * at man ikke kan fange en opgave, der starter med det bogstav.
+ */
+document.addEventListener('keydown', (e) => {
+  if (!state.user) return;
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  if (document.querySelector('.modal')) return;
+
+  const raekker = [...document.querySelectorAll('[data-keynav] [data-row]')];
+  if (!raekker.length) return;
+
+  const nu = raekker.indexOf(el);
+  if (nu < 0) {
+    e.preventDefault();
+    (e.key === 'ArrowDown' ? raekker[0] : raekker[raekker.length - 1]).focus();
+    return;
+  }
+  e.preventDefault();
+  const n = raekker.length;
+  raekker[(nu + (e.key === 'ArrowDown' ? 1 : n - 1)) % n].focus();
+});
+
+/* Esc slipper listen igen - ellers sidder brugeren fast i en tilstand, hvor
+   tasterne betyder noget andet, end de plejer (doda v7). */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const el = document.activeElement;
+  if (el && el.closest && el.closest('[data-keynav]')) el.blur();
+});
+
+/* ---- p3_opgaver.js ---- */
+'use strict';
+/* tovo - opgave- og projektvisningerne samt detaljeruden.
+ *
+ * Ingen udregninger her. Varighed formateres af beregn.js, og alt hvad der
+ * ligner en sum, hoerer hjemme dér - ogsaa naar det er ét tal (CLAUDE.md).
+ */
+
+const detailState = { id: null };
+
+/* ------------------------------------------------------------ opgaver */
+
+function opgaveRaekke(it, opt) {
+  const o = opt || {};
+  const projekt = state.projects.find((p) => p.id === it.projectId);
+  const dele = [];
+  if (!o.skjulProjekt && projekt) dele.push(esc(projekt.name));
+  if (it.dueDate) {
+    const forsinket = it.status !== 'done' && it.dueDate < state.today;
+    dele.push(`<span class="${forsinket ? 'overdue' : ''}">${esc(visDato(it.dueDate))}${it.dueTime ? ` ${esc(it.dueTime)}` : ''}</span>`);
+  }
+  if (it.estimateMinutes) dele.push(`~${esc(tovoBeregn.formatVarighed(it.estimateMinutes))}`);
+  for (const id of it.tagIds || []) {
+    const tag = (state.tags || []).find((t) => t.id === id);
+    if (tag) dele.push(`#${esc(tag.name)}`);
+  }
+  if ((it.links || []).length) dele.push(`${(it.links || []).length} link${it.links.length > 1 ? 's' : ''}`);
+
+  // Forbrugt tid pr. opgave kommer fra serveren (som regner med beregn.js),
+  // ikke fra en optaelling her. En "lille" sum i en visning er stadig en
+  // anden sandhed end rapportens.
+  const forbrugt = (o.forbrug || {})[it.id];
+  if (forbrugt) dele.push(`<span class="post-sum-inline">${esc(tovoBeregn.formatVarighed(forbrugt))}</span>`);
+  const koerer = timerState.data && timerState.data.entry.taskId === it.id;
+
+  return `<div class="item-row${it.status === 'done' ? ' dim' : ''}" data-row tabindex="0" data-id="${esc(it.id)}">
+    <button class="tick${it.status === 'done' ? ' on' : ''}" data-tick="${esc(it.id)}"
+      aria-label="${it.status === 'done' ? 'Reopen' : 'Complete'}"></button>
+    <div class="item-main">
+      <div class="item-title">${esc(it.title)}</div>
+      ${dele.length ? `<div class="item-meta meta">${dele.join(' · ')}</div>` : ''}
+    </div>
+    ${it.status === 'done' ? '' : `<button class="playbtn${koerer ? ' on' : ''}" data-start="${esc(it.id)}"
+      aria-label="${koerer ? 'Stop the timer' : 'Start a timer'}"
+      title="${koerer ? 'Stop the timer' : 'Start a timer'}">${icon(koerer ? 'stop' : 'play', 16)}</button>`}
+  </div>`;
+}
+
+/** Binder en liste af opgaverakker. Kaldes ÉT sted pr. optegning. */
+function bindOpgaveListe(host) {
+  host.querySelectorAll('[data-start]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.start;
+      if (koerer) stopTimer();
+      else startTimerPaa(el.dataset.start);
+    });
+  });
+  host.querySelectorAll('[data-tick]').forEach((el) => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await skiftFaerdig(el.dataset.tick);
+    });
+  });
+  host.querySelectorAll('[data-row]').forEach((el) => {
+    el.addEventListener('click', () => aabnOpgave(el.dataset.id));
+    // Enter aabner den raekke, der har fokus. Piletasterne foerte hertil.
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); aabnOpgave(el.dataset.id); }
+      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.id); }
+    });
+  });
+}
+
+async function skiftFaerdig(id) {
+  const it = state.items.find((x) => x.id === id);
+  const luk = !it || it.status !== 'done';
+  try {
+    await api('POST', `/api/v1/tasks/${id}/complete`, { done: luk });
+    await genindlaes();
+    if (luk) toast('Completed.', { label: 'Undo', run: async () => {
+      await api('POST', `/api/v1/tasks/${id}/complete`, { done: false });
+      await genindlaes();
+    } });
+  } catch (ex) { toast(ex.message); }
+}
+
+/* --------------------------------------------------------------- sider */
+
+async function tegnIDag() {
+  const host = document.getElementById('pageHost');
+  const [d, p] = await Promise.all([
+    api('GET', '/api/v1/items?kind=task'),
+    api('GET', `/api/v1/entries?from=${state.today}&to=${state.today}`),
+  ]);
+  state.items = d.items;
+  const aabne = d.items.filter((t) => t.status !== 'done');
+  const forfalder = aabne.filter((t) => t.dueDate && t.dueDate <= state.today);
+  const resten = aabne.filter((t) => !forfalder.includes(t));
+  const faerdige = d.items.filter((t) => t.status === 'done' && t.completedAt
+    && new Date(t.completedAt * 1000).toISOString().slice(0, 10) === state.today);
+
+  host.innerHTML = `<div class="page">
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>Today</h1>
+      <button class="btn" id="logManual">${icon('plus', 15)} Log time</button>
+    </div>
+    <p class="lead">${esc(BESKRIVELSER.today)}</p>
+
+    <div class="card">
+      <h2>${esc(tovoBeregn.formatVarighed(state.todayMinutes || 0))} today</h2>
+      ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
+    : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
+      ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}
+    </div>
+
+    <div data-keynav>
+      ${afsnit('Due or overdue', forfalder)}
+      ${afsnit('Everything else', resten)}
+      ${faerdige.length ? afsnit('Done today', faerdige) : ''}
+    </div>
+    ${!d.items.length ? '<div class="empty"><p class="empty-title">Nothing here yet</p>'
+      + '<p>Type in the field above to add your first task.</p></div>' : ''}
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · Space completes · Esc leaves
+      · ⌘⇧M logs time by hand</p>
+  </div>`;
+  bindOpgaveListe(host);
+  bindPoster(host, d.items);
+  document.getElementById('logManual').addEventListener('click', () => aabnManuel());
+}
+
+function afsnit(titel, liste, opt) {
+  if (!liste.length) return '';
+  return `<h2 class="group">${esc(titel)}<span class="group-count">${liste.length}</span></h2>
+    ${liste.map((it) => opgaveRaekke(it, opt)).join('')}`;
+}
+
+async function tegnProjekter() {
+  const host = document.getElementById('pageHost');
+  if (state.openProject) { await tegnProjekt(state.openProject); return; }
+  const d = await api('GET', '/api/v1/items?kind=task');
+  state.items = d.items;
+
+  host.innerHTML = `<div class="page">
+    <h1>Projects</h1>
+    <p class="lead">${esc(BESKRIVELSER.projects)}</p>
+    ${state.projects.length ? `<div class="cards">${state.projects.map((p) => {
+      const opgaver = d.items.filter((t) => t.projectId === p.id);
+      const aabne = opgaver.filter((t) => t.status !== 'done').length;
+      return `<button class="card projectcard" data-projekt="${esc(p.id)}">
+        <h2>${esc(p.name)}</h2>
+        <div class="meta">${esc(p.customer || 'no customer')} · ${aabne} open · ${opgaver.length} total</div>
+      </button>`;
+    }).join('')}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
+      + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
+  </div>`;
+  host.querySelectorAll('[data-projekt]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
+  });
+}
+
+async function tegnProjekt(id) {
+  const host = document.getElementById('pageHost');
+  let d;
+  try {
+    d = await api('GET', `/api/v1/projects/${id}`);
+  } catch (ex) {
+    state.openProject = null;
+    toast(ex.message);
+    await tegnProjekter();
+    return;
+  }
+  state.items = d.tasks;
+  const p = d.project;
+  const r = d.rollup;
+  const aabne = d.tasks.filter((t) => t.status !== 'done');
+  const faerdige = d.tasks.filter((t) => t.status === 'done');
+  const sektioner = (p.sections || []).slice().sort((a, b) => a.position - b.position);
+  const iSektion = (sid) => aabne.filter((t) => (t.sectionId || null) === sid);
+
+  host.innerHTML = `<div class="page">
+    <button class="linkbtn" id="tilbage">← Projects</button>
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>${esc(p.name)}</h1>
+      <button class="btn" id="bulkLinks">Copy start links</button>
+    </div>
+    <p class="lead">${esc(p.customer || 'No customer set')}</p>
+
+    <div class="card">
+      <div class="row">
+        <div style="flex:1"><div class="meta">Estimated</div>
+          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.estimat))}</div></div>
+        <div style="flex:1"><div class="meta">Budget</div>
+          <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div></div>
+        <div style="flex:1"><div class="meta">Spent</div>
+          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div></div>
+        <div style="flex:1"><div class="meta">Left</div>
+          <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div></div>
+      </div>
+      ${r.estimatOverRamme ? '<p class="meta warnline">The estimates add up to more than the budget — '
+    + 'that is more work than was sold.</p>' : ''}
+      ${r.procent !== null && r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''}
+    </div>
+
+    <div data-keynav>
+      ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
+      ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
+      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent }) : ''}
+    </div>
+    ${!d.tasks.length ? '<div class="empty"><p class="empty-title">No tasks in this project</p>'
+      + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
+  </div>`;
+  document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  document.getElementById('bulkLinks').addEventListener('click', async () => {
+    try {
+      // Markdown-listen laves paa SERVEREN, saa den ser ens ud, uanset hvem
+      // der beder om den - ogsaa en MCP-klient senere.
+      const d = await api('POST', `/api/v1/projects/${p.id}/links`, {});
+      if (!d.links.length) { toast('No open tasks to link to.'); return; }
+      const ok = await kopier(d.markdown);
+      toast(ok ? `${d.links.length} links copied as markdown — paste them into OneNote.`
+        : 'Could not reach the clipboard. Open a task to copy its link by hand.');
+    } catch (ex) { toast(ex.message); }
+  });
+  bindOpgaveListe(host);
+}
+
+/* ---------------------------------------------------------- detaljeruden */
+
+async function aabnOpgave(id) {
+  let it;
+  let kommentarer = [];
+  let startLink = null;
+  try {
+    const d = await api('GET', `/api/v1/items/${id}`);
+    it = d.item;
+    startLink = d.link;
+    kommentarer = (await api('GET', `/api/v1/tasks/${id}/comments`)).comments;
+  } catch (ex) { toast(ex.message); return; }
+
+  detailState.id = id;
+  const projekt = state.projects.find((p) => p.id === it.projectId);
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card detail" role="dialog" aria-label="Task">
+      <div class="detail-head">
+        <button class="tick big${it.status === 'done' ? ' on' : ''}" id="dTick"
+          aria-label="${it.status === 'done' ? 'Reopen' : 'Complete'}"></button>
+        <input class="detail-title input" id="dTitle" value="${esc(it.title)}">
+      </div>
+
+      <label class="field"><span>Notes</span>
+        <textarea class="input" id="dNote">${esc(it.note || '')}</textarea></label>
+
+      <div class="row">
+        <label class="field" style="flex:1"><span>Estimate</span>
+          <input class="input" id="dEst" placeholder="2,5t · 90m · 1t30m"
+            value="${esc(it.estimateMinutes ? tovoBeregn.formatVarighed(it.estimateMinutes) : '')}"></label>
+        <label class="field" style="flex:1"><span>Due</span>
+          <input class="input" id="dDue" type="date" value="${esc(it.dueDate || '')}"></label>
+        <label class="field" style="flex:1"><span>Priority</span>
+          <select class="input" id="dPrio">
+            <option value="">—</option>
+            ${['low', 'medium', 'high'].map((x) => `<option value="${x}"${it.priority === x ? ' selected' : ''}>${x}</option>`).join('')}
+          </select></label>
+      </div>
+
+      <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
+
+      <h2 style="margin-top:18px">Start link</h2>
+      <p class="meta">Paste it into OneNote next to the task. One click starts the timer,
+        the next one stops it — no sign-in needed.</p>
+      <div class="row">
+        <button class="btn" id="dStartLink">${startLink ? 'Copy start link' : 'Create start link'}</button>
+        ${startLink ? '<button class="linkbtn" id="dRevoke">revoke</button>' : ''}
+      </div>
+      ${startLink ? `<p class="meta startlink-url">${esc(startLink.url)}</p>` : ''}
+
+      <h2 style="margin-top:18px">Links</h2>
+      <ul class="plain" id="dLinks">${(it.links || []).map((l, i) => `
+        <li>${linkHtml(l)}<button class="linkbtn" data-fjernlink="${i}">remove</button></li>`).join('')}</ul>
+      <div class="row">
+        <input class="input" id="dLinkUrl" placeholder="https://… or onenote:…" style="flex:2">
+        <input class="input" id="dLinkLabel" placeholder="Label" style="flex:1">
+        <button class="btn" id="dLinkAdd">Add link</button>
+      </div>
+
+      <h2 style="margin-top:18px">Comments</h2>
+      <ul class="plain" id="dComments">${kommentarer.map((c) => `
+        <li><span>${linkify(c.text)}</span></li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
+      <div class="row">
+        <input class="input" id="dComment" placeholder="Write a comment…" style="flex:1">
+        <button class="btn" id="dCommentAdd">Add</button>
+      </div>
+
+      <div class="modal-foot">
+        <button class="btn primary" id="dSave">Save</button>
+        <button class="btn" id="dStart">${icon('play', 15)} Start timer</button>
+        <button class="btn" id="dLog">Log time</button>
+        <button class="btn" id="dClose">Close</button>
+        <span style="flex:1"></span>
+        <button class="btn danger" id="dDelete">Delete</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  bindDetalje(host, it, startLink);
+}
+
+/* Et link tegnes af den HVIDLISTEDE vej - ikke af linkify, som kun tillader
+   http(s). onenote: er hele grunden til, at tovo findes: opgaverne bor i
+   OneNote, og linket skal kunne klikkes. Serveren har allerede afvist alt
+   andet end http, https og onenote (rentLink). */
+function linkHtml(l) {
+  return `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>`;
+}
+
+function bindDetalje(host, it, startLink) {
+  const luk = () => { host.remove(); detailState.id = null; };
+  const felter = () => ({
+    title: document.getElementById('dTitle').value,
+    note: document.getElementById('dNote').value,
+    dueDate: document.getElementById('dDue').value || null,
+    priority: document.getElementById('dPrio').value || null,
+  });
+
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  document.getElementById('dClose').addEventListener('click', luk);
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+
+  document.getElementById('dSave').addEventListener('click', async () => {
+    const f = felter();
+    const raa = document.getElementById('dEst').value.trim();
+    // Varigheden tolkes af beregn.js - samme funktion som `~` i paletten og
+    // som serveren bruger. To tolkninger ville vaere to sandheder.
+    if (raa) {
+      const m = tovoBeregn.parseVarighed(raa);
+      if (!m) { toast(`I did not understand "${raa}" as a duration.`); return; }
+      f.estimateMinutes = m;
+    } else f.estimateMinutes = null;
+    try {
+      await api('PATCH', `/api/v1/items/${it.id}`, f);
+      luk();
+      await genindlaes();
+      toast('Saved.');
+    } catch (ex) { toast(ex.message); }
+  });
+
+  document.getElementById('dStartLink').addEventListener('click', async () => {
+    try {
+      // Findes linket, gav serveren det med - saa er der intet at oprette.
+      const url = startLink ? startLink.url
+        : (await api('POST', `/api/v1/tasks/${it.id}/link`, {})).link.url;
+      const ok = await kopier(url);
+      toast(ok ? 'Start link copied.' : `Copy it by hand: ${url}`);
+      if (!startLink) { luk(); aabnOpgave(it.id); }
+    } catch (ex) { toast(ex.message); }
+  });
+
+  const tilbagekald = document.getElementById('dRevoke');
+  if (tilbagekald) {
+    tilbagekald.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/tasks/${it.id}/link`);
+        toast('The link no longer works. Any copy of it is dead.');
+        luk();
+        aabnOpgave(it.id);
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+
+  document.getElementById('dStart').addEventListener('click', async () => {
+    luk();
+    await startTimerPaa(it.id);
+  });
+  document.getElementById('dLog').addEventListener('click', () => { luk(); aabnManuel(it.id); });
+
+  document.getElementById('dTick').addEventListener('click', async () => {
+    luk();
+    await skiftFaerdig(it.id);
+  });
+
+  document.getElementById('dDelete').addEventListener('click', async () => {
+    try {
+      await api('DELETE', `/api/v1/items/${it.id}`);
+      luk();
+      await genindlaes();
+      toast('Deleted.');
+    } catch (ex) { toast(ex.message); }
+  });
+
+  document.getElementById('dLinkAdd').addEventListener('click', async () => {
+    const url = document.getElementById('dLinkUrl').value.trim();
+    if (!url) return;
+    const links = (it.links || []).concat([{ url, label: document.getElementById('dLinkLabel').value.trim() }]);
+    try {
+      const d = await api('PATCH', `/api/v1/items/${it.id}`, { links });
+      // Serveren afviser alt uden for hvidlisten tavst - saa hvis listen ikke
+      // voksede, var linket ikke et, vi tager imod. Sig det.
+      if ((d.item.links || []).length === (it.links || []).length) {
+        toast('Only http, https and onenote: links can be saved.');
+        return;
+      }
+      luk();
+      aabnOpgave(it.id);
+    } catch (ex) { toast(ex.message); }
+  });
+
+  host.querySelectorAll('[data-fjernlink]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const links = (it.links || []).filter((_, i) => i !== Number(el.dataset.fjernlink));
+      await api('PATCH', `/api/v1/items/${it.id}`, { links });
+      luk();
+      aabnOpgave(it.id);
+    });
+  });
+
+  const tilfoejKommentar = async () => {
+    const tekst = document.getElementById('dComment').value.trim();
+    if (!tekst) return;
+    try {
+      await api('POST', `/api/v1/tasks/${it.id}/comments`, { text: tekst });
+      luk();
+      aabnOpgave(it.id);
+    } catch (ex) { toast(ex.message); }
+  };
+  document.getElementById('dCommentAdd').addEventListener('click', tilfoejKommentar);
+  document.getElementById('dComment').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); tilfoejKommentar(); }
+  });
+
+  document.getElementById('dTitle').focus();
+}
+
+/* ---- p4_timer.js ---- */
+'use strict';
+/* tovo - timeren, tidsposterne og den manuelle registrering.
+ *
+ * Ingen udregninger her. Alt hvad der ligner et tal kommer fra beregn.js -
+ * ogsaa de smaa. Webappen og MCP skal svare det samme (CLAUDE.md).
+ */
+
+/*
+ * Bjaelken bor i <body>, UDEN FOR det element render() skifter ud.
+ * Ellers forsvinder den ved hver optegning (doda F8).
+ *
+ * Og den taeller ud fra STARTTIDSPUNKTET, aldrig ved at laegge et sekund til
+ * en variabel: en taeller nulstilles ved hver gentegning og driver, naar
+ * fanen har vaeret i baggrunden. `Date.now() - start` er korrekt efter en
+ * fuld sideindlaesning, efter en time i baggrunden og paa tvaers af faner.
+ */
+const timerState = { data: null, tik: null };
+
+function tegnTimerBjaelke() {
+  let bar = document.getElementById('timerBar');
+  const t = timerState.data;
+  if (!t) {
+    if (bar) bar.remove();
+    document.title = state.config.appName || 'tovo';
+    stopTik();
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'timerbar';
+    bar.id = 'timerBar';
+    document.body.appendChild(bar);
+  }
+  const gaaet = forloebet(t);
+  bar.classList.toggle('warn', !!t.tooLong);
+  bar.innerHTML = `
+    <button class="timerbar-main" id="timerOpen">
+      <span class="timerbar-dot"></span>
+      <span class="timerbar-text">
+        <span class="timerbar-title">${esc(t.taskTitle)}</span>
+        <span class="timerbar-sub meta">${esc(t.projectName || 'no project')}${t.tooLong
+    ? ` · running for over ${esc(tovoBeregn.formatVarighed(t.warnAfterMinutes))}` : ''}</span>
+      </span>
+    </button>
+    <span class="timerbar-time">${esc(gaaet)}</span>
+    <button class="btn" id="timerStop">${icon('stop', 15)} Stop</button>`;
+  document.getElementById('timerStop').addEventListener('click', stopTimer);
+  document.getElementById('timerOpen').addEventListener('click', () => aabnOpgave(t.entry.taskId));
+  // Titlen er den eneste visning, der er der, ogsaa naar fanen ikke er det.
+  document.title = `${gaaet} · ${t.taskTitle} — tovo`;
+  startTik();
+}
+
+/** Den forloebne tid, formateret af beregn.js. */
+function forloebet(t) {
+  const minutter = Math.max(0, Math.round((Date.now() / 1000 - t.entry.startedAt) / 60));
+  return tovoBeregn.formatVarighed(minutter);
+}
+
+function startTik() {
+  if (timerState.tik) return;
+  // Ét minut er den groveste opdeling, der stadig foeles praecis - og den
+  // koster ingenting. Bjaelken tegnes om, ikke hele siden.
+  timerState.tik = setInterval(() => { if (timerState.data) tegnTimerBjaelke(); }, 30000);
+}
+
+function stopTik() {
+  if (timerState.tik) { clearInterval(timerState.tik); timerState.tik = null; }
+}
+
+async function startTimerPaa(taskId) {
+  try {
+    const d = await api('POST', '/api/v1/timer/start', { taskId });
+    timerState.data = d.timer;
+    tegnTimerBjaelke();
+    if (d.stopped) toast('Stopped the timer that was running.');
+    await genindlaes();
+  } catch (ex) { toast(ex.message); }
+}
+
+async function stopTimer() {
+  try {
+    await api('POST', '/api/v1/timer/stop', {});
+    timerState.data = null;
+    tegnTimerBjaelke();
+    await genindlaes();
+    toast('Timer stopped.');
+  } catch (ex) { toast(ex.message); }
+}
+
+/* ------------------------------------------------- manuel registrering */
+
+/**
+ * Manuel registrering er LIGEVAERDIG med timeren, ikke en noedloesning.
+ * Egen knap, egen genvej, og et felt der forstaar begge maader at huske en
+ * time paa: et interval (9-11.30) eller en varighed (1,5t).
+ */
+function aabnManuel(forvalgtOpgave) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  const opgaver = (state.items || []).filter((t) => t.status !== 'done');
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="Log time">
+      <h2>Log time</h2>
+      <p class="meta">On any date — the timer is not the only way in.</p>
+      <label class="field"><span>Task</span>
+        <select class="input" id="mTask">
+          ${opgaver.map((t) => `<option value="${esc(t.id)}"${t.id === forvalgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`).join('')}
+        </select></label>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Date</span>
+          <input class="input" id="mDate" type="date" value="${esc(state.today)}"></label>
+        <label class="field" style="flex:1"><span>Time</span>
+          <input class="input" id="mText" placeholder="9-11.30 · 1,5t · 90m" autocomplete="off"></label>
+      </div>
+      <label class="field"><span>Note (optional)</span>
+        <input class="input" id="mNote" placeholder="What was it?"></label>
+      <div class="modal-foot">
+        <button class="btn primary" id="mSave">Log it</button>
+        <button class="btn" id="mClose">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('mClose').addEventListener('click', luk);
+
+  const gem = async () => {
+    const taskId = document.getElementById('mTask').value;
+    if (!taskId) { toast('Create a task first — time is always logged on something.'); return; }
+    try {
+      await api('POST', '/api/v1/entries', {
+        taskId,
+        date: document.getElementById('mDate').value,
+        text: document.getElementById('mText').value,
+        note: document.getElementById('mNote').value,
+      });
+      luk();
+      await genindlaes();
+      toast('Logged.');
+    } catch (ex) { toast(ex.message); }
+  };
+  document.getElementById('mSave').addEventListener('click', gem);
+  document.getElementById('mText').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); gem(); }
+  });
+  document.getElementById('mText').focus();
+}
+
+/* Genvejen skal have en modifikator: bare bogstaver aabner soegefeltet, og
+   det maa de blive ved med (planens tastaturregel). */
+document.addEventListener('keydown', (e) => {
+  if (!state.user) return;
+  if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+  if (e.key !== 'm' && e.key !== 'M') return;
+  e.preventDefault();
+  if (document.querySelector('.modal')) return;
+  aabnManuel();
+});
+
+/* ------------------------------------------------------- posterne */
+
+function postRaekke(e, opgaver) {
+  const opgave = opgaver.find((t) => t.id === e.taskId);
+  const projekt = opgave ? state.projects.find((p) => p.id === opgave.projectId) : null;
+  const koerer = !e.stoppedAt;
+  const minutter = Math.max(0, Math.round(((e.stoppedAt || Math.floor(Date.now() / 1000)) - e.startedAt) / 60));
+  const fra = new Date(e.startedAt * 1000);
+  const til = e.stoppedAt ? new Date(e.stoppedAt * 1000) : null;
+  const kl = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `<li data-post="${esc(e.id)}">
+    <span class="post-tid meta">${esc(kl(fra))}–${til ? esc(kl(til)) : 'now'}</span>
+    <span class="post-main">
+      <span>${esc(opgave ? opgave.title : 'Deleted task')}</span>
+      <span class="meta">${esc(projekt ? projekt.name : 'no project')} · ${esc(e.source)}${e.note ? ` · ${esc(e.note)}` : ''}</span>
+    </span>
+    <span class="post-sum">${esc(tovoBeregn.formatVarighed(minutter))}${koerer ? ' …' : ''}</span>
+    <button class="linkbtn" data-slet="${esc(e.id)}">delete</button>
+  </li>`;
+}
+
+function bindPoster(host, opgaver) {
+  host.querySelectorAll('[data-slet]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      try {
+        const d = await api('DELETE', `/api/v1/entries/${el.dataset.slet}`);
+        await genindlaes();
+        // Fortryd i 10 sekunder. Posten kom med tilbage fra serveren, saa
+        // gendannelsen bruger de rigtige tidspunkter - ikke et gaet.
+        toast('Entry deleted.', {
+          label: 'Undo',
+          run: async () => {
+            const p = d.deleted;
+            // De PRAECISE tidspunkter tilbage - ikke en tekst, der skal tolkes
+            // igen. Vejen gennem "HH:MM" taber sekunderne, og saa er
+            // fortrydelsen ikke en fortrydelse.
+            await api('POST', '/api/v1/entries', {
+              id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
+              note: p.note, source: p.source,
+            });
+            await genindlaes();
+          },
+        });
+      } catch (ex) { toast(ex.message); }
+    });
+  });
+}
