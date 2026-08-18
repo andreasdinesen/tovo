@@ -143,6 +143,13 @@ async function tegnIDag() {
       <h2>${esc(tovoBeregn.formatVarighed(state.todayMinutes || 0))} today</h2>
       ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
     : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
+      ${(p.gaps || []).length ? `<div class="huller">
+        <div class="meta">Gaps between what you registered — this is where forgotten time hides.</div>
+        ${p.gaps.map((h) => `<button class="hul" data-hul="${esc(h.fra)}-${esc(h.til)}">
+          <span>${esc(h.fra)}–${esc(h.til)}</span>
+          <span class="meta">${esc(tovoBeregn.formatVarighed(h.minutter))} unaccounted</span>
+        </button>`).join('')}
+      </div>` : ''}
       ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}
     </div>
 
@@ -161,6 +168,11 @@ async function tegnIDag() {
   bindOpgaveListe(host);
   bindPoster(host, d.items);
   document.getElementById('logManual').addEventListener('click', () => aabnManuel());
+  // Et hul er et FORSLAG: klikket aabner formularen udfyldt med tidsrummet,
+  // saa man kun skal vaelge opgaven. Ingenting gemmes af sig selv.
+  host.querySelectorAll('[data-hul]').forEach((el) => {
+    el.addEventListener('click', () => aabnManuel(null, { date: state.today, text: el.dataset.hul }));
+  });
 }
 
 /**

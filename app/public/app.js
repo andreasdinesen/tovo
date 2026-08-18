@@ -374,6 +374,44 @@
       };
     }
 
+    /**
+     * HULLERNE paa en dag.
+     *
+     * Det er den funktion, der afsloerer glemt registrering: mellemrummene
+     * mellem det, der ER registreret, fra dagens foerste post til dens
+     * sidste. Der gaettes ikke paa en arbejdsdag - kun det, der faktisk staar
+     * imellem to registreringer, er et hul. Et hul foer den foerste post er
+     * ikke glemt tid; det er morgen.
+     *
+     * @param {number} mindst  minutter - mindre huller er frokost og kaffe
+     * @returns {array} [{fra, til, minutter}] med "HH:MM"
+     */
+    function hullerPaaDag(isoDato, mindst, nu) {
+      const graense = Number(mindst) || 20;
+      const start = Math.floor(new Date(`${isoDato}T00:00:00`).getTime() / 1000);
+      const dagens = entries()
+        .filter((e) => e.startedAt >= start && e.startedAt < start + 86400)
+        .slice()
+        .sort((a, b) => a.startedAt - b.startedAt);
+      if (dagens.length < 2) return [];
+
+      const kl = (unix) => {
+        const d = new Date(unix * 1000);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      };
+
+      const huller = [];
+      let sidsteSlut = dagens[0].stoppedAt || Math.floor((nu || Date.now()) / 1000);
+      for (const e of dagens.slice(1)) {
+        const minutter = Math.round((e.startedAt - sidsteSlut) / 60);
+        if (minutter >= graense) {
+          huller.push({ fra: kl(sidsteSlut), til: kl(e.startedAt), minutter });
+        }
+        sidsteSlut = Math.max(sidsteSlut, e.stoppedAt || Math.floor((nu || Date.now()) / 1000));
+      }
+      return huller;
+    }
+
     /** Minutter pr. dato i perioden - grundlaget for dagsvisningen. */
     function sumPrDag(fra, til, nu) {
       const r = afrunding();
@@ -389,7 +427,7 @@
 
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
-      sumPeriode, sumPrDag, ugerapport, afrunding,
+      sumPeriode, sumPrDag, ugerapport, hullerPaaDag, afrunding,
     };
   }
 
@@ -1339,6 +1377,120 @@
   };
 }));
 
+/* ---- shared/toggl.js ---- */
+/* tovo - Toggls detaljerede rapport (CSV).
+ *
+ * Samme deling som Planner-importen: ALT hvad der kan goere skade -
+ * CSV-parseren, kolonnegenkendelsen og mapningen - ligger her, hvor det kan
+ * testes uden en browser. Selve filvalget og ruden bor i app/parts/.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.tovoToggl = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /**
+   * Toggls detaljerede rapport som CSV.
+   *
+   * Ingen zip og ingen XML denne gang - men samme princip som Planner-importen:
+   * forhaandsvisning foer der skrives, og en kilde (`import`) paa hver post,
+   * saa en rapport kan sige, hvor timerne kom fra.
+   *
+   * CSV-parseren skal kunne haandtere anfoerselstegn og kommaer INDE i felter -
+   * en beskrivelse som "Migrering, del 2" er almindelig, og en split(',') ville
+   * flytte alle kolonner én til venstre fra og med den raekke.
+   */
+  function parseCsv(tekst) {
+    const raekker = [];
+    let felt = '';
+    let raekke = [];
+    let iCitat = false;
+    const t = String(tekst).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    for (let i = 0; i < t.length; i++) {
+      const c = t[i];
+      if (iCitat) {
+        if (c === '"') {
+          if (t[i + 1] === '"') { felt += '"'; i++; } else iCitat = false;
+        } else felt += c;
+        continue;
+      }
+      if (c === '"') { iCitat = true; continue; }
+      if (c === ',') { raekke.push(felt); felt = ''; continue; }
+      if (c === '\n') { raekke.push(felt); raekker.push(raekke); raekke = []; felt = ''; continue; }
+      felt += c;
+    }
+    if (felt || raekke.length) { raekke.push(felt); raekker.push(raekke); }
+    return raekker.filter((r) => r.some((x) => String(x).trim()));
+  }
+
+  /** Kolonnenavne fra Toggls eksport - praefiksmatch, som i Planner-importen. */
+  const TOGGL = {
+    project: (n) => n === 'project',
+    task: (n) => n === 'task',
+    description: (n) => n.startsWith('description'),
+    startDate: (n) => n === 'start date',
+    startTime: (n) => n === 'start time',
+    endDate: (n) => n === 'end date',
+    endTime: (n) => n === 'end time',
+    duration: (n) => n === 'duration',
+  };
+
+  function togglKolonner(hoved) {
+    const ud = {};
+    hoved.forEach((raa, i) => {
+      const n = String(raa || '').trim().toLowerCase();
+      for (const [felt, passer] of Object.entries(TOGGL)) {
+        if (ud[felt] === undefined && passer(n)) ud[felt] = i;
+      }
+    });
+    return ud;
+  }
+
+  /** "01:30:00" -> 90 minutter. */
+  function togglVarighed(raa) {
+    const m = String(raa || '').trim().match(/^(\d+):([0-5]\d):([0-5]\d)$/);
+    if (!m) return null;
+    return Number(m[1]) * 60 + Number(m[2]) + (Number(m[3]) >= 30 ? 1 : 0);
+  }
+
+  function laesToggl(tekst) {
+    const raekker = parseCsv(tekst);
+    if (raekker.length < 2) throw new Error('That file has no rows.');
+    const kort = togglKolonner(raekker[0]);
+    if (kort.startDate === undefined || kort.startTime === undefined) {
+      throw new Error('This does not look like a Toggl detailed report — there is no '
+        + '"Start date" and "Start time" column. Export it from Reports → Detailed → CSV.');
+    }
+    const poster = [];
+    const advarsler = [];
+    for (const r of raekker.slice(1)) {
+      const v = (felt) => (kort[felt] === undefined ? '' : String(r[kort[felt]] || '').trim());
+      const dato = v('startDate');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dato)) { advarsler.push(`Skipped a row with the date "${dato}".`); continue; }
+      const start = v('startTime').slice(0, 5);
+      const slut = v('endTime').slice(0, 5);
+      const minutter = togglVarighed(v('duration'));
+      if (!/^\d{2}:\d{2}$/.test(start) || (!minutter && !/^\d{2}:\d{2}$/.test(slut))) {
+        advarsler.push(`Skipped a row on ${dato} without a usable time.`);
+        continue;
+      }
+      poster.push({
+        date: dato,
+        start,
+        slut: /^\d{2}:\d{2}$/.test(slut) ? slut : null,
+        minutter,
+        project: v('project'),
+        // Beskrivelsen ER opgaven i Toggl. Er den tom, bruges Task-kolonnen.
+        title: v('description') || v('task') || 'Untitled',
+      });
+    }
+    return { poster, advarsler };
+  }
+
+  return { laesToggl, parseCsv, togglKolonner, togglVarighed, TOGGL };
+}));
+
 /* ---- p1_core.js ---- */
 'use strict';
 /* tovo - kerne: opstart, tema, login, app-skal.
@@ -1347,7 +1499,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 4;
+const APP_VERSION = 5;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1663,6 +1815,11 @@ function bindGate() {
       state.user = data.user;
       state.config.needsSetup = false;
       state.gateNy = false;
+      // Kom man fra en connector, skal man tilbage til samtykket - ikke ind
+      // i appen. Stien er whitelistet: ellers er login-siden en aaben
+      // viderestilling, og det er praecis dér, brugeren er indstillet paa at
+      // godkende noget (§9a).
+      if (fortsaetTilConnector()) return;
       await hentState();
       render();
     } catch (ex) {
@@ -2030,6 +2187,7 @@ function visBrugerMenu() {
       <div class="meta">${state.user.isAdmin ? 'Administrator' : 'Signed in'}${state.config.secureContext ? '' : ' · plain http'}</div>
     </div>
     <button class="usermenu-item" data-go="settings">${icon('settings', 17)}<span>Settings</span></button>
+    <button class="usermenu-item" data-go="shortcuts">${icon('link', 17)}<span>Keyboard shortcuts</span></button>
     <button class="usermenu-item danger" data-go="logout">${icon('out', 17)}<span>Log out</span></button>`;
 
   const r = anker.getBoundingClientRect();
@@ -2043,6 +2201,7 @@ function visBrugerMenu() {
       const hvad = el.dataset.go;
       luk();
       if (hvad === 'settings') gaaTil('settings');
+      else if (hvad === 'shortcuts') visGenveje();
       else {
         await api('POST', '/api/logout', {});
         state.user = null;
@@ -2096,6 +2255,7 @@ function tomHtml(view) {
 async function settingsHtml() {
   const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
   const kal = await api('GET', '/api/v1/ical').catch(() => ({ feed: null, alarm: 15 }));
+  const n = await api('GET', '/api/v1/keys').catch(() => ({ keys: [], connections: [], mcpUrl: '' }));
   const tema = nuvaerendeTema();
   const knap = (id, navn) => `<button class="btn ${tema === id ? 'primary' : ''}" data-tema="${id}">${navn}</button>`;
   return `
@@ -2117,6 +2277,44 @@ async function settingsHtml() {
           <input class="input" id="pwNew" type="password" autocomplete="new-password"></label>
         <button class="btn" type="submit">Change password</button>
       </form>
+    </div>
+
+    <div class="card">
+      <h2>Claude and other clients</h2>
+      <p class="meta">tovo speaks MCP, so Claude can start timers, log time afterwards and read
+        the weekly report — with exactly the same numbers you see here.</p>
+      <p class="meta startlink-url" id="mcpUrl">${esc(n.mcpUrl)}</p>
+      <div class="row">
+        <button class="btn" id="mcpCopy">Copy the address</button>
+      </div>
+      <p class="meta">In <strong>claude.ai</strong> or the desktop app: add it as a custom
+        connector and sign in — you will be asked to allow it. In <strong>Claude Code</strong>
+        you need a key below instead.</p>
+
+      <h2 style="margin-top:20px">Access keys</h2>
+      ${n.keys.length ? `<ul class="plain">${n.keys.map((k) => `
+        <li><span class="post-main"><span>${esc(k.name)}</span>
+          <span class="meta">${esc(k.scope)} · tovo_${esc(k.prefix)}…
+            ${k.last_used_at ? `· last used ${esc(visTidspunkt(k.last_used_at))}` : '· never used'}</span></span>
+          <button class="linkbtn" data-noegle="${esc(k.id)}">revoke</button></li>`).join('')}</ul>`
+    : '<p class="meta">No keys yet.</p>'}
+      <div class="row">
+        <input class="input" id="keyName" placeholder="What is it for?" style="flex:1">
+        <select class="input" id="keyScope" style="flex:none;width:auto">
+          <option value="full">full — read and write</option>
+          <option value="read">read only</option>
+          <option value="capture">capture only</option>
+        </select>
+        <button class="btn" id="keyAdd">Create a key</button>
+      </div>
+      <p class="meta">A key is shown <strong>once</strong>. Only its hash is stored, so a lost
+        key cannot be read back — make a new one.</p>
+
+      ${n.connections.length ? `<h2 style="margin-top:20px">Connected apps</h2>
+        <ul class="plain">${n.connections.map((c) => `
+          <li><span class="post-main"><span>${esc(c.name)}</span>
+            <span class="meta">${c.last_used_at ? `last used ${esc(visTidspunkt(c.last_used_at))}` : 'not used yet'}</span></span>
+            <button class="linkbtn" data-forbindelse="${esc(c.id)}">disconnect</button></li>`).join('')}</ul>` : ''}
     </div>
 
     <div class="card">
@@ -2151,6 +2349,18 @@ async function settingsHtml() {
         <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
       ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
         <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>Your data</h2>
+      <p class="meta">Everything you have, in one open file. Secrets are left out on purpose:
+        a start link or the calendar address in a file you pass on would give away access.</p>
+      <div class="row">
+        <button class="btn" id="dataEksport">Export as JSON</button>
+        <button class="btn" id="dataToggl">Import history from Toggl</button>
+      </div>
+      <p class="meta">For a real backup, use the panel's own — it covers the whole data folder,
+        database and all.</p>
     </div>
 
     ${state.user.isAdmin ? `
@@ -2205,6 +2415,62 @@ function bindSettings() {
     });
   });
 
+  const eksport = document.getElementById('dataEksport');
+  if (eksport) {
+    eksport.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = '/api/v1/export';
+      a.download = `tovo-${state.today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
+  const tg = document.getElementById('dataToggl');
+  if (tg) tg.addEventListener('click', aabnTogglImport);
+
+  const mcpCopy = document.getElementById('mcpCopy');
+  if (mcpCopy) {
+    mcpCopy.addEventListener('click', async () => {
+      const url = document.getElementById('mcpUrl').textContent;
+      const ok = await kopier(url);
+      toast(ok ? 'Address copied.' : `Copy it by hand: ${url}`);
+    });
+  }
+  const keyAdd = document.getElementById('keyAdd');
+  if (keyAdd) {
+    keyAdd.addEventListener('click', async () => {
+      try {
+        const d = await api('POST', '/api/v1/keys', {
+          name: document.getElementById('keyName').value,
+          scope: document.getElementById('keyScope').value,
+        });
+        // Noeglen vises ÉN gang. Derfor en rude, der bliver staaende, og ikke
+        // en toast, der forsvinder efter tre sekunder.
+        visNoegle(d.key);
+        tegnSide();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  document.querySelectorAll('[data-noegle]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/keys/${el.dataset.noegle}`);
+        tegnSide();
+        toast('The key stopped working right away.');
+      } catch (ex) { toast(ex.message); }
+    });
+  });
+  document.querySelectorAll('[data-forbindelse]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/connections/${el.dataset.forbindelse}`);
+        tegnSide();
+        toast('Disconnected.');
+      } catch (ex) { toast(ex.message); }
+    });
+  });
+
   const icalCreate = document.getElementById('icalCreate');
   if (icalCreate) {
     icalCreate.addEventListener('click', async () => {
@@ -2255,7 +2521,69 @@ function bindSettings() {
   }
 }
 
+/**
+ * Noeglen vises ÉN gang.
+ *
+ * Kun hashen gemmes, saa den kan aldrig laeses tilbage. Derfor en rude, man
+ * selv lukker - og en kopiér-knap med fallback, fordi udklipsholderen
+ * kraever et secure context, og panelet tilgaas over http (doda F2).
+ */
+function visNoegle(noegle) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="New key">
+      <h2>Your new key</h2>
+      <p class="meta">This is the only time it is shown. Only its hash is stored.</p>
+      <p class="startlink-url" id="nyNoegle">${esc(noegle)}</p>
+      <div class="modal-foot">
+        <button class="btn primary" id="nkCopy">Copy</button>
+        <button class="btn" id="nkClose">Done</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  document.getElementById('nkClose').addEventListener('click', luk);
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('nkCopy').addEventListener('click', async () => {
+    const ok = await kopier(noegle);
+    toast(ok ? 'Key copied.' : 'Select it and copy it by hand.');
+  });
+}
+
+/**
+ * Service workeren.
+ *
+ * Registreringen kan IKKE afproeves i Claude Codes browser-panel: den fejler
+ * med "An unknown error occurred when fetching the script" - ogsaa mod en
+ * helt noegen server. Det er panelet, ikke koden (doda F6). Fejler den, sker
+ * der ingenting synligt, og appen virker uaendret.
+ */
+function registrerSW() {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  navigator.serviceWorker.register('sw.js').catch(() => { /* uden SW virker alt stadig */ });
+}
+
 /* --------------------------------------------------------------- start */
+
+/**
+ * Adressen at vende tilbage til efter login.
+ *
+ * KUN samtykkesiden accepteres. Alt andet ville goere login-siden til en
+ * aaben viderestilling.
+ */
+function oauthNaeste() {
+  try {
+    const n = new URLSearchParams(location.search).get('next') || '';
+    return n.startsWith('/oauth/authorize?') ? n : null;
+  } catch { return null; }
+}
+
+function fortsaetTilConnector() {
+  const n = oauthNaeste();
+  if (!n) return false;
+  location.replace(n);
+  return true;
+}
 
 (async function start() {
   anvendTema(nuvaerendeTema());
@@ -2264,6 +2592,9 @@ function bindSettings() {
     document.title = state.config.appName || 'tovo';
     const me = await api('GET', '/api/me');
     state.user = me.user;
+    // Var man allerede logget ind, da connectoren sendte én herhen, skal man
+    // slet ikke se appen - kun samtykkesiden.
+    if (state.user && fortsaetTilConnector()) return;
     if (state.user) await hentState();
   } catch (ex) {
     document.getElementById('root').innerHTML =
@@ -2272,6 +2603,7 @@ function bindSettings() {
     return;
   }
   render();
+  registrerSW();
 }());
 
 /* ---- p2_omni.js ---- */
@@ -2961,6 +3293,13 @@ async function tegnIDag() {
       <h2>${esc(tovoBeregn.formatVarighed(state.todayMinutes || 0))} today</h2>
       ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
     : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
+      ${(p.gaps || []).length ? `<div class="huller">
+        <div class="meta">Gaps between what you registered — this is where forgotten time hides.</div>
+        ${p.gaps.map((h) => `<button class="hul" data-hul="${esc(h.fra)}-${esc(h.til)}">
+          <span>${esc(h.fra)}–${esc(h.til)}</span>
+          <span class="meta">${esc(tovoBeregn.formatVarighed(h.minutter))} unaccounted</span>
+        </button>`).join('')}
+      </div>` : ''}
       ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}
     </div>
 
@@ -2979,6 +3318,11 @@ async function tegnIDag() {
   bindOpgaveListe(host);
   bindPoster(host, d.items);
   document.getElementById('logManual').addEventListener('click', () => aabnManuel());
+  // Et hul er et FORSLAG: klikket aabner formularen udfyldt med tidsrummet,
+  // saa man kun skal vaelge opgaven. Ingenting gemmes af sig selv.
+  host.querySelectorAll('[data-hul]').forEach((el) => {
+    el.addEventListener('click', () => aabnManuel(null, { date: state.today, text: el.dataset.hul }));
+  });
 }
 
 /**
@@ -4666,4 +5010,170 @@ function flytUge(n) {
   const [aa, mm, dd] = kalState.fra.split('-').map(Number);
   kalState.fra = isoDato(new Date(aa, mm - 1, dd + n * 7));
   tegnKalender();
+}
+
+/* ---- p9_polering.js ---- */
+'use strict';
+/* tovo - polering: Toggl-import, genvejsoversigt og eksport.
+ *
+ * Ingen udregninger her. Hullerne, summerne og varighederne kommer fra
+ * beregn.js, som de gør alle andre steder.
+ */
+
+/* ------------------------------------------------- import fra Toggl */
+
+/* CSV-laesningen og kolonnerne ligger i app/shared/toggl.js, saa de kan
+   testes uden en browser. Her er kun ruden. */
+const laesToggl = (tekst) => tovoToggl.laesToggl(tekst);
+
+function aabnTogglImport() {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.id = 'togglModal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Import from Toggl">
+      <h2>Import history from Toggl</h2>
+      <p class="meta">In Toggl: <strong>Reports → Detailed → Export → CSV</strong>.
+        Every row becomes a time entry here, marked as <code>import</code> so a report can
+        tell it apart from time you tracked in tovo.</p>
+      <label class="field"><span>CSV file from Toggl</span>
+        <input class="input" type="file" id="tgFil" accept=".csv,text/csv"></label>
+      <div id="tgKrop"></div>
+      <div class="modal-foot" id="tgFod"><button class="btn" id="tgClose">Cancel</button></div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  document.getElementById('tgClose').addEventListener('click', luk);
+  document.getElementById('tgFil').addEventListener('change', async (e) => {
+    const fil = e.target.files && e.target.files[0];
+    if (fil) togglForhaandsvis(await fil.text());
+  });
+}
+
+let togglState = null;
+
+function togglForhaandsvis(tekst) {
+  const krop = document.getElementById('tgKrop');
+  let d;
+  try {
+    d = laesToggl(tekst);
+  } catch (ex) {
+    krop.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+    return;
+  }
+  togglState = d;
+  const projekter = [...new Set(d.poster.map((p) => p.project).filter(Boolean))];
+  const nye = projekter.filter((n) => !state.projects.some((p) => p.name.toLowerCase() === n.toLowerCase()));
+  const minutter = d.poster.reduce((n, p) => n + (p.minutter
+    || (Number(p.slut.slice(0, 2)) * 60 + Number(p.slut.slice(3)) - (Number(p.start.slice(0, 2)) * 60 + Number(p.start.slice(3))))), 0);
+  const datoer = d.poster.map((p) => p.date).sort();
+
+  krop.innerHTML = `<div class="card">
+      <ul class="plain">
+        <li><span class="post-sum">${d.poster.length}</span><span class="post-main">time entries</span></li>
+        <li><span class="post-sum">${esc(tovoBeregn.formatVarighed(minutter))}</span><span class="post-main">in total</span></li>
+        <li><span class="post-sum">${projekter.length}</span><span class="post-main">projects (${nye.length} new)</span></li>
+      </ul>
+      <p class="meta">${datoer.length ? `${esc(datoer[0])} – ${esc(datoer[datoer.length - 1])}` : ''}</p>
+    </div>
+    ${d.advarsler.length ? `<p class="meta">${d.advarsler.slice(0, 5).map(esc).join('<br>')}
+      ${d.advarsler.length > 5 ? `<br>…and ${d.advarsler.length - 5} more.` : ''}</p>` : ''}
+    <p class="meta">Tasks are matched by name inside the project — a row that matches an
+      existing task lands on it instead of creating a second one.</p>`;
+  document.getElementById('tgFod').innerHTML = `
+    <button class="btn primary" id="tgGo">Import ${d.poster.length} entries</button>
+    <button class="btn" id="tgClose2">Cancel</button>`;
+  document.getElementById('tgClose2').addEventListener('click', () => document.getElementById('togglModal').remove());
+  document.getElementById('tgGo').addEventListener('click', togglImporter);
+}
+
+async function togglImporter() {
+  const fod = document.getElementById('tgFod');
+  fod.innerHTML = '<p class="meta" id="tgFremdrift">Importing…</p>';
+  try {
+    // 1. Projekterne, én gang.
+    const projektId = new Map(state.projects.map((p) => [p.name.toLowerCase(), p.id]));
+    for (const navn of [...new Set(togglState.poster.map((p) => p.project).filter(Boolean))]) {
+      if (projektId.has(navn.toLowerCase())) continue;
+      const p = await api('POST', '/api/v1/items', { kind: 'project', name: navn, sections: [] });
+      projektId.set(navn.toLowerCase(), p.item.id);
+    }
+
+    // 2. Opgaverne. Navn + projekt er noeglen, saa den samme opgave ikke
+    //    bliver oprettet én gang pr. tidspost.
+    const alle = (await api('GET', '/api/v1/items?kind=task')).items;
+    const opgaveId = new Map(alle.map((t) => [`${t.projectId || ''}|${t.title.toLowerCase()}`, t.id]));
+    const skalOprettes = [];
+    for (const post of togglState.poster) {
+      const pid = post.project ? projektId.get(post.project.toLowerCase()) : null;
+      const noegle = `${pid || ''}|${post.title.toLowerCase()}`;
+      if (opgaveId.has(noegle) || skalOprettes.some((x) => x.noegle === noegle)) continue;
+      skalOprettes.push({ noegle, kind: 'task', title: post.title, projectId: pid, status: 'open' });
+    }
+    for (let i = 0; i < skalOprettes.length; i += 25) {
+      const parti = skalOprettes.slice(i, i + 25).map(({ noegle, ...rest }) => rest);
+      const svar = await api('POST', '/api/v1/items/bulk', { items: parti });
+      svar.items.forEach((t, j) => opgaveId.set(skalOprettes[i + j].noegle, t.id));
+      const f = document.getElementById('tgFremdrift');
+      if (f) f.textContent = `Creating tasks… ${Math.min(i + 25, skalOprettes.length)} of ${skalOprettes.length}`;
+    }
+
+    // 3. Tidsposterne, én ad gangen - de har hver sit tidsrum.
+    let n = 0;
+    for (const post of togglState.poster) {
+      const pid = post.project ? projektId.get(post.project.toLowerCase()) : null;
+      const id = opgaveId.get(`${pid || ''}|${post.title.toLowerCase()}`);
+      const startedAt = tovoBeregn.tidspunkt(post.date, post.start);
+      const minutter = post.minutter
+        || (Number(post.slut.slice(0, 2)) * 60 + Number(post.slut.slice(3))
+          - (Number(post.start.slice(0, 2)) * 60 + Number(post.start.slice(3))));
+      await api('POST', '/api/v1/entries', {
+        taskId: id, startedAt, stoppedAt: startedAt + Math.max(1, minutter) * 60, source: 'import',
+      });
+      n += 1;
+      if (n % 10 === 0) {
+        const f = document.getElementById('tgFremdrift');
+        if (f) f.textContent = `Importing entries… ${n} of ${togglState.poster.length}`;
+      }
+    }
+
+    document.getElementById('togglModal').remove();
+    await genindlaes();
+    toast(`Imported ${n} entries from Toggl.`);
+  } catch (ex) {
+    fod.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+  }
+}
+
+/* ------------------------------------------------- genvejsoversigten */
+
+const GENVEJE = [
+  ['⌘K / Ctrl+K', 'Open the search field from anywhere'],
+  ['Just type', 'Starts writing in the search field'],
+  ['+ text', 'Create a task — @project #tag !date ~estimate'],
+  ['Enter', 'Create, or open the selected row'],
+  ['⌘↵', 'Start the timer on the selected task'],
+  ['↑ ↓', 'Move into the list and around in it'],
+  ['Space', 'Complete the task the cursor is on'],
+  ['Esc', 'Leave the list, or close what is open'],
+  ['⌘⇧M', 'Log time by hand'],
+];
+
+function visGenveje() {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Keyboard shortcuts">
+      <h2>Keyboard shortcuts</h2>
+      <table class="data genvejstabel">
+        ${GENVEJE.map(([t, b]) => `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}
+      </table>
+      <p class="meta">Letters never move the cursor into a list — you must be able to type a
+        task that begins with any letter.</p>
+      <div class="modal-foot"><button class="btn primary" id="gvClose">Close</button></div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  document.getElementById('gvClose').addEventListener('click', luk);
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
 }

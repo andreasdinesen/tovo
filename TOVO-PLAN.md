@@ -632,39 +632,90 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
 §9a følges ordret. Værktøjerne kalder `beregn.js` og `parse.js` — **der må ikke findes en
 særlig MCP-vej ind i dataene.**
 
-- [ ] `app/mcp.js` + `app/oauth.js` med `srv`-injektion, kopieret fra doda
-- [ ] Fælde 1: `WWW-Authenticate: Bearer realm="tovo", resource_metadata="…"` på 401 fra `/mcp`.
+- [x] `app/mcp.js` + `app/oauth.js` med `srv`-injektion, kopieret fra doda
+- [x] Fælde 1: `WWW-Authenticate: Bearer realm="tovo", resource_metadata="…"` på 401 fra `/mcp`.
       Verificér med `curl -si … | grep -i www-authenticate`. **Byg den header først.**
-- [ ] Fælde 2: begge `.well-known`-former serveres
-- [ ] Fælde 3: offentlige OAuth-ruter uden om `securityHeaders()`
-- [ ] Fælde 4: `form-action 'self' <klientens origin>` på samtykkesiden
-- [ ] Egen hmac-CSRF på samtykkeformularen, `timingSafeEqual` på **bufferlængder**
-- [ ] Access-tokens i den eksisterende nøgletabel med `client_id` + `expires_at`;
+- [x] Fælde 2: begge `.well-known`-former serveres
+- [x] Fælde 3: offentlige OAuth-ruter uden om `securityHeaders()`
+- [x] Fælde 4: `form-action 'self' <klientens origin>` på samtykkesiden
+- [x] Egen hmac-CSRF på samtykkeformularen, `timingSafeEqual` på **bufferlængder**
+- [x] Access-tokens i den eksisterende nøgletabel med `client_id` + `expires_at`;
       udløbstjekket **i opslaget**; filtreret fra UI'ets nøgleliste med `client_id IS NULL`
-- [ ] Registrerings-rate-limit sat højt (60/time)
-- [ ] Værktøjer:
+- [x] Registrerings-rate-limit sat højt (60/time)
+- [x] Værktøjer:
       `search` · `capture` (hele fangst-linjen, ikke felter) · `start_timer` · `stop_timer` ·
       `current_timer` · `log_time` (bagudrettet — den mest værdifulde) · `list_projects` ·
       `project_status` · `week_report` · `complete_task` · `update_task` · `set_estimate`
-- [ ] `instructions` i initialize-svaret forklarer domænet og siger "opfind aldrig id'er"
+- [x] `instructions` i initialize-svaret forklarer domænet og siger "opfind aldrig id'er"
 
 **Accept:** de otte flow-tests fra §9a (kode på tværs af klienter, engangsbrug, PKCE, roterende
 refresh, udløb, afvisning, tilbagekaldelse, scope). Mindst ét gennemløb med en rigtig fremmed
 `redirect_uri` — `localhost` er same-origin og afslører ikke fælde 4. Tilslut fra claude.ai
 og bed Claude om ugerapporten; tallene skal være identiske med webappens.
 
+**Status 2026-08-18 — fase 8 er bygget.** 123 tests grønne, install-scriptet på 77 %.
+Alle otte flow-tests kører med `https://claude.ai/api/mcp/auth_callback` som redirect —
+altså en rigtig fremmed oprindelse, ikke localhost.
+
+**Fælde 4 bed.** Jeg havde bygget mekanikken (`sendHtml` kan udvide `form-action`) og glemt at
+bruge den på selve samtykkesiden. I en browser ville symptomet have været, at Allow-knappen
+ikke gjorde noget: ingen navigation, ingen serverlog, kun `ERR_ABORTED`. Testen fandt det på
+et sekund, fordi den læser CSP-headeren direkte i stedet for at klikke.
+
+De tre andre fælder er verificeret som planen kræver:
+
+- **Fælde 1** med `curl -si … | grep -i www-authenticate`:
+  `Bearer realm="tovo", resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
+- **Fælde 2**: begge `.well-known`-former svarer.
+- **Fælde 3**: de offentlige ruter har `Access-Control-Allow-Origin: *` og **ingen**
+  `Cross-Origin-Resource-Policy` — den ville få browseren til at afvise svaret alligevel.
+
+Tolv værktøjer, og de kalder de samme funktioner som webappen. Testen sammenligner
+`week_report` og `project_status` mod `/api/v1/report` og `/api/v1/projects/:id` felt for felt:
+samme tal, samme modul. En læsenøgle ser kun læseværktøjer i `tools/list` — og får dem
+alligevel afvist i `tools/call`, fordi listen er en hjælp og ikke en spærring.
+
+**Ikke verificeret:** en rigtig forbindelse fra claude.ai. Flowet er kørt igennem med en
+fremmed redirect_uri, men den sidste prøve er din: tilslut connectoren og bed Claude om
+ugerapporten.
+
 ---
 
 ## Fase 9 · Polering
 
-- [ ] Dagsvisning som tidslinje med huller markeret — den funktion der afslører glemt registrering
-- [ ] Import af historik fra Toggl (CSV-eksport)
-- [ ] PWA/manifest. Service worker **kun** hvis cache-navnet bumpes med versionen og
+- [x] Dagsvisning som tidslinje med huller markeret — den funktion der afslører glemt registrering
+- [x] Import af historik fra Toggl (CSV-eksport)
+- [x] PWA/manifest. Service worker **kun** hvis cache-navnet bumpes med versionen og
       precache-listen peger på `?v=N`-URL'erne (§5) — ellers hober hver release sig op
-- [ ] Tastaturgenvejs-oversigt i UI'et
-- [ ] Dataeksport som JSON med hård størrelsesgrænse (doda F9)
+- [x] Tastaturgenvejs-oversigt i UI'et
+- [x] Dataeksport som JSON med hård størrelsesgrænse (doda F9)
 
 ---
+
+**Status 2026-08-18 — fase 9 er bygget.** 136 tests grønne, install-scriptet på 81 %.
+
+- **Hullerne** ligger på Today, under dagens poster: mellemrummene *mellem* registreringerne,
+  fra dagens første post til dens sidste. Der gættes ikke på en arbejdsdag — tiden før den
+  første post er ikke glemt tid, det er morgen, og et hul, der begyndte ved midnat, ville
+  være støj hver eneste dag. Mellemrum under 20 minutter er frokost og kaffe. Et klik på et
+  hul åbner registreringen **udfyldt** med tidsrummet, så man kun skal vælge opgaven.
+- **Toggl-import** fra den detaljerede CSV-rapport. Den risikable del (CSV-parseren,
+  kolonnerne, mapningen) ligger i `app/shared/toggl.js` og testes uden browser — samme deling
+  som Planner-importen. Posterne får kilden `import`, som er en **femte** kilde ud over
+  planens fire: en rapport skal kunne sige, at de timer er båret ind fra et andet system.
+- **Service worker** med versioneret cache-navn, og build'et fælder, hvis precache-listen
+  ikke peger på præcis de `?v=N`-adresser, `index.html` henter. Spærren er bevist ved at
+  pege den forkert og se build'et stoppe.
+- **Genvejsoversigt** i brugermenuen.
+- **JSON-eksport** med hård grænse på 25 MB — og uden hemmeligheder: hverken start-links,
+  kalenderadressen, nøgler eller kodeordshashen kommer med i en fil, man kan komme til at
+  sende videre.
+
+**Ikke verificeret:** at service workeren registrerer sig. Claude Codes browser-panel kan
+ikke registrere service workers overhovedet — heller ikke mod en nøgen server (doda F6).
+Det, der ER tjekket: at `sw.js` består `node --check`, at cache-navnet bærer versionen, og at
+precache-listen matcher `index.html` statisk. Og Toggl-importen er kørt mod en syntetisk CSV
+med de kolonnenavne, Toggl bruger — ikke mod din egen eksport.
 
 ## Isolationstest (skrives i fase 1, køres i hver fase derefter)
 

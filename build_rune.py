@@ -116,7 +116,33 @@ def stempl_version(version):
             fh.write(ny)
     if f'app.js?v={version}' not in ny:
         fejl('kunne ikke stemple versionen i index.html')
-    print(f'  index.html stemplet med v={version}')
+
+    # Service workerens cache-navn OG dens precache-liste skal foelge SAMME
+    # version. Ellers hober hver udgivelse sig op i browserens cache, og
+    # SW'en kan servere en gammel app.js i det uendelige (§5).
+    sw_sti = os.path.join(PUBLIC, 'sw.js')
+    with open(sw_sti, encoding='utf8') as fh:
+        sw = fh.read()
+    ny_sw = re.sub(r'^const VERSION = \d+;', f'const VERSION = {version};', sw, flags=re.M)
+    if ny_sw != sw:
+        with open(sw_sti, 'w', encoding='utf8') as fh:
+            fh.write(ny_sw)
+    if f'const VERSION = {version};' not in ny_sw:
+        fejl('kunne ikke stemple versionen i sw.js')
+
+    # Og saa DET statiske tjek, §5 peger paa: precache-listen skal indeholde
+    # praecis de ?v=-adresser, index.html henter. Den fejl kan ikke ses i en
+    # browser - den viser sig som en gammel version, der nagler sig fast.
+    i_html = set(re.findall(r'(?:src|href)="((?:style\.css|app\.js)\?v=\d+)"', ny))
+    i_sw = set(re.findall(r'\./((?:style\.css|app\.js)\?v=\$\{VERSION\})', ny_sw))
+    forventet = {n.replace(f'?v={version}', '?v=${VERSION}') for n in i_html}
+    if not i_html:
+        fejl('kunne ikke laese de versionerede adresser ud af index.html')
+    if i_sw != forventet:
+        fejl(f'service workerens precache-liste passer ikke med index.html: '
+             f'{sorted(i_sw)} mod {sorted(forventet)}')
+    print(f'  index.html og sw.js stemplet med v={version} '
+          f'({len(i_html)} versionerede adresser, precache stemmer)')
 
 
 # ------------------------------------------------------------------ 2. payload

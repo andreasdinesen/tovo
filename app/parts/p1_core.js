@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 4;
+const APP_VERSION = 5;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -321,6 +321,11 @@ function bindGate() {
       state.user = data.user;
       state.config.needsSetup = false;
       state.gateNy = false;
+      // Kom man fra en connector, skal man tilbage til samtykket - ikke ind
+      // i appen. Stien er whitelistet: ellers er login-siden en aaben
+      // viderestilling, og det er praecis dér, brugeren er indstillet paa at
+      // godkende noget (§9a).
+      if (fortsaetTilConnector()) return;
       await hentState();
       render();
     } catch (ex) {
@@ -688,6 +693,7 @@ function visBrugerMenu() {
       <div class="meta">${state.user.isAdmin ? 'Administrator' : 'Signed in'}${state.config.secureContext ? '' : ' · plain http'}</div>
     </div>
     <button class="usermenu-item" data-go="settings">${icon('settings', 17)}<span>Settings</span></button>
+    <button class="usermenu-item" data-go="shortcuts">${icon('link', 17)}<span>Keyboard shortcuts</span></button>
     <button class="usermenu-item danger" data-go="logout">${icon('out', 17)}<span>Log out</span></button>`;
 
   const r = anker.getBoundingClientRect();
@@ -701,6 +707,7 @@ function visBrugerMenu() {
       const hvad = el.dataset.go;
       luk();
       if (hvad === 'settings') gaaTil('settings');
+      else if (hvad === 'shortcuts') visGenveje();
       else {
         await api('POST', '/api/logout', {});
         state.user = null;
@@ -754,6 +761,7 @@ function tomHtml(view) {
 async function settingsHtml() {
   const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
   const kal = await api('GET', '/api/v1/ical').catch(() => ({ feed: null, alarm: 15 }));
+  const n = await api('GET', '/api/v1/keys').catch(() => ({ keys: [], connections: [], mcpUrl: '' }));
   const tema = nuvaerendeTema();
   const knap = (id, navn) => `<button class="btn ${tema === id ? 'primary' : ''}" data-tema="${id}">${navn}</button>`;
   return `
@@ -775,6 +783,44 @@ async function settingsHtml() {
           <input class="input" id="pwNew" type="password" autocomplete="new-password"></label>
         <button class="btn" type="submit">Change password</button>
       </form>
+    </div>
+
+    <div class="card">
+      <h2>Claude and other clients</h2>
+      <p class="meta">tovo speaks MCP, so Claude can start timers, log time afterwards and read
+        the weekly report — with exactly the same numbers you see here.</p>
+      <p class="meta startlink-url" id="mcpUrl">${esc(n.mcpUrl)}</p>
+      <div class="row">
+        <button class="btn" id="mcpCopy">Copy the address</button>
+      </div>
+      <p class="meta">In <strong>claude.ai</strong> or the desktop app: add it as a custom
+        connector and sign in — you will be asked to allow it. In <strong>Claude Code</strong>
+        you need a key below instead.</p>
+
+      <h2 style="margin-top:20px">Access keys</h2>
+      ${n.keys.length ? `<ul class="plain">${n.keys.map((k) => `
+        <li><span class="post-main"><span>${esc(k.name)}</span>
+          <span class="meta">${esc(k.scope)} · tovo_${esc(k.prefix)}…
+            ${k.last_used_at ? `· last used ${esc(visTidspunkt(k.last_used_at))}` : '· never used'}</span></span>
+          <button class="linkbtn" data-noegle="${esc(k.id)}">revoke</button></li>`).join('')}</ul>`
+    : '<p class="meta">No keys yet.</p>'}
+      <div class="row">
+        <input class="input" id="keyName" placeholder="What is it for?" style="flex:1">
+        <select class="input" id="keyScope" style="flex:none;width:auto">
+          <option value="full">full — read and write</option>
+          <option value="read">read only</option>
+          <option value="capture">capture only</option>
+        </select>
+        <button class="btn" id="keyAdd">Create a key</button>
+      </div>
+      <p class="meta">A key is shown <strong>once</strong>. Only its hash is stored, so a lost
+        key cannot be read back — make a new one.</p>
+
+      ${n.connections.length ? `<h2 style="margin-top:20px">Connected apps</h2>
+        <ul class="plain">${n.connections.map((c) => `
+          <li><span class="post-main"><span>${esc(c.name)}</span>
+            <span class="meta">${c.last_used_at ? `last used ${esc(visTidspunkt(c.last_used_at))}` : 'not used yet'}</span></span>
+            <button class="linkbtn" data-forbindelse="${esc(c.id)}">disconnect</button></li>`).join('')}</ul>` : ''}
     </div>
 
     <div class="card">
@@ -809,6 +855,18 @@ async function settingsHtml() {
         <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
       ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
         <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>Your data</h2>
+      <p class="meta">Everything you have, in one open file. Secrets are left out on purpose:
+        a start link or the calendar address in a file you pass on would give away access.</p>
+      <div class="row">
+        <button class="btn" id="dataEksport">Export as JSON</button>
+        <button class="btn" id="dataToggl">Import history from Toggl</button>
+      </div>
+      <p class="meta">For a real backup, use the panel's own — it covers the whole data folder,
+        database and all.</p>
     </div>
 
     ${state.user.isAdmin ? `
@@ -863,6 +921,62 @@ function bindSettings() {
     });
   });
 
+  const eksport = document.getElementById('dataEksport');
+  if (eksport) {
+    eksport.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = '/api/v1/export';
+      a.download = `tovo-${state.today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
+  const tg = document.getElementById('dataToggl');
+  if (tg) tg.addEventListener('click', aabnTogglImport);
+
+  const mcpCopy = document.getElementById('mcpCopy');
+  if (mcpCopy) {
+    mcpCopy.addEventListener('click', async () => {
+      const url = document.getElementById('mcpUrl').textContent;
+      const ok = await kopier(url);
+      toast(ok ? 'Address copied.' : `Copy it by hand: ${url}`);
+    });
+  }
+  const keyAdd = document.getElementById('keyAdd');
+  if (keyAdd) {
+    keyAdd.addEventListener('click', async () => {
+      try {
+        const d = await api('POST', '/api/v1/keys', {
+          name: document.getElementById('keyName').value,
+          scope: document.getElementById('keyScope').value,
+        });
+        // Noeglen vises ÉN gang. Derfor en rude, der bliver staaende, og ikke
+        // en toast, der forsvinder efter tre sekunder.
+        visNoegle(d.key);
+        tegnSide();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  document.querySelectorAll('[data-noegle]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/keys/${el.dataset.noegle}`);
+        tegnSide();
+        toast('The key stopped working right away.');
+      } catch (ex) { toast(ex.message); }
+    });
+  });
+  document.querySelectorAll('[data-forbindelse]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/connections/${el.dataset.forbindelse}`);
+        tegnSide();
+        toast('Disconnected.');
+      } catch (ex) { toast(ex.message); }
+    });
+  });
+
   const icalCreate = document.getElementById('icalCreate');
   if (icalCreate) {
     icalCreate.addEventListener('click', async () => {
@@ -913,7 +1027,69 @@ function bindSettings() {
   }
 }
 
+/**
+ * Noeglen vises ÉN gang.
+ *
+ * Kun hashen gemmes, saa den kan aldrig laeses tilbage. Derfor en rude, man
+ * selv lukker - og en kopiér-knap med fallback, fordi udklipsholderen
+ * kraever et secure context, og panelet tilgaas over http (doda F2).
+ */
+function visNoegle(noegle) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="New key">
+      <h2>Your new key</h2>
+      <p class="meta">This is the only time it is shown. Only its hash is stored.</p>
+      <p class="startlink-url" id="nyNoegle">${esc(noegle)}</p>
+      <div class="modal-foot">
+        <button class="btn primary" id="nkCopy">Copy</button>
+        <button class="btn" id="nkClose">Done</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  document.getElementById('nkClose').addEventListener('click', luk);
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('nkCopy').addEventListener('click', async () => {
+    const ok = await kopier(noegle);
+    toast(ok ? 'Key copied.' : 'Select it and copy it by hand.');
+  });
+}
+
+/**
+ * Service workeren.
+ *
+ * Registreringen kan IKKE afproeves i Claude Codes browser-panel: den fejler
+ * med "An unknown error occurred when fetching the script" - ogsaa mod en
+ * helt noegen server. Det er panelet, ikke koden (doda F6). Fejler den, sker
+ * der ingenting synligt, og appen virker uaendret.
+ */
+function registrerSW() {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  navigator.serviceWorker.register('sw.js').catch(() => { /* uden SW virker alt stadig */ });
+}
+
 /* --------------------------------------------------------------- start */
+
+/**
+ * Adressen at vende tilbage til efter login.
+ *
+ * KUN samtykkesiden accepteres. Alt andet ville goere login-siden til en
+ * aaben viderestilling.
+ */
+function oauthNaeste() {
+  try {
+    const n = new URLSearchParams(location.search).get('next') || '';
+    return n.startsWith('/oauth/authorize?') ? n : null;
+  } catch { return null; }
+}
+
+function fortsaetTilConnector() {
+  const n = oauthNaeste();
+  if (!n) return false;
+  location.replace(n);
+  return true;
+}
 
 (async function start() {
   anvendTema(nuvaerendeTema());
@@ -922,6 +1098,9 @@ function bindSettings() {
     document.title = state.config.appName || 'tovo';
     const me = await api('GET', '/api/me');
     state.user = me.user;
+    // Var man allerede logget ind, da connectoren sendte én herhen, skal man
+    // slet ikke se appen - kun samtykkesiden.
+    if (state.user && fortsaetTilConnector()) return;
     if (state.user) await hentState();
   } catch (ex) {
     document.getElementById('root').innerHTML =
@@ -930,4 +1109,5 @@ function bindSettings() {
     return;
   }
   render();
+  registrerSW();
 }());

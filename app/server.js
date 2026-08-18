@@ -204,6 +204,36 @@ const MIGRATIONS = [
       );
     `);
   },
+
+  function m3(d) {
+    /*
+     * OAuth 2.1 til claude.ai. Webklienten kender ikke serveren paa forhaand,
+     * saa den skal kunne registrere sig selv og sende brugeren gennem et login.
+     *
+     * Access-tokens faar IKKE deres egen tabel: de ligger i `tokens` med et
+     * client_id og et udloeb, saa de valideres ad praecis samme vej som en
+     * haandlavet noegle. Én validering, ét sted at tilbagekalde, ét sted at
+     * rate-limite (§9a). Kolonnerne findes allerede fra m1.
+     */
+    d.exec(`
+      CREATE TABLE oauth_clients (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        redirect_uris TEXT NOT NULL,          -- JSON-array, matches NOEJAGTIGT
+        created_at    INTEGER NOT NULL
+      );
+      CREATE TABLE oauth_refresh (
+        hash       TEXT PRIMARY KEY,          -- sha256, aldrig klartekst
+        token_id   TEXT NOT NULL,
+        client_id  TEXT NOT NULL,
+        scope      TEXT NOT NULL,
+        user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
+      CREATE INDEX ix_oauth_refresh_klient ON oauth_refresh(client_id) WHERE revoked_at IS NULL;
+    `);
+  },
 ];
 
 function migrate() {
@@ -1044,7 +1074,13 @@ function soeg(userId, raa, opts) {
  * kaldstederne.
  */
 
-const KILDER = new Set(['timer', 'manuel', 'link', 'mcp']);
+/*
+ * Kilderne. Planen naevner fire; 'import' er den femte og kom til med
+ * Toggl-historikken: en rapport skal kunne sige, at de timer er baaret ind
+ * fra et andet system og ikke registreret her. Uden den ville historikken
+ * ligne noget, man selv havde taget tid paa.
+ */
+const KILDER = new Set(['timer', 'manuel', 'link', 'mcp', 'import']);
 
 function pakPost(row) {
   return {
@@ -1281,8 +1317,23 @@ function escHtml(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function sendHtml(res, status, html) {
+/**
+ * @param {string} [formAction] Klientens origin.
+ *
+ * FAELDE 4 (§9a): `form-action 'self'` haandhaeves OGSAA paa den
+ * omdirigering, indsendelsen foerer til. Samtykkesiden POSTer til sig selv
+ * (= 'self', ser rigtigt ud) og svarer 302 til klientens redirect_uri paa et
+ * fremmed domaene - og saa blokerer browseren HELE POST'en. Der sker intet:
+ * ingen navigation, ingen serverlog, kun ERR_ABORTED. Kuren er at tilfoeje
+ * PRAECIS den ene oprindelse, klienten er registreret med.
+ */
+function sendHtml(res, status, html, formAction) {
   securityHeaders(res);
+  if (formAction) {
+    const csp = res.getHeader('Content-Security-Policy')
+      .replace("form-action 'self'", `form-action 'self' ${formAction}`);
+    res.setHeader('Content-Security-Policy', csp);
+  }
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(html),
@@ -1438,6 +1489,21 @@ function naesteForekomst(userId, item) {
   return ny;
 }
 
+/**
+ * Afslutter (eller genaabner) en opgave.
+ *
+ * Ligger HER og ikke i ruten, fordi MCP goer det samme. To veje til den
+ * samme handling skal give det samme resultat - ogsaa gentagelsen.
+ */
+function fuldfoer(userId, item, luk = true) {
+  const opdateret = gemItem(userId, Object.assign({}, item, {
+    status: luk ? 'done' : 'open',
+    completedAt: luk ? now() : null,
+  }));
+  const next = luk ? naesteForekomst(userId, opdateret) : null;
+  return { item: next ? hentItem(userId, opdateret.id) : opdateret, next };
+}
+
 /* ------------------------------------------------------ kalenderfeed */
 
 /*
@@ -1583,6 +1649,284 @@ function byggIcal(userId, base, projectId) {
   ud.push('END:VCALENDAR');
   return `${ud.join('\r\n')}\r\n`;
 }
+
+/* ------------------------------------------------------------- oauth */
+
+/*
+ * §9a fulgt ordret. De fire faelder, i den raekkefoelge de bider:
+ *
+ *  1. WWW-Authenticate med resource_metadata paa 401 fra /mcp - hele
+ *     indgangen er den header (bygget foerst, se mcp.js).
+ *  2. Begge .well-known-former serveres.
+ *  3. De offentlige ruter gaar UDEN OM securityHeaders: CORS og
+ *     Cross-Origin-Resource-Policy: same-origin slaas ihjel af hinanden.
+ *  4. form-action paa samtykkesiden faar klientens origin med.
+ */
+
+function gemKlient(k) {
+  db.prepare('INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?,?,?,?)')
+    .run(k.id, k.name, k.redirect_uris, now());
+  audit('oauth-klient-registreret', k.name, k.id);
+}
+
+const hentKlient = (id) => db.prepare('SELECT * FROM oauth_clients WHERE id = ?').get(String(id || '')) || null;
+
+/**
+ * Udsteder et access- og et refresh-token.
+ *
+ * Access-tokenet lander i den EKSISTERENDE noegletabel med client_id og
+ * expires_at - saa valideres det af findToken ad praecis samme vej som en
+ * haandlavet noegle. Én validering, ét sted at tilbagekalde.
+ */
+function udstedTokens(clientId, scope, userId) {
+  const udloeb = now() + oauth.ADGANG_LEVETID;
+  const t = opretToken(userId, `connector:${clientId}`, scope, { clientId, expiresAt: udloeb });
+  const refresh = crypto.randomBytes(32).toString('base64url');
+  db.prepare(`INSERT INTO oauth_refresh (hash, token_id, client_id, scope, user_id, created_at)
+              VALUES (?,?,?,?,?,?)`)
+    .run(hashToken(refresh), t.id, clientId, scope, userId, now());
+  return {
+    access_token: t.key,
+    token_type: 'Bearer',
+    expires_in: oauth.ADGANG_LEVETID,
+    refresh_token: refresh,
+    scope,
+  };
+}
+
+const findRefresh = (raa) => db.prepare(
+  'SELECT * FROM oauth_refresh WHERE hash = ? AND revoked_at IS NULL').get(hashToken(String(raa || ''))) || null;
+
+function tilbagekaldRefresh(raa) {
+  db.prepare('UPDATE oauth_refresh SET revoked_at = ? WHERE hash = ?').run(now(), hashToken(String(raa || '')));
+}
+
+const oauth = require('./oauth.js').opret({
+  gemKlient, hentKlient, udstedTokens, findRefresh, tilbagekaldRefresh,
+});
+
+/** Tilbagekaldelse skal ramme BAADE access- og refresh-tokens for klienten. */
+function tilbagekaldKlient(userId, clientId) {
+  const t = now();
+  const a = db.prepare('UPDATE tokens SET revoked_at = ? WHERE client_id = ? AND user_id = ? AND revoked_at IS NULL')
+    .run(t, clientId, userId);
+  db.prepare('UPDATE oauth_refresh SET revoked_at = ? WHERE client_id = ? AND user_id = ? AND revoked_at IS NULL')
+    .run(t, clientId, userId);
+  audit('oauth-forbindelse-tilbagekaldt', clientId, null);
+  return a.changes;
+}
+
+/**
+ * En REGISTRERING er ikke en forbindelse.
+ *
+ * Klienten registrerer sig ved hvert forsoeg, ogsaa dem man siger nej til.
+ * Uden EXISTS-tjekket fyldes listen med raekker, der oven i koebet ser
+ * tilbagekaldte ud, fordi de ingen aktive tokens har (§9a del 5).
+ */
+function hentForbindelser(userId) {
+  return db.prepare(`
+    SELECT c.id, c.name, c.created_at,
+           (SELECT MAX(t.last_used_at) FROM tokens t
+             WHERE t.client_id = c.id AND t.user_id = ?) AS last_used_at
+      FROM oauth_clients c
+     WHERE EXISTS (SELECT 1 FROM tokens t
+                    WHERE t.client_id = c.id AND t.user_id = ? AND t.revoked_at IS NULL)
+     ORDER BY c.created_at DESC`).all(userId, userId);
+}
+
+/** Samtykkeformularens egen CSRF-spaerre. */
+function samtykkeBevis(req) {
+  const cookie = parseCookies(req.headers.cookie)[SESSION_COOKIE] || '';
+  return crypto.createHmac('sha256', cookie || 'ingen').update('oauth-consent').digest('base64url');
+}
+
+function samtykkeHtml(req, q, o) {
+  const bevis = samtykkeBevis(req);
+  const felter = ['client_id', 'redirect_uri', 'response_type', 'scope', 'state',
+    'code_challenge', 'code_challenge_method']
+    .map((n) => `<input type="hidden" name="${n}" value="${escHtml(q.get(n) || '')}">`).join('');
+  return sideSkal('Connect', `
+    <div class="brand">${escHtml(APP_NAME)}</div>
+    <h1 style="text-align:center">Connect ${escHtml(o.klient.name)}?</h1>
+    <p class="lead" style="text-align:center">It will be able to
+      ${o.scope === 'read' ? 'read your tasks, projects and time' : 'read and change your tasks, projects and time'}
+      — as you, and nobody else\u2019s.</p>
+    <form method="post">
+      ${felter}
+      <input type="hidden" name="bevis" value="${escHtml(bevis)}">
+      <button class="btn primary" type="submit" name="godkend" value="ja" style="width:100%">Allow</button>
+      <p style="text-align:center;margin:12px 0 0">
+        <button class="linkbtn" type="submit" name="godkend" value="nej">No thanks</button></p>
+    </form>
+    <p class="gate-note">You can revoke it again under Settings.</p>`);
+}
+
+function oauthFejlside(res, besked) {
+  sendHtml(res, 400, sideSkal('Not possible', `<h1>Not possible</h1>
+    <p class="lead">${escHtml(besked)}</p>`));
+}
+
+/** De offentlige ruter saetter deres EGNE headere - ikke securityHeaders. */
+function oauthCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, MCP-Protocol-Version');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+}
+
+function sendOauthJson(res, status, krop) {
+  oauthCors(res);
+  const data = JSON.stringify(krop);
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    'Content-Length': Buffer.byteLength(data),
+  });
+  res.end(data);
+}
+
+async function haandterOauth(req, res, urlPath, query) {
+  if (req.method === 'OPTIONS') { oauthCors(res); res.writeHead(204); res.end(); return; }
+
+  // FAELDE 2: begge former. RFC 9728 haenger ressourcens sti paa, men flere
+  // klienter proever den noegne form foerst.
+  if (/^\/\.well-known\/oauth-protected-resource(\/mcp)?$/.test(urlPath)) {
+    sendOauthJson(res, 200, oauth.beskyttetRessource(req));
+    return;
+  }
+  if (/^\/\.well-known\/oauth-authorization-server(\/mcp)?$/.test(urlPath)) {
+    sendOauthJson(res, 200, oauth.serverMetadata(req));
+    return;
+  }
+
+  if (urlPath === '/oauth/register' && req.method === 'POST') {
+    // Graensen skal ligge, hvor almindelig fumlen ikke kan naa den: rammes
+    // den, findes klienten aldrig, og brugeren faar "ukendt klient" paa
+    // samtykkesiden - en fejl, der peger et helt andet sted hen (§9a).
+    if (!rateAllow(`oauth-reg:${clientIp(req)}`, 60, 3600)) {
+      sendOauthJson(res, 429, { error: 'too_many_requests' });
+      return;
+    }
+    const krop = await readJsonBody(req, true);
+    const r = oauth.registrer(krop);
+    if (r.fejl) { sendOauthJson(res, 400, { error: 'invalid_client_metadata', error_description: r.fejl }); return; }
+    sendOauthJson(res, 201, r.klient);
+    return;
+  }
+
+  if (urlPath === '/oauth/authorize' && (req.method === 'GET' || req.method === 'POST')) {
+    const bruger = sessionUser(req);
+    if (!bruger) {
+      // Send til login og tilbage bagefter. Frontenden whitelister stien -
+      // ellers er login-siden en aaben viderestilling, og det er praecis dér,
+      // brugeren er indstillet paa at godkende noget.
+      const naeste = encodeURIComponent(`${urlPath}?${query.toString()}`);
+      res.writeHead(302, { Location: `/?next=${naeste}` });
+      res.end();
+      return;
+    }
+
+    const q = req.method === 'POST' ? null : query;
+    let felter = q;
+    let krop = null;
+    if (req.method === 'POST') {
+      krop = await readJsonBody(req, true);
+      felter = new URLSearchParams(Object.entries(krop).map(([k, v]) => [k, String(v)]));
+    }
+
+    const o = oauth.tjekAutorisation(felter);
+    if (o.fejl) { oauthFejlside(res, o.fejl); return; }
+
+    if (req.method === 'GET') {
+      // KUN den ene oprindelse, klienten er registreret med - ikke https:
+      // generelt, og ikke paa resten af appen.
+      sendHtml(res, 200, samtykkeHtml(req, felter, o), new URL(o.redirect).origin);
+      return;
+    }
+
+    // Egen hmac-CSRF: formularen er appens eneste cookie-godkendte rute uden
+    // JSON-krop og staar derfor uden for den faelles barriere (§9a del 4).
+    const forventet = samtykkeBevis(req);
+    const givet = String(krop.bevis || '');
+    if (givet.length !== forventet.length
+      || !crypto.timingSafeEqual(Buffer.from(givet), Buffer.from(forventet))) {
+      oauthFejlside(res, 'That form was stale. Try connecting again.');
+      return;
+    }
+
+    const maal = new URL(o.redirect);
+    if (String(krop.godkend) !== 'ja') {
+      // Afvisning SKAL meldes tilbage - ellers staar klienten og venter paa
+      // en kode, der aldrig kommer.
+      maal.searchParams.set('error', 'access_denied');
+      if (o.state) maal.searchParams.set('state', o.state);
+      res.writeHead(302, { Location: maal.toString() });
+      res.end();
+      return;
+    }
+    audit('oauth-godkendt', o.klient.name, bruger.username);
+    res.writeHead(302, { Location: oauth.giveTilladelse(o, bruger.id) });
+    res.end();
+    return;
+  }
+
+  if (urlPath === '/oauth/token' && req.method === 'POST') {
+    const krop = await readJsonBody(req, true);
+    const r = krop.grant_type === 'refresh_token' ? oauth.forny(krop) : oauth.byttKode(krop);
+    if (r.fejl) { sendOauthJson(res, 400, { error: r.fejl }); return; }
+    sendOauthJson(res, 200, r);
+    return;
+  }
+
+  if (urlPath === '/oauth/revoke' && req.method === 'POST') {
+    const krop = await readJsonBody(req, true);
+    const raa = String(krop.token || '');
+    tilbagekaldRefresh(raa);
+    db.prepare('UPDATE tokens SET revoked_at = ? WHERE hash = ? AND revoked_at IS NULL').run(now(), hashToken(raa));
+    sendOauthJson(res, 200, {});
+    return;
+  }
+
+  sendOauthJson(res, 404, { error: 'not_found' });
+}
+
+/* --------------------------------------------------------------- mcp */
+
+/** MCP godkendes KUN med en noegle - aldrig med sessionscookien. */
+function godkendMcp(req) {
+  const auth = String(req.headers.authorization || '');
+  const bearer = auth.match(/^Bearer\s+(\S+)$/i);
+  const raa = bearer ? bearer[1] : String(req.headers['x-api-key'] || '');
+  if (!raa) return null;
+  const token = findToken(raa);
+  if (!token) return null;
+  if (!rateAllow(`api:${token.id}`, 600, 3600)) return null;
+  const bruger = db.prepare('SELECT id, username, is_admin FROM users WHERE id = ?').get(token.user_id);
+  if (!bruger) return null;
+  stemplBrug(token);
+  return {
+    user: { id: bruger.id, username: bruger.username, isAdmin: !!bruger.is_admin },
+    token,
+    viaToken: true,
+  };
+}
+
+const mcp = require('./mcp.js').opret({
+  version: APP_VERSION_FIL,
+  beregn,
+  parse,
+  maa: (auth, scope) => SCOPE_TILLADER[auth.token.scope].has(scope),
+  godkendMcp,
+  readJsonBody,
+  logError,
+  // Pegepinden til autorisationsserveren. Stien MED /mcp er den kanoniske i
+  // RFC 9728; den noegne form serveres ogsaa.
+  oauthUdfordring: (req) => `Bearer realm="tovo", `
+    + `resource_metadata="${oauth.base(req)}/.well-known/oauth-protected-resource/mcp"`,
+  // Vaerktoejerne faar PRAECIS de funktioner, webappen selv bruger.
+  fangst, soeg, hentItem, hentItems, gemItem, hentPoster, gemPost,
+  startTimer, stopTimer, timerStatus, beregnFor, fuldfoer,
+  iDag, dagStart, ugeStart, ugeSlut,
+});
 
 /* ---------------------------------------------------------- passkeys */
 
@@ -1905,6 +2249,66 @@ const ROUTES = {
     sendJson(res, 200, { ok: true });
   },
 
+  'GET /api/v1/keys': (req, res) => {
+    const user = requireUser(req, res);
+    if (!user) return;
+    sendJson(res, 200, {
+      // client_id IS NULL: OAuth-tokens hoerer under "Connected apps", ikke
+      // under brugerens egne noegler (§9a).
+      keys: db.prepare(`SELECT id, name, prefix, scope, created_at, last_used_at
+                          FROM tokens WHERE user_id = ? AND client_id IS NULL AND revoked_at IS NULL
+                         ORDER BY created_at DESC`).all(user.id),
+      connections: hentForbindelser(user.id),
+      mcpUrl: `${basisUrl(req)}/mcp`,
+    });
+  },
+
+  'POST /api/v1/keys': async (req, res) => {
+    const user = requireUser(req, res);
+    if (!user) return;
+    const body = await readJsonBody(req);
+    const scope = SCOPE_TILLADER[body.scope] ? body.scope : 'full';
+    const t = opretToken(user.id, str(body.name, 60) || 'Key', scope);
+    // Noeglen returneres ÉN gang og gemmes aldrig i klartekst.
+    sendJson(res, 200, { key: t.key, id: t.id });
+  },
+
+  /*
+   * Alt i ét aabent format.
+   *
+   * To ting fra doda F9: der er en HAARD stoerrelsesgraense (en funktion, der
+   * kan vaelte serveren, er ikke en funktion), og HEMMELIGHEDER kommer ikke
+   * med. En eksportfil kan blive delt videre, og et start-link eller et
+   * kalender-token i den ville give adgang til at starte timere og laese
+   * deadlines for enhver, der faar filen.
+   */
+  'GET /api/v1/export': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const ud = {
+      tovo: 1,
+      exportedAt: new Date().toISOString(),
+      user: auth.user.username,
+      settings: hentSettings(auth.user.id),
+      items: hentItems(auth.user.id, { medSlettede: true }),
+      entries: hentPoster(auth.user.id, {}),
+    };
+    // Ingen tokens, ingen feeds - hverken start-links eller kalenderadressen.
+    const data = JSON.stringify(ud, null, 2);
+    if (Buffer.byteLength(data) > 25 * 1024 * 1024) {
+      apiFejl(res, 413, 'too_large',
+        'The export is over 25 MB. Use the panel backup instead — it covers the whole data folder.');
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="tovo-${iDag()}.json"`,
+      'Content-Length': Buffer.byteLength(data),
+      'Cache-Control': 'no-store',
+    });
+    res.end(data);
+  },
+
   'GET /api/v1/no-project': (req, res) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;
@@ -1929,6 +2333,9 @@ const ROUTES = {
         til: til ? dagStart(til) + 86400 : undefined,
       }),
       rounding: beregnFor(auth.user.id).afrunding(),
+      // Hullerne hoerer til ÉN dag. Spoerges der om en periode, er de ikke
+      // meningsfulde - og saa sendes de ikke.
+      gaps: (fra && fra === til) ? beregnFor(auth.user.id).hullerPaaDag(fra) : [],
     });
   },
 
@@ -2177,17 +2584,7 @@ const MOENSTRE = [
       const body = await readJsonBody(req, auth.viaToken);
       const item = hentItem(auth.user.id, ctx.params[0]);
       if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
-      const luk = body.done !== false;
-      const opdateret = gemItem(auth.user.id, Object.assign({}, item, {
-        status: luk ? 'done' : 'open',
-        completedAt: luk ? now() : null,
-      }));
-      // Naeste forekomst materialiseres FOERST, naar den nuvaerende lukkes.
-      const naeste = luk ? naesteForekomst(auth.user.id, opdateret) : null;
-      sendJson(res, 200, {
-        item: naeste ? hentItem(auth.user.id, opdateret.id) : opdateret,
-        next: naeste,
-      });
+      sendJson(res, 200, fuldfoer(auth.user.id, item, body.done !== false));
     },
   },
   {
@@ -2310,6 +2707,30 @@ const MOENSTRE = [
     },
   },
   {
+    metode: 'DELETE', re: /^\/api\/v1\/keys\/([0-9a-f-]{8,64})$/,
+    kald: (req, res, ctx) => {
+      const user = requireUser(req, res);
+      if (!user) return;
+      const r = db.prepare('UPDATE tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL')
+        .run(now(), ctx.params[0], user.id);
+      if (!r.changes) { apiFejl(res, 404, 'not_found', 'No such key.'); return; }
+      audit('noegle-tilbagekaldt', ctx.params[0], clientIp(req));
+      sendJson(res, 200, { ok: true });
+    },
+  },
+  {
+    metode: 'DELETE', re: /^\/api\/v1\/connections\/([\w-]{1,80})$/,
+    kald: (req, res, ctx) => {
+      const user = requireUser(req, res);
+      if (!user) return;
+      if (!tilbagekaldKlient(user.id, ctx.params[0])) {
+        apiFejl(res, 404, 'not_found', 'No such connection.');
+        return;
+      }
+      sendJson(res, 200, { ok: true });
+    },
+  },
+  {
     metode: 'DELETE', re: /^\/api\/v1\/passkeys\/(.{1,256})$/,
     kald: (req, res, ctx) => {
       const user = requireUser(req, res);
@@ -2409,6 +2830,24 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    /*
+     * FAELDE 3: de offentlige OAuth-ruter maa IKKE gennem securityHeaders.
+     * De skal have Access-Control-Allow-Origin: *, men
+     * Cross-Origin-Resource-Policy: same-origin faar browseren til at afvise
+     * svaret alligevel - og saa er der intet at se i netvaerkspanelet.
+     */
+    if (urlPath.startsWith('/oauth/') || urlPath.startsWith('/.well-known/oauth-')) {
+      await haandterOauth(req, res, urlPath, query);
+      return;
+    }
+
+    // MCP ligger paa /mcp - kort nok til at skrive i en klientkonfiguration.
+    if (urlPath === '/mcp') {
+      securityHeaders(res);
+      await mcp.haandter(req, res);
+      return;
+    }
+
     if (urlPath.startsWith('/api/')) {
       securityHeaders(res);
       const rute = findRute(req.method, urlPath);
@@ -2443,6 +2882,11 @@ function sweep() {
     db.prepare('DELETE FROM rate WHERE reset_at <= ?').run(t);
     db.prepare('DELETE FROM audit WHERE at < ?').run(t - 180 * 86400);
     db.prepare('DELETE FROM tokens WHERE expires_at IS NOT NULL AND expires_at < ?').run(t - 30 * 86400);
+    db.prepare('DELETE FROM oauth_refresh WHERE revoked_at IS NOT NULL AND revoked_at < ?').run(t - 30 * 86400);
+    // Registreringer, der aldrig blev sagt ja til, hober sig ellers op.
+    db.prepare(`DELETE FROM oauth_clients WHERE created_at < ?
+                  AND NOT EXISTS (SELECT 1 FROM tokens t WHERE t.client_id = oauth_clients.id)`)
+      .run(t - 7 * 86400);
   } catch (err) {
     logError(`oprydning fejlede: ${err.message}`);
   }

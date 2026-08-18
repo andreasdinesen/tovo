@@ -373,6 +373,44 @@
       };
     }
 
+    /**
+     * HULLERNE paa en dag.
+     *
+     * Det er den funktion, der afsloerer glemt registrering: mellemrummene
+     * mellem det, der ER registreret, fra dagens foerste post til dens
+     * sidste. Der gaettes ikke paa en arbejdsdag - kun det, der faktisk staar
+     * imellem to registreringer, er et hul. Et hul foer den foerste post er
+     * ikke glemt tid; det er morgen.
+     *
+     * @param {number} mindst  minutter - mindre huller er frokost og kaffe
+     * @returns {array} [{fra, til, minutter}] med "HH:MM"
+     */
+    function hullerPaaDag(isoDato, mindst, nu) {
+      const graense = Number(mindst) || 20;
+      const start = Math.floor(new Date(`${isoDato}T00:00:00`).getTime() / 1000);
+      const dagens = entries()
+        .filter((e) => e.startedAt >= start && e.startedAt < start + 86400)
+        .slice()
+        .sort((a, b) => a.startedAt - b.startedAt);
+      if (dagens.length < 2) return [];
+
+      const kl = (unix) => {
+        const d = new Date(unix * 1000);
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      };
+
+      const huller = [];
+      let sidsteSlut = dagens[0].stoppedAt || Math.floor((nu || Date.now()) / 1000);
+      for (const e of dagens.slice(1)) {
+        const minutter = Math.round((e.startedAt - sidsteSlut) / 60);
+        if (minutter >= graense) {
+          huller.push({ fra: kl(sidsteSlut), til: kl(e.startedAt), minutter });
+        }
+        sidsteSlut = Math.max(sidsteSlut, e.stoppedAt || Math.floor((nu || Date.now()) / 1000));
+      }
+      return huller;
+    }
+
     /** Minutter pr. dato i perioden - grundlaget for dagsvisningen. */
     function sumPrDag(fra, til, nu) {
       const r = afrunding();
@@ -388,7 +426,7 @@
 
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
-      sumPeriode, sumPrDag, ugerapport, afrunding,
+      sumPeriode, sumPrDag, ugerapport, hullerPaaDag, afrunding,
     };
   }
 

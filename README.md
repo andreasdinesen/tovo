@@ -18,8 +18,8 @@ udseende, men separate apps med hver sin database og ingen synkronisering.
 | 5 | Import og genimport fra Microsoft Planner | **færdig** |
 | 6 | Ugerapport | **færdig** |
 | 7 | Gentagelser og iCal-feed | **færdig** |
-| 8 | MCP-server + connector til claude.ai | næste |
-| 9 | Polering | |
+| 8 | MCP-server + connector til claude.ai | **færdig** |
+| 9 | Polering | **færdig** |
 
 Hele planen står i `TOVO-PLAN.md`, projektreglerne i `CLAUDE.md`.
 
@@ -54,7 +54,33 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
-### v4 — gentagelser og kalender (ikke udgivet endnu)
+### v5 — Claude, huller og historik (ikke udgivet endnu)
+
+**Fase 9:**
+
+- **Hullerne på dagen** vises på Today: mellemrummene mellem det, du faktisk har registreret.
+  Et klik åbner registreringen udfyldt med tidsrummet. Det er den funktion, der afslører
+  glemt tid.
+- **Import af historik fra Toggl** (detaljeret rapport som CSV). Posterne mærkes `import`,
+  så en rapport kan kende dem fra tid, du har taget i tovo.
+- **Genvejsoversigt** i brugermenuen.
+- **JSON-eksport** af alt dit — uden hemmeligheder, med en hård grænse.
+- **PWA:** service worker med versioneret cache; build'et fælder, hvis precache-listen ikke
+  matcher `index.html`.
+
+**Fase 8:**
+
+- **MCP-server** på `/mcp` med tolv værktøjer: `capture` · `search` · `list_projects` ·
+  `project_status` · `start_timer` · `stop_timer` · `current_timer` · `log_time` ·
+  `week_report` · `complete_task` · `update_task` · `set_estimate`.
+- **OAuth 2.1** med dynamisk klientregistrering, PKCE og roterende refresh, så claude.ai kan
+  forbinde sig selv. Samtykkesiden er server-renderet uden JavaScript.
+- **Adgangsnøgler** med scope (full/read/capture) til Claude Code og lignende — vises én gang,
+  gemmes kun som hash, kan tilbagekaldes med øjeblikkelig virkning.
+- Værktøjerne kalder de samme funktioner som webappen, så en ugerapport hentet af Claude er
+  det samme tal som det på skærmen.
+
+### v4 — gentagelser og kalender
 
 - **Gentagne opgaver.** `!every monday at 9` i søgefeltet; næste forekomst opstår, når den
   nuværende afsluttes, og arver estimat, projekt, links og tags.

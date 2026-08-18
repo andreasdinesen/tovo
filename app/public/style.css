@@ -1992,3 +1992,23 @@ table.rapporttabel th.num, table.rapporttabel td.num { text-align: right; font-v
 /* Et tal uden en forklaring er en gaade. Linjen under staar smaat, saa den
    kan laeses én gang og derefter overses. */
 .talforklaring { text-transform: none; letter-spacing: 0; font-size: 11.5px; margin-top: 2px; }
+
+/* Hullerne paa dagen. De skal kunne SES uden at raabe: en tom halv time er
+   ikke en fejl, den er et spoergsmaal. */
+.huller { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.hul {
+  display: flex; align-items: baseline; gap: 10px; width: 100%;
+  padding: 7px 10px; margin-top: 6px; text-align: left;
+  border: 1px dashed var(--border); border-radius: var(--r-sm);
+  background: none; color: inherit; font: inherit; cursor: pointer;
+}
+.hul:hover { border-style: solid; border-color: var(--accent); background: var(--card-hover); }
+.hul .meta { text-transform: none; letter-spacing: 0; }
+
+table.genvejstabel td { padding: 7px 8px; }
+table.genvejstabel td:first-child { width: 130px; white-space: nowrap; }
+kbd {
+  font: inherit; font-size: 12.5px; padding: 2px 7px;
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  background: var(--bg); white-space: nowrap;
+}
