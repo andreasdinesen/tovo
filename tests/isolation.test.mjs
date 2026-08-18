@@ -148,3 +148,62 @@ async function lavNoegle(bruger) {
   db.close();
   return { key };
 }
+
+/* ------------------------------------------------------------------
+ * Planens egen tjekliste, samlet ét sted.
+ *
+ * De seks punkter stod spredt over fem testfiler, og ét af dem var slet
+ * ikke opfyldt: kalenderfeedet manglede reglen om, at en FREMMED session
+ * giver 404 - den laa kun paa start-links. Listen findes her, saa den kan
+ * koeres som ÉN ting i hver fase, som planen kraever.
+ * ------------------------------------------------------------------ */
+
+test('PLANENS TJEKLISTE: B faar 404 paa alt, der er A-s', async () => {
+  // A: et projekt, en opgave, en tidspost, et start-link og et iCal-feed.
+  const projekt = (await a.klient.kald('POST', '/api/v1/items',
+    { kind: 'project', name: 'Tjekliste' })).data.item;
+  const opgave = (await a.klient.kald('POST', '/api/v1/capture',
+    { text: 'A-s opgave', projectId: projekt.id })).data.item;
+  await a.klient.kald('POST', '/api/v1/entries',
+    { taskId: opgave.id, date: (await a.klient.kald('GET', '/api/v1/state')).data.today, text: '1t' });
+  const link = (await a.klient.kald('POST', `/api/v1/tasks/${opgave.id}/link`, {})).data.link;
+  const feed = (await a.klient.kald('POST', '/api/v1/ical', {})).data.feed;
+  const bNoegle = (await b.klient.kald('POST', '/api/v1/keys', { name: 'b', scope: 'full' })).data.key;
+
+  // 1 + 2: GET og PATCH paa A-s opgave.
+  assert.equal((await b.klient.kald('GET', `/api/v1/items/${opgave.id}`)).status, 404);
+  assert.equal((await b.klient.kald('PATCH', `/api/v1/items/${opgave.id}`, { title: 'x' })).status, 404);
+
+  // 3: A-s start-token med B-s session.
+  const s = await fetch(link.url, { headers: { Cookie: b.klient.cookie } });
+  assert.equal(s.status, 404);
+
+  // 4: A-s kalenderfeed med B-s session.
+  const i = await fetch(feed.url, { headers: { Cookie: b.klient.cookie } });
+  assert.equal(i.status, 404);
+  // Uden session virker adressen - det ER dens formaal (en kalender-app kan
+  // ikke sende cookies), og den kan tilbagekaldes.
+  assert.equal((await fetch(feed.url)).status, 200);
+
+  // 5: MCP-soegning som B.
+  const mcp = await fetch(`${srv.base}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bNoegle}` },
+    body: JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'search', arguments: { query: 'A-s opgave' } },
+    }),
+  });
+  const svar = (await mcp.json()).result.content[0].text;
+  assert.match(svar, /No matches/);
+
+  // 6: A-s opgave optraeder ikke i B-s soegning, rapport eller projektliste.
+  assert.equal((await b.klient.kald('GET', '/api/v1/search?q=A-s')).data.tasks.length, 0);
+  const rapport = (await b.klient.kald('GET', '/api/v1/report')).data.report;
+  assert.equal(rapport.total, 0);
+  assert.equal(rapport.projects.length, 0);
+  const state = (await b.klient.kald('GET', '/api/v1/state')).data;
+  assert.ok(!state.projects.some((p) => p.name === 'Tjekliste'));
+  assert.equal((await b.klient.kald('GET', `/api/v1/projects/${projekt.id}`)).status, 404);
+  assert.equal((await b.klient.kald('GET', '/api/v1/items?kind=task')).data.items.length, 0);
+});

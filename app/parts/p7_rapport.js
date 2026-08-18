@@ -42,6 +42,7 @@ async function tegnRapport() {
 
   const f = tovoBeregn.formatVarighed;
   const r = d.report;
+  const ts = d.timesheet;
   const forrige = d.previous;
   const dagsnavn = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -91,6 +92,39 @@ async function tegnRapport() {
     ${r.days.some((x) => x.tynd || x.tom) ? `<p class="meta warnline">${
     r.days.filter((x) => x.tynd || x.tom).map((x) => dagsnavn[x.weekday]).join(', ')
   } look thin — that is usually forgotten registration, not a quiet day.</p>` : ''}
+
+    ${r.cases.length ? `<h2 class="group">Per case number<span class="group-count">${r.cases.length}</span></h2>
+      <table class="data rapporttabel">
+        <tr><th>Case</th><th class="num">Hours</th><th>Tasks</th></tr>
+        ${r.cases.map((c) => `<tr>
+          <td>${c.case === '(no case number)' ? '<span class="meta">(no case number)</span>' : sagHtml(c.case)}</td>
+          <td class="num">${esc(f(c.minutter))}</td>
+          <td class="meta">${esc(c.tasks.map((t) => t.title).join(', ').slice(0, 90))}</td>
+        </tr>`).join('')}
+      </table>
+      <p class="meta">This is the list to reconcile against — the hours you register elsewhere,
+        per case number.</p>` : ''}
+
+    ${ts.rows.length ? `<h2 class="group">Per day, per task<span class="group-count">${ts.rows.length}</span></h2>
+      <div class="tabelrul">
+      <table class="data rapporttabel timeseddel">
+        <tr><th>Case</th><th>Task</th>
+          ${ts.dage.map((iso) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return `<th class="num">${dagsnavn[d.getDay()]}<span class="meta">${iso.slice(8)}</span></th>`;
+  }).join('')}
+          <th class="num">Total</th></tr>
+        ${ts.rows.map((raekke) => `<tr>
+          <td>${raekke.case ? sagHtml(raekke.case) : '<span class="meta">—</span>'}</td>
+          <td>${esc(raekke.title)}${raekke.project ? `<span class="meta"> · ${esc(raekke.project)}</span>` : ''}</td>
+          ${ts.dage.map((iso) => `<td class="num">${raekke.dage[iso] ? esc(f(raekke.dage[iso])) : ''}</td>`).join('')}
+          <td class="num"><strong>${esc(f(raekke.total))}</strong></td>
+        </tr>`).join('')}
+        <tr><td colspan="2"><strong>Total</strong></td>
+          ${ts.dage.map((iso) => `<td class="num"><strong>${ts.perDay[iso] ? esc(f(ts.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(ts.total))}</strong></td></tr>
+      </table>
+      </div>` : ''}
 
     ${r.projects.length ? r.projects.map((p) => `
       <h2 class="group">${esc(p.name)}<span class="group-count">${esc(f(p.minutter))}</span></h2>
@@ -147,6 +181,24 @@ function rapportMarkdown(d) {
   linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`);
   if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
   linjer.push('');
+  if (r.cases.length) {
+    linjer.push('## Per case number', '');
+    for (const c of r.cases) linjer.push(`- **${c.case}**: ${f(c.minutter)}`);
+    linjer.push('');
+  }
+  const ts = d.timesheet;
+  if (ts && ts.rows.length) {
+    // En markdown-tabel: den kan klistres i OneNote og laeses som den er.
+    linjer.push('## Per day, per task', '');
+    linjer.push(`| Case | Task | ${ts.dage.map((iso) => iso.slice(5)).join(' | ')} | Total |`);
+    linjer.push(`|---|---|${ts.dage.map(() => '--:').join('|')}|--:|`);
+    for (const raekke of ts.rows) {
+      linjer.push(`| ${raekke.case || '—'} | ${raekke.title} | `
+        + `${ts.dage.map((iso) => (raekke.dage[iso] ? f(raekke.dage[iso]) : '')).join(' | ')} | ${f(raekke.total)} |`);
+    }
+    linjer.push(`| **Total** |  | ${ts.dage.map((iso) => (ts.perDay[iso] ? f(ts.perDay[iso]) : '')).join(' | ')} | **${f(ts.total)}** |`);
+    linjer.push('');
+  }
   for (const p of r.projects) {
     linjer.push(`## ${p.name} — ${f(p.minutter)}`);
     for (const t of p.tasks) {
@@ -166,6 +218,15 @@ function rapportArkHtml(d) {
     <h1>${esc(d.from)} – ${esc(d.to)}</h1>
     <p class="pkunde">${esc(f(r.total))} in total · ${esc(f(r.onProjects))} on projects
       · ${esc(f(r.adhoc))} ad hoc${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
+    ${d.timesheet && d.timesheet.rows.length ? `<table>
+        <thead><tr><th>Case</th><th>Task</th>
+          ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
+          <th class="num">Total</th></tr></thead>
+        <tbody>${d.timesheet.rows.map((raekke) => `<tr>
+          <td>${esc(raekke.case || '—')}</td><td>${esc(raekke.title)}</td>
+          ${d.timesheet.dage.map((iso) => `<td class="num">${raekke.dage[iso] ? esc(f(raekke.dage[iso])) : ''}</td>`).join('')}
+          <td class="num">${esc(f(raekke.total))}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
     ${r.projects.map((p) => `
       <table>
         <thead><tr><th>${esc(p.name)}</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>

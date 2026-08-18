@@ -725,17 +725,27 @@ appen (settings, backup, registrering), men ser ikke andres opgaver.
 Test: opret bruger A og B. Som A: et projekt, en opgave, en tidspost, et start-link, et iCal-feed.
 Som B skal alle disse give **404**:
 
-- [ ] `GET /api/v1/items/<A's opgave-id>`
-- [ ] `PATCH` på samme
-- [ ] `GET /s/<A's start-token>`
-- [ ] `GET /ical/<A's feed-token>`
-- [ ] MCP `search` som B returnerer intet af A's
-- [ ] A's opgave optræder ikke i B's søgning, rapport eller projektliste
+- [x] `GET /api/v1/items/<A's opgave-id>`
+- [x] `PATCH` på samme
+- [x] `GET /s/<A's start-token>`
+- [x] `GET /ical/<A's feed-token>`
+- [x] MCP `search` som B returnerer intet af A's
+- [x] A's opgave optræder ikke i B's søgning, rapport eller projektliste
 
 Filteret skal ligge i `hentItem()` / `hentItems()` / `gemItem()` / `saveBulk()` selv.
 Lægges det i kaldstederne, bliver ét glemt.
 
 ---
+
+**Status 2026-08-18.** De seks punkter stod spredt over fem testfiler, og **ét af dem var
+ikke opfyldt:** kalenderfeedet manglede reglen om, at en *fremmed session* giver 404 — den
+lå kun på start-links. Rettet, og hele tjeklisten findes nu som **én test**
+(`tests/isolation.test.mjs`, »PLANENS TJEKLISTE«), så den kan køres som én ting i hver fase,
+som planen kræver. Beviset: fjern reglen igen, og testen bliver rød.
+
+Nuancen, der skal huskes: **uden session virker både `/s/:token` og `/ical/:token`** — det er
+hele deres formål, for hverken OneNote eller en kalender-app kan sende cookies. Adressen *er*
+legitimationen, og den kan tilbagekaldes. Reglen handler om en fremmed *session*.
 
 ## Estimat
 

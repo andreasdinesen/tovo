@@ -13,6 +13,8 @@ function opgaveRaekke(it, opt) {
   const o = opt || {};
   const projekt = state.projects.find((p) => p.id === it.projectId);
   const dele = [];
+  const sag = it.caseNumber || (projekt && projekt.caseNumber) || '';
+  if (sag) dele.push(sagHtml(sag));
   if (!o.skjulProjekt && projekt) dele.push(esc(projekt.name));
   if (it.dueDate) {
     const forsinket = it.status !== 'done' && it.dueDate < state.today;
@@ -68,7 +70,11 @@ function bindOpgaveListe(host) {
     });
   });
   host.querySelectorAll('[data-row]').forEach((el) => {
-    el.addEventListener('click', () => aabnOpgave(el.dataset.id));
+    el.addEventListener('click', (e) => {
+      // Et sagslink er sit eget maal - det maa ikke ogsaa aabne opgaven.
+      if (e.target.closest('[data-stop]')) return;
+      aabnOpgave(el.dataset.id);
+    });
     // Piletasterne foerte hertil; herfra er der tre ting at goere.
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
@@ -217,25 +223,72 @@ function saetAfsnitAabent(noegle, aabent) {
   try { localStorage.setItem(`tovo_fold_${noegle}`, aabent ? '1' : '0'); } catch { /* privat */ }
 }
 
+/* Kort eller liste. Kort er rare, naar der er tre projekter; en liste er
+   det, der duer, naar der er tredive. Valget huskes. */
+function projektListeTilstand() {
+  try { return localStorage.getItem('tovo_projekter_liste') === '1'; } catch { return false; }
+}
+
 async function tegnProjekter() {
   const host = document.getElementById('pageHost');
   if (state.openProject === INTET_PROJEKT) { await tegnUdenProjekt(); return; }
   if (state.openProject) { await tegnProjekt(state.openProject); return; }
-  const d = await api('GET', '/api/v1/items?kind=task');
+  const [d, poster] = await Promise.all([
+    api('GET', '/api/v1/items?kind=task'),
+    api('GET', '/api/v1/entries'),
+  ]);
   state.items = d.items;
+  // Forbrug pr. projekt: posternes minutter lagt paa opgavernes projekt.
+  // Formateringen kommer fra beregn.js - her lægges kun tal sammen, som
+  // serveren allerede har afrundet.
+  const forbrugPrProjekt = {};
+  const projektFor = new Map(d.items.map((t) => [t.id, t.projectId || '__uden']));
+  for (const e of poster.entries) {
+    const pid = projektFor.get(e.taskId);
+    if (!pid) continue;
+    const minutter = Math.round(((e.stoppedAt || Math.floor(Date.now() / 1000)) - e.startedAt) / 60);
+    forbrugPrProjekt[pid] = (forbrugPrProjekt[pid] || 0) + tovoBeregn.afrund(minutter, poster.rounding);
+  }
 
+  const somListe = projektListeTilstand();
   host.innerHTML = `<div class="page">
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Projects</h1>
-      <button class="btn" id="plannerImport">Import from Planner</button>
+      <span class="row" style="gap:8px">
+        <button class="btn" id="projektVis">${somListe ? 'Cards' : 'List'}</button>
+        <button class="btn" id="plannerImport">Import from Planner</button>
+      </span>
     </div>
     <p class="lead">${esc(BESKRIVELSER.projects)}</p>
-    ${state.projects.length ? `<div class="cards">${state.projects.map((p) => {
+    ${state.projects.length ? (somListe
+    ? `<table class="data projektliste">
+        <tr><th>Project</th><th>Customer</th><th>Case</th><th class="num">Open</th><th class="num">Spent</th></tr>
+        ${state.projects.map((p) => {
+      const opgaver = d.items.filter((t) => t.projectId === p.id);
+      return `<tr class="projektraekke" data-projekt="${esc(p.id)}">
+          <td><strong>${esc(p.name)}</strong></td>
+          <td class="meta">${esc(p.customer || '—')}</td>
+          <td>${p.caseNumber ? sagHtml(p.caseNumber) : '<span class="meta">—</span>'}</td>
+          <td class="num">${opgaver.filter((t) => t.status !== 'done').length}</td>
+          <td class="num">${esc(tovoBeregn.formatVarighed(forbrugPrProjekt[p.id] || 0))}</td>
+        </tr>`;
+    }).join('')}
+        ${(() => {
+      const uden = d.items.filter((t) => !t.projectId);
+      if (!uden.length) return '';
+      return `<tr class="projektraekke" data-projekt="${INTET_PROJEKT}">
+            <td class="meta">No project</td><td class="meta">—</td><td class="meta">—</td>
+            <td class="num">${uden.filter((t) => t.status !== 'done').length}</td>
+            <td class="num">${esc(tovoBeregn.formatVarighed(forbrugPrProjekt.__uden || 0))}</td></tr>`;
+    })()}
+      </table>`
+    : `<div class="cards">${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
       const aabne = opgaver.filter((t) => t.status !== 'done').length;
       return `<button class="card projectcard" data-projekt="${esc(p.id)}">
         <h2>${esc(p.name)}</h2>
-        <div class="meta">${esc(p.customer || 'no customer')} · ${aabne} open · ${opgaver.length} total</div>
+        <div class="meta">${esc(p.customer || 'no customer')}${p.caseNumber ? ` · ${esc(p.caseNumber)}` : ''}
+          · ${aabne} open · ${opgaver.length} total</div>
       </button>`;
     }).join('')}${(() => {
       const uden = d.items.filter((t) => !t.projectId);
@@ -244,12 +297,19 @@ async function tegnProjekter() {
         <h2>No project</h2>
         <div class="meta">${uden.filter((t) => t.status !== 'done').length} open · ${uden.length} total</div>
       </button>`;
-    })()}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
+    })()}</div>`) : '<div class="empty"><p class="empty-title">No projects yet</p>'
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
+  document.getElementById('projektVis').addEventListener('click', () => {
+    try { localStorage.setItem('tovo_projekter_liste', somListe ? '0' : '1'); } catch { /* privat */ }
+    tegnSide();
+  });
   document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
   host.querySelectorAll('[data-projekt]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-stop]')) return;      // sagslinket er sit eget maal
+      gaaTil('projects', { project: el.dataset.projekt });
+    });
   });
 }
 
@@ -299,6 +359,7 @@ async function tegnProjekt(id) {
   state.items = d.tasks;
   const p = d.project;
   const r = d.rollup;
+  const paaTavle = tavleTilstand(p.id);
   const aabne = d.tasks.filter((t) => t.status !== 'done');
   const faerdige = d.tasks.filter((t) => t.status === 'done');
   const sektioner = (p.sections || []).slice().sort((a, b) => a.position - b.position);
@@ -309,6 +370,7 @@ async function tegnProjekt(id) {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>
       <span class="row" style="gap:8px">
+        <button class="btn${paaTavle ? ' primary' : ''}" id="visTavle">${paaTavle ? 'List' : 'Board'}</button>
         <button class="btn" id="projektRet">Edit project</button>
         <button class="btn" id="plannerRe">Re-import</button>
         <button class="btn" id="kundeVis">Customer view</button>
@@ -343,17 +405,30 @@ async function tegnProjekt(id) {
     : (r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''))}
     </div>
 
-    <div data-keynav>
+    ${paaTavle ? `<div class="row" style="margin-bottom:10px">
+        <button class="linkbtn" id="tvKolonner">Edit columns</button>
+        <span class="meta">Drag a card between columns — or use the arrow on the card.</span>
+      </div>
+      ${tavleHtml(p, d.tasks, d.spent)}`
+    : `<div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
       ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent, foldbar: true, noegle: `projekt-faerdige-${p.id}` }) : ''}
-    </div>
+    </div>`}
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">No tasks in this project</p>'
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
     <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
       · Space completes · Esc leaves</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  // ÉN binding, ikke to. Bindes begge, fyrer hvert klik to gange - og et
+  // flueben ville blive sat og fjernet i samme oejeblik.
+  if (paaTavle) bindTavle(host, p, d.tasks, d.spent);
+  else bindOpgaveListe(host);
+  document.getElementById('visTavle').addEventListener('click', () => {
+    saetTavleTilstand(p.id, !paaTavle);
+    tegnSide();
+  });
   document.getElementById('projektRet').addEventListener('click', () => aabnProjektRuden(p));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
   document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
@@ -368,7 +443,6 @@ async function tegnProjekt(id) {
         : 'Could not reach the clipboard. Open a task to copy its link by hand.');
     } catch (ex) { toast(ex.message); }
   });
-  bindOpgaveListe(host);
 }
 
 /**
@@ -387,6 +461,10 @@ function aabnProjektRuden(p) {
         <input class="input" id="pjName" value="${esc(p.name || '')}"></label>
       <label class="field"><span>Customer</span>
         <input class="input" id="pjKunde" placeholder="Who is it for?" value="${esc(p.customer || '')}"></label>
+      <label class="field"><span>Case number</span>
+        <input class="input" id="pjSag" placeholder="SAG-1234" value="${esc(p.caseNumber || '')}"></label>
+      <p class="meta">Every task in the project inherits this number unless it has its own —
+        it is what the hours are booked against in your other system.</p>
       <label class="field"><span>Budget (hours)</span>
         <input class="input" id="pjRamme" inputmode="decimal" placeholder="e.g. 40"
           value="${esc(p.budgetHours || '')}"></label>
@@ -414,6 +492,7 @@ function aabnProjektRuden(p) {
       await api('PATCH', `/api/v1/items/${p.id}`, {
         name: document.getElementById('pjName').value,
         customer: document.getElementById('pjKunde').value,
+        caseNumber: document.getElementById('pjSag').value.trim(),
         budgetHours: raa ? Number(raa) : null,
       });
       luk();
@@ -453,6 +532,9 @@ async function aabnOpgave(id) {
 
   detailState.id = id;
   const projekt = state.projects.find((p) => p.id === it.projectId);
+  // Staar der intet paa opgaven, gaelder projektets sagsnummer - og saa skal
+  // feltet VISE det som pladsholder frem for at se tomt ud.
+  const sagArvet = (!it.caseNumber && projekt && projekt.caseNumber) ? projekt.caseNumber : '';
   const host = document.createElement('div');
   host.className = 'modal';
   host.innerHTML = `
@@ -472,6 +554,9 @@ async function aabnOpgave(id) {
             value="${esc(it.estimateMinutes ? tovoBeregn.formatVarighed(it.estimateMinutes) : '')}"></label>
         <label class="field" style="flex:1"><span>Due</span>
           <input class="input" id="dDue" type="date" value="${esc(it.dueDate || '')}"></label>
+        <label class="field" style="flex:1"><span>Case number</span>
+          <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
+            value="${esc(it.caseNumber || '')}"></label>
         <label class="field" style="flex:1"><span>Priority</span>
           <select class="input" id="dPrio">
             <option value="">—</option>
@@ -479,8 +564,19 @@ async function aabnOpgave(id) {
           </select></label>
       </div>
 
-      <div class="meta">${esc(projekt ? projekt.name : 'No project')}${it.recurrenceRule
-    ? ` · repeats ${esc(tovoParse.beskrivGentagelse(it.recurrenceRule))}` : ''}</div>
+      <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
+
+      <label class="field" style="margin-top:12px"><span>Repeats</span>
+        <input class="input" id="dGentag" placeholder="every monday at 9 · every 2 weeks · every! friday"
+          value="${esc(it.recurrenceRule ? tovoParse.beskrivGentagelse(it.recurrenceRule).split(' · ')[0] : '')}"></label>
+      <p class="meta">${it.recurrenceRule
+    ? `Now: ${esc(tovoParse.beskrivGentagelse(it.recurrenceRule))}. Clear the field to stop it.`
+    : 'Leave it empty for a one-off task.'}
+        The estimate is <strong>per time</strong> — each new occurrence starts with the same
+        one, and the hours you log add up on each occurrence separately.
+        <code>every!</code> counts from when you finish, not from the plan.</p>
+      ${it.recurrenceRule ? `<div class="row"><button class="linkbtn" id="dStopGentag">Stop repeating</button>
+        <span class="meta">The task stays — only the rule goes away.</span></div>` : ''}
       ${it.dueDate ? `<div class="row" style="margin-top:8px">
         <button class="btn" id="dIcs">Add to calendar</button>
         <span class="meta">One-off .ics — the feed in Settings keeps everything in sync.</span>
@@ -543,11 +639,24 @@ function bindDetalje(host, it, startLink) {
     note: document.getElementById('dNote').value,
     dueDate: document.getElementById('dDue').value || null,
     priority: document.getElementById('dPrio').value || null,
+    caseNumber: document.getElementById('dSag').value.trim(),
   });
 
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   document.getElementById('dClose').addEventListener('click', luk);
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+
+  const stopGentag = document.getElementById('dStopGentag');
+  if (stopGentag) {
+    stopGentag.addEventListener('click', async () => {
+      try {
+        await api('PATCH', `/api/v1/items/${it.id}`, { recurrenceRule: null });
+        luk();
+        await genindlaes();
+        toast('It no longer repeats. Finishing it now just finishes it.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
 
   document.getElementById('dSave').addEventListener('click', async () => {
     const f = felter();
@@ -559,6 +668,18 @@ function bindDetalje(host, it, startLink) {
       if (!m) { toast(`I did not understand "${raa}" as a duration.`); return; }
       f.estimateMinutes = m;
     } else f.estimateMinutes = null;
+
+    // Gentagelsen tolkes af den SAMME parser som `!every …` i soegefeltet.
+    // To tolkninger ville betyde, at det samme skrevne kunne give to regler.
+    const raaRegel = document.getElementById('dGentag').value.trim();
+    if (raaRegel) {
+      const regel = tovoParse.tolkGentagelse(raaRegel);
+      if (!regel) {
+        toast(`I did not understand "${raaRegel}". Try "every monday at 9" or "every 2 weeks".`);
+        return;
+      }
+      f.recurrenceRule = regel;
+    } else f.recurrenceRule = null;
     try {
       await api('PATCH', `/api/v1/items/${it.id}`, f);
       luk();

@@ -279,6 +279,28 @@
       return Object.assign(regel, { freq: 'month', monthday: 'last' });
     }
 
+    /*
+     * "2 weeks on friday" - interval OG ugedag.
+     *
+     * TILFOEJET I TOVO (dodas parser kan det ikke): "hver anden uge paa
+     * fredag" er en helt almindelig ting at skrive, og feltets egen
+     * pladsholder foreslaar "every 2 weeks". Uden formen svarede den bare
+     * nej. Intervallet er allerede trukket ud ovenfor, saa her staar
+     * "weeks on friday" tilbage.
+     */
+    // `weeks?` og ikke `week|weeks`: i en alternation vinder det FOERSTE
+    // traef, saa "week|weeks" matcher kun "week" af "weeks" og efterlader et
+    // "s", der aldrig kan blive en ugedag. Fejlen er tavs - formen svarer
+    // bare nej.
+    const ugeMedDag = t.match(/^(?:weeks?|uger?)\s*(?:on|paa|på|den)?\s*(.+)$/);
+    if (ugeMedDag) {
+      const dele = ugeMedDag[1].split(/\s*(?:,|\band\b|\bog\b)\s*/).filter(Boolean);
+      if (dele.length && dele.every((x) => UGEDAGE[x])) {
+        const dage = [...new Set(dele.map((x) => UGEDAGE[x]))].sort((a, b) => a - b);
+        return Object.assign(regel, { freq: 'week', weekdays: dage });
+      }
+    }
+
     // Ugedagsliste: "monday", "mon, thu", "mandag og torsdag"
     const stykker = t.split(/\s*(?:,|\band\b|\bog\b)\s*/).filter(Boolean);
     if (stykker.length && stykker.every((s) => UGEDAGE[s])) {
@@ -465,7 +487,15 @@
   // foran sig: "https://dr.dk/nyheder", "3/9" og "and/or" har alle et tegn
   // foer skraastregen og roeres derfor ikke. Samme guard redder
   // "nogen@eksempel.dk" fra at blive laest som et projekt.
-  const MARKOERER = '#@!~/';
+  /*
+   * `:` er SAGSNUMMER (tovos egen markoer; doda brugte den til omraader).
+   *
+   * Guarden om mellemrum eller linjestart foran markoeren goer den ufarlig:
+   * "kl 9:30", "note: husk" og "https://x.dk" har alle et tegn foer kolonet
+   * og roeres derfor ikke. Kun " :SAG-123" og en linje, der BEGYNDER med
+   * kolon, laeses som et sagsnummer.
+   */
+  const MARKOERER = '#@!~/:';
 
   /**
    * Tolker en fangst-tekst til felter.
@@ -480,7 +510,7 @@
     const ud = {
       title: '', note: '',
       tags: [], project: null,
-      due: null, estimateMinutes: null,
+      due: null, estimateMinutes: null, caseNumber: '', startTimer: false,
       recurrenceRule: null, recurrenceText: null,
       warnings: [],
     };
@@ -499,6 +529,22 @@
         ud.note = tekst.slice(sep + 4).trim();
         tekst = tekst.slice(0, sep);
       }
+    }
+
+    /*
+     * `%` = start timeren med det samme.
+     *
+     * Den staar UDEN FOR markoer-loekken, fordi den ikke har en vaerdi efter
+     * sig: den er et flag, ikke et felt. Derfor kraeves der ogsaa mellemrum
+     * eller linjeslut EFTER tegnet - saa "100% faerdig" og "5%rabat" er
+     * almindelig tekst og ikke en timer, der gaar i gang.
+     *
+     * `/` kunne ikke bruges: den er projektmarkoer i forvejen.
+     */
+    const flag = tekst.match(/(^|\s)%(?=\s|$)/);
+    if (flag) {
+      ud.startTimer = true;
+      tekst = tekst.replace(/(^|\s)%(?=\s|$)/, '$1');
     }
 
     // Type-praefiks. tovo har kun opgaver, saa `+` betyder "opret" og
@@ -520,7 +566,7 @@
       const slut = i + 1 < fundne.length ? fundne[i + 1].pos : tekst.length;
       const raat = tekst.slice(her.pos + 1, slut);
 
-      if (her.tegn === '#' || her.tegn === '@' || her.tegn === '/') {
+      if (her.tegn === '#' || her.tegn === '@' || her.tegn === '/' || her.tegn === ':') {
         // Tag og projekt er ÉT ord, og det skal klaebe DIREKTE til markoeren -
         // medmindre navnet staar i anfoerselstegn: @"Nordvind TRIO 11".
         //
@@ -532,12 +578,17 @@
         const citat = raat.match(/^"([^"]*)"/);
         if (citat) { vaerdi = citat[1].trim(); laengde = citat[0].length; }
         else {
-          const ord = raat.match(/^[\p{L}\p{N}_-]+/u);
+          // Sagsnumre indeholder tit punktum, skraastreg og hash (SAG-12/2026,
+          // INC.4711, #4711) - de skal med i ÉT ord. Tags og projekter beholder
+          // det snaevre saet, saa "#tag." ikke tager punktummet med.
+          const moenster = her.tegn === ':' ? /^[\p{L}\p{N}_\-.\/#]+/u : /^[\p{L}\p{N}_-]+/u;
+          const ord = raat.match(moenster);
           vaerdi = ord ? ord[0] : '';
           laengde = vaerdi.length;
         }
         if (!vaerdi) continue;
         if (her.tegn === '#') { if (!ud.tags.includes(vaerdi)) ud.tags.push(vaerdi); }
+        else if (her.tegn === ':') ud.caseNumber = vaerdi;
         else ud.project = vaerdi;      // baade @ og /
         spis.push([her.pos, her.pos + 1 + laengde]);
         continue;

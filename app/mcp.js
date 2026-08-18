@@ -31,6 +31,8 @@ function opret(srv) {
         'Create a task in tovo. Takes the WHOLE capture line with the same shortcut syntax as '
         + 'the app: @project (or /project), #tag, !date (!tomorrow, !friday, !3/9, !in 2 weeks), '
         + '~estimate (~2t, ~90m, ~1,5t — Danish decimal comma works), '
+        + ':case-number (the number the hours are booked against in another system), '
+        + '% anywhere in the line to start the timer on it right away, '
         + '!every monday for a repeating task, and " // " to start a description. '
         + 'Unknown projects and tags are created automatically.',
       inputSchema: {
@@ -39,7 +41,7 @@ function opret(srv) {
         required: ['text'],
       },
       kald(a, auth) {
-        const r = srv.fangst(auth.user.id, String(a.text || ''), {});
+        const r = srv.fangst(auth.user.id, String(a.text || ''), { kilde: 'mcp' });
         const i = r.item;
         const dele = [`Created: ${i.title}`];
         if (i.projectId) {
@@ -49,6 +51,7 @@ function opret(srv) {
         if (i.estimateMinutes) dele.push(`Estimate: ${f(i.estimateMinutes)}`);
         if (i.dueDate) dele.push(`Due: ${i.dueDate}${i.dueTime ? ` ${i.dueTime}` : ''}`);
         if (r.recurrenceText) dele.push(`Repeats: ${r.recurrenceText}`);
+        if (r.timer) dele.push('The timer is now running on it.');
         for (const w of r.warnings) dele.push(`Note: ${w}`);
         dele.push(`id: ${i.id}`);
         return { tekst: dele.join('\n'), data: { item: i } };
@@ -247,6 +250,10 @@ function opret(srv) {
         const linjer = [`${fra} – ${til}: ${f(r.total)} in total`,
           `On projects: ${f(r.onProjects)} · Ad hoc: ${f(r.adhoc)} · Completed: ${r.completed}`];
         if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
+        if (r.cases.length) {
+          linjer.push('', 'Per case number:');
+          for (const c of r.cases) linjer.push(`  ${c.case}: ${f(c.minutter)}`);
+        }
         for (const p of r.projects) {
           linjer.push('', `${p.name} — ${f(p.minutter)}`);
           for (const t of p.tasks) {

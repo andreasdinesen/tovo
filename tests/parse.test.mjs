@@ -129,3 +129,39 @@ test('fjernMarkoer fjerner PRAECIS ét kendt token', () => {
   // En vaerdi, der ikke staar der, maa ikke aendre noget.
   assert.equal(parse.fjernMarkoer(t, '#', 'findesikke'), t);
 });
+
+test('gentagelse: interval OG ugedag - formen tovo tilfoejede', () => {
+  // dodas parser kan ikke "every 2 weeks on friday", og feltets egen
+  // pladsholder foreslaar "every 2 weeks". Uden formen svarede den bare nej.
+  const r = parse.tolkGentagelse('every 2 weeks on friday', NU);
+  assert.equal(r.freq, 'week');
+  assert.equal(r.interval, 2);
+  assert.deepEqual(r.weekdays, [5]);
+
+  assert.deepEqual(parse.tolkGentagelse('every 3 weeks on monday and thursday', NU).weekdays, [1, 4]);
+  assert.equal(parse.tolkGentagelse('hver anden uge på fredag', NU).interval, 2);
+  assert.equal(parse.tolkGentagelse('every 2 weeks on friday at 14', NU).time, '14:00');
+  assert.equal(parse.tolkGentagelse('every! 2 weeks on monday', NU).mode, 'completion');
+
+  // `weeks?` og ikke `week|weeks`: i en alternation vinder foerste traef, saa
+  // "week|weeks" matcher kun "week" af "weeks" og efterlader et "s", der
+  // aldrig kan blive en ugedag. Fejlen er TAVS.
+  assert.ok(parse.tolkGentagelse('every 2 weeks on friday', NU), 'alternationen maa ikke spise s-et');
+  assert.equal(parse.tolkGentagelse('every 2 weeks on vroevl', NU), null);
+
+  // De gamle former skal stadig virke uaendret.
+  assert.deepEqual(parse.tolkGentagelse('every friday', NU).weekdays, [5]);
+  assert.equal(parse.tolkGentagelse('every 3 days', NU).freq, 'day');
+  assert.equal(parse.tolkGentagelse('every month on the 20th', NU).monthday, 20);
+});
+
+test('naeste forekomst respekterer interval OG ugedag', () => {
+  const regel = parse.tolkGentagelse('every 2 weeks on friday', NU);
+  // NU er tirsdag 18/8-2026. Fredag i denne uge er den 21.; med interval 2
+  // regnet fra ankeruge skal den ramme en fredag hver anden uge.
+  const foerste = parse.naesteForekomst(regel, '2026-08-18');
+  assert.match(foerste, /^2026-08-(21|28)$/);
+  const naeste = parse.naesteForekomst(regel, foerste);
+  const dage = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+  assert.equal(dage(foerste, naeste), 14, 'to uger frem, ikke én');
+});

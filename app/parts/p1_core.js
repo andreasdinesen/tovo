@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 5;
+const APP_VERSION = 6;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -31,6 +31,7 @@ const state = {
   counts: {},
   todayMinutes: 0,
   openProject: null,
+  openTag: null,
 };
 
 /* ------------------------------------------------------------ hjaelpere */
@@ -90,6 +91,25 @@ function linkify(tekst) {
     flytter datoen for alle mellem midnat og to om natten. */
 function isoDato(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Sagsnummeret, som link hvis der er en skabelon.
+ *
+ * Skabelonen er en URL med `{case}` i, fx
+ * `https://firma.service-now.com/nav_to.do?uri=/task.do?sysparm_query=number={case}`.
+ * Kun http(s) tages imod: en skabelon er brugerens egen tekst, men den bliver
+ * til et href, og dér maa javascript: aldrig kunne slippe igennem.
+ */
+function sagHtml(sag) {
+  if (!sag) return '';
+  const skabelon = (state.settings || {}).case_url || '';
+  if (!/^https?:\/\//i.test(skabelon) || !skabelon.includes('{case}')) {
+    return `<span class="sagchip">${esc(sag)}</span>`;
+  }
+  const url = skabelon.replace('{case}', encodeURIComponent(sag));
+  return `<a class="sagchip saglink" href="${esc(url)}" target="_blank" rel="noopener noreferrer"
+    title="Open ${esc(sag)}" data-stop>${esc(sag)}</a>`;
 }
 
 function visTidspunkt(unix) {
@@ -225,6 +245,7 @@ const ICONS = {
   out: '<path d="M14.5 4.5H18a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-3.5"/><path d="M4.5 12h10M11 8.5l3.5 3.5-3.5 3.5"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
   kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
+  tags: '<path d="M5 9.5h14M5 14.5h14M10.5 4.5L8.5 19.5M15.5 4.5l-2 15"/>',
 };
 
 function icon(name, size = 18) {
@@ -239,6 +260,7 @@ const VIEWS = [
   { id: 'today', label: 'Today', icon: 'today', group: 1 },
   { id: 'week', label: 'Week', icon: 'kalender', group: 1 },
   { id: 'projects', label: 'Projects', icon: 'projects', group: 1 },
+  { id: 'tags', label: 'Tags', icon: 'tags', group: 2 },
   { id: 'report', label: 'Report', icon: 'report', group: 2 },
   // group: 0 = staar IKKE i navigationen. Settings naas fra menuen paa
   // brugerknappen, hvor kontoen i forvejen bor - to indgange til det samme
@@ -247,11 +269,12 @@ const VIEWS = [
 ];
 
 const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
-const BUND = ['today', 'week', 'projects', 'report'];
+const BUND = ['today', 'week', 'projects', 'tags'];
 
 const BESKRIVELSER = {
   today: 'What you have registered today, and what is running right now.',
   week: 'The week as a grid — drag in it to log time.',
+  tags: 'Your labels, and how much carries each one.',
   projects: 'Estimate, budget and hours spent — per project.',
   report: 'Hours per project and task for a week you choose.',
   settings: 'Appearance, account and access.',
@@ -611,6 +634,7 @@ function gaaTil(view, opt) {
    * en SIDE og ikke til et view, skal den ryddes af den, der navigerer.
    */
   state.openProject = (opt && opt.project !== undefined) ? opt.project : null;
+  state.openTag = (opt && opt.tag !== undefined) ? opt.tag : (view === 'tags' ? state.openTag : null);
   document.body.classList.remove('navopen');
   opdaterNav();
   // Feltet arbejder i den side, man staar paa - og skal vise det.
@@ -742,6 +766,7 @@ async function tegnSide() {
   if (state.view === 'today') { await tegnIDag(); return; }
   if (state.view === 'projects') { await tegnProjekter(); return; }
   if (state.view === 'week') { await tegnKalender(); return; }
+  if (state.view === 'tags') { await tegnTags(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>
@@ -858,6 +883,18 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Case numbers</h2>
+      <p class="meta">A task can carry the number the hours are booked against in your other
+        system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
+        every task inherits it.</p>
+      <label class="field"><span>Link to open a case</span>
+        <input class="input" id="setCaseUrl" placeholder="https://firma.service-now.com/nav_to.do?uri=/task.do?sysparm_query=number={case}"
+          value="${esc((state.settings || {}).case_url || '')}"></label>
+      <p class="meta">Put <code>{case}</code> where the number goes. Then every case number in
+        tovo becomes a link straight into the case. Only http and https are accepted.</p>
+    </div>
+
+    <div class="card">
       <h2>Your data</h2>
       <p class="meta">Everything you have, in one open file. Secrets are left out on purpose:
         a start link or the calendar address in a file you pass on would give away access.</p>
@@ -920,6 +957,20 @@ function bindSettings() {
       } catch (ex) { toast(ex.message); }
     });
   });
+
+  const caseUrl = document.getElementById('setCaseUrl');
+  if (caseUrl) {
+    caseUrl.addEventListener('change', async () => {
+      const v = caseUrl.value.trim();
+      if (v && !/^https?:\/\//i.test(v)) { toast('The link must start with http:// or https://'); return; }
+      if (v && !v.includes('{case}')) { toast('The link needs {case} where the number goes.'); return; }
+      try {
+        await api('POST', '/api/v1/settings', { case_url: v });
+        await genindlaes();
+        toast(v ? 'Case numbers are links now.' : 'Case links turned off.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
 
   const eksport = document.getElementById('dataEksport');
   if (eksport) {

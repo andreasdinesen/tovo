@@ -152,3 +152,108 @@ test('position er et loebenummer - ikke et tidsstempel', async () => {
   const positioner = r.data.items.map((p) => p.position).sort((a, b) => a - b);
   assert.deepEqual(positioner, [0, 1]);
 });
+
+test('kolonner hoerer til PROJEKTET - to projekter kan have hver sine', async () => {
+  // Tavlens kolonner er projektets sektioner. Laa de globalt, ville en
+  // Planner-import kunne aendre faserne i et projekt, den intet har med at
+  // goere.
+  const a = (await k.kald('POST', '/api/v1/items', {
+    kind: 'project',
+    name: 'Med Planner-faser',
+    sections: [{ id: 's1', name: 'Backlog', position: 0 }, { id: 's2', name: 'In progress', position: 1 }],
+  })).data.item;
+  const b = (await k.kald('POST', '/api/v1/items', {
+    kind: 'project',
+    name: 'Med egne faser',
+    sections: [{ id: 'x1', name: 'Venter paa kunden', position: 0 }],
+  })).data.item;
+
+  assert.deepEqual(a.sections.map((s) => s.name), ['Backlog', 'In progress']);
+  assert.deepEqual(b.sections.map((s) => s.name), ['Venter paa kunden']);
+
+  // En aendring i det ene roerer ikke det andet.
+  await k.kald('PATCH', `/api/v1/items/${b.id}`, {
+    sections: [{ id: 'x1', name: 'Venter', position: 0 }, { id: 'x2', name: 'Faktureret', position: 1 }],
+  });
+  const aIgen = (await k.kald('GET', `/api/v1/items/${a.id}`)).data.item;
+  assert.deepEqual(aIgen.sections.map((s) => s.name), ['Backlog', 'In progress']);
+
+  // En sektion uden navn falder fra - en navnloes kolonne er ikke en kolonne.
+  const c = await k.kald('PATCH', `/api/v1/items/${b.id}`, {
+    sections: [{ id: 'x1', name: 'Venter', position: 0 }, { id: 'x3', name: '  ', position: 1 }],
+  });
+  assert.equal(c.data.item.sections.length, 1);
+});
+
+test('en flytning paa tavlen nummererer BEGGE kolonner om', async () => {
+  const p = (await k.kald('POST', '/api/v1/items', {
+    kind: 'project',
+    name: 'Tavle',
+    sections: [{ id: 'k1', name: 'Til', position: 0 }, { id: 'k2', name: 'Fra', position: 1 }],
+  })).data.item;
+  const opgaver = [];
+  for (const navn of ['en', 'to', 'tre']) {
+    const r = await k.kald('POST', '/api/v1/capture', { text: `${navn} kort`, projectId: p.id });
+    opgaver.push(r.data.item);
+  }
+  // Alle tre i "Fra", i raekkefoelge.
+  await k.kald('POST', '/api/v1/items/bulk', {
+    items: opgaver.map((t, i) => ({ ...t, sectionId: 'k2', position: i })),
+  });
+
+  // Laes dem FRISKE igen. Tavlen gør det samme (den henter projektet efter
+  // hver flytning) - og med forældede objekter ville sectionId fra foer
+  // blive skrevet tilbage. Det var min egen testfejl foerste gang.
+  const friske = (await k.kald('GET', `/api/v1/projects/${p.id}`)).data.tasks
+    .sort((a, b) => a.position - b.position);
+  const flyttet = friske.find((t) => t.title === 'to kort');
+  const tilbage = friske.filter((t) => t.title !== 'to kort');
+  await k.kald('POST', '/api/v1/items/bulk', {
+    items: [
+      { ...flyttet, sectionId: 'k1', position: 0 },
+      ...tilbage.map((t, i) => ({ ...t, position: i })),
+    ],
+  });
+
+  const efter = (await k.kald('GET', `/api/v1/projects/${p.id}`)).data.tasks;
+  const iKolonne = (id) => efter.filter((t) => t.sectionId === id).sort((a, b) => a.position - b.position);
+  assert.deepEqual(iKolonne('k1').map((t) => t.title), ['to kort']);
+  assert.deepEqual(iKolonne('k2').map((t) => t.title), ['en kort', 'tre kort']);
+  // Positionerne er 0, 1 - et loebenummer uden huller. Efterlades der huller,
+  // driver raekkefoelgen efter et par flytninger (doda F3).
+  assert.deepEqual(iKolonne('k2').map((t) => t.position), [0, 1]);
+  assert.deepEqual(iKolonne('k1').map((t) => t.position), [0]);
+});
+
+test('% starter timeren med det samme - og kun naar det staar alene', async () => {
+  const r = await k.kald('POST', '/api/v1/capture', { text: '% ring til kunden @Nordvind ~30m' });
+  assert.equal(r.data.item.title, 'ring til kunden', 'flaget maa ikke staa i titlen');
+  assert.equal(r.data.item.estimateMinutes, 30);
+  assert.ok(r.data.timer, 'timeren skal koere paa den nye opgave');
+  assert.equal(r.data.timer.entry.taskId, r.data.item.id);
+
+  // Den gaar gennem den SAMME startTimer som alle andre veje: en koerende
+  // timer stoppes automatisk, saa der kun er én.
+  const anden = await k.kald('POST', '/api/v1/capture', { text: 'straks i gang %' });
+  assert.equal(anden.data.timer.entry.taskId, anden.data.item.id);
+  const nu = await k.kald('GET', '/api/v1/timer/current');
+  assert.equal(nu.data.timer.taskTitle, 'straks i gang');
+  const alle = (await k.kald('GET', '/api/v1/entries')).data.entries.filter((e) => !e.stoppedAt);
+  assert.equal(alle.length, 1, 'der maa kun koere ÉN');
+  await k.kald('POST', '/api/v1/timer/stop', {});
+
+  // Uden flaget starter der ingenting.
+  const uden = await k.kald('POST', '/api/v1/capture', { text: 'helt almindelig opgave' });
+  assert.equal(uden.data.timer, null);
+  assert.equal((await k.kald('GET', '/api/v1/timer/current')).data.timer, null);
+});
+
+test('% i almindelig tekst er almindelig tekst', async () => {
+  // "100% faerdig" og "5%rabat" maa ikke saette en timer i gang. Reglen er,
+  // at tegnet skal have mellemrum (eller linjeslut) paa BEGGE sider.
+  for (const tekst of ['100% faerdig', 'giv 5%rabat', 'tjek 50%50 fordelingen']) {
+    const r = await k.kald('POST', '/api/v1/capture', { text: tekst });
+    assert.equal(r.data.timer, null, `"${tekst}" startede en timer`);
+    assert.equal(r.data.item.title, tekst, `"${tekst}" blev aendret`);
+  }
+});

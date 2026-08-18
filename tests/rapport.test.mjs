@@ -155,3 +155,67 @@ test('rapportens tal er de SAMME som beregn.js giver frontenden', async () => {
   }
   await k.kald('POST', '/api/v1/settings', { rounding: 0 });
 });
+
+test('sagsnummer: opgavens eget, ellers projektets', async () => {
+  const p = (await k.kald('GET', '/api/v1/state')).data.projects[0];
+  await k.kald('PATCH', `/api/v1/items/${p.id}`, { caseNumber: 'SAG-1000' });
+
+  const arvet = await k.kald('POST', '/api/v1/capture', { text: 'arver sagen @Nordvind' });
+  const eget = await k.kald('POST', '/api/v1/capture', { text: 'egen sag @Nordvind :SAG-2000' });
+  assert.equal(eget.data.item.caseNumber, 'SAG-2000');
+  assert.equal(arvet.data.item.caseNumber, '');
+
+  await k.kald('POST', '/api/v1/entries', { taskId: arvet.data.item.id, date: mandag, text: '1t' });
+  await k.kald('POST', '/api/v1/entries', { taskId: eget.data.item.id, date: mandag, text: '30m' });
+
+  const d = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data;
+  const sager = Object.fromEntries(d.report.cases.map((c) => [c.case, c.minutter]));
+  // Saetter man projektets nummer, arver ALLE dets opgaver det - ogsaa dem,
+  // der laa der i forvejen. Det er meningen: ét projekt er tit én sag.
+  // (Min foerste forventning var 60, og det var testen der var forkert.)
+  assert.ok(sager['SAG-1000'] >= 60, 'projektets opgaver skal ligge paa projektets sag');
+  assert.equal(sager['SAG-2000'], 30, 'et eget nummer vinder over projektets');
+  assert.ok(sager['(no case number)'] > 0, 'det uden sag skal ogsaa staa der - ellers stemmer totalen ikke');
+
+  // Arven laeses ved OPSLAGET, ikke skrevet ind i opgaven: den arvede opgave
+  // har stadig et tomt felt, men staar paa sagen i rapporten.
+  const raekke = d.timesheet.rows.find((x) => x.title === 'arver sagen');
+  assert.equal(raekke.case, 'SAG-1000');
+
+  // Summen af sagerne SKAL vaere rapportens total. Ellers kan en afstemning
+  // ikke bruges til noget.
+  assert.equal(d.report.cases.reduce((n, c) => n + c.minutter, 0), d.report.total);
+});
+
+test('timesedlen: timer pr. dag pr. opgave, med sagsnummer', async () => {
+  const d = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data;
+  const ts = d.timesheet;
+  assert.equal(ts.dage.length, 7);
+  assert.ok(ts.rows.length >= 3);
+
+  const arvet = ts.rows.find((r) => r.title === 'arver sagen');
+  assert.equal(arvet.case, 'SAG-1000');
+  assert.equal(arvet.dage[mandag], 60);
+  assert.equal(arvet.total, 60);
+
+  // Kolonnesummerne skal kunne laegges sammen til totalen - ellers kan en
+  // timeseddel ikke afstemmes med sig selv.
+  const sumAfDage = ts.dage.reduce((n, iso) => n + ts.perDay[iso], 0);
+  assert.equal(sumAfDage, ts.total);
+  assert.equal(ts.rows.reduce((n, r) => n + r.total, 0), ts.total);
+  // Og den skal stemme med rapportens egen total.
+  assert.equal(ts.total, d.report.total);
+});
+
+test('timesedlen har én raekke pr. opgave - ikke pr. tidspost', async () => {
+  const opgaver = (await k.kald('GET', '/api/v1/items?kind=task')).data.items;
+  const en = opgaver.find((t) => t.title === 'arver sagen');
+  await k.kald('POST', '/api/v1/entries', { taskId: en.id, date: plusDage(mandag, 1), text: '45m' });
+  await k.kald('POST', '/api/v1/entries', { taskId: en.id, date: plusDage(mandag, 1), text: '15m' });
+
+  const ts = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data.timesheet;
+  const raekker = ts.rows.filter((r) => r.title === 'arver sagen');
+  assert.equal(raekker.length, 1, 'to poster paa samme dag bliver ÉN celle');
+  assert.equal(raekker[0].dage[plusDage(mandag, 1)], 60, '45m + 15m = 1t i den ene celle');
+  assert.equal(raekker[0].total, 120);
+});

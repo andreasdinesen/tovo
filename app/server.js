@@ -265,13 +265,13 @@ const KINDS = new Set(['project', 'task', 'comment', 'tag']);
  * En sortliste glemmer det felt, nogen tilfoejer om et halvt aar.
  */
 const FELTER = {
-  project: ['name', 'color', 'icon', 'customer', 'plannerPlanId', 'plannerPlanName',
+  project: ['name', 'color', 'icon', 'customer', 'caseNumber', 'plannerPlanId', 'plannerPlanName',
     'lastImportAt', 'budgetHours', 'archivedAt', 'sections', 'position'],
   // Sektioner er et FELT paa projektet (array af {id, name, position}), ikke
   // en egen kind - de findes ikke uden for deres projekt.
   task: ['title', 'note', 'projectId', 'sectionId', 'parentTaskId', 'estimateMinutes',
     'priority', 'dueDate', 'dueTime', 'status', 'completedAt', 'plannerTaskId',
-    'recurrenceRule', 'links', 'tagIds', 'position'],
+    'recurrenceRule', 'links', 'tagIds', 'caseNumber', 'position'],
   comment: ['taskId', 'text'],
   tag: ['name', 'color'],
 };
@@ -866,6 +866,21 @@ function sletItem(userId, id) {
   return true;
 }
 
+/**
+ * Opgavens SAGSNUMMER.
+ *
+ * Staar der intet paa opgaven, gaelder projektets. Ét projekt er tit én sag,
+ * og saa skal nummeret ikke skrives tredive gange - men en enkelt opgave skal
+ * kunne hoere til en anden sag end resten.
+ */
+function sagsnummer(userId, opgave) {
+  if (!opgave) return '';
+  if (opgave.caseNumber) return opgave.caseNumber;
+  if (!opgave.projectId) return '';
+  const p = hentItem(userId, opgave.projectId);
+  return (p && p.caseNumber) || '';
+}
+
 /* ------------------------------------------------------- rensning */
 
 /*
@@ -916,6 +931,10 @@ function renseItem(kind, raa) {
     if (v === null || v === undefined) { ud[felt] = null; continue; }
     switch (felt) {
       case 'name': case 'title': ud[felt] = str(v, 500); break;
+      // Sagsnummeret er den noegle, timerne skal afstemmes paa i et ANDET
+      // system. Det gemmes som skrevet - ingen normalisering, for formatet
+      // hoerer til det system, ikke til tovo.
+      case 'caseNumber':
       case 'customer': case 'plannerPlanName': case 'color': case 'icon':
       case 'sectionId': case 'parentTaskId': case 'projectId': case 'taskId':
       case 'plannerPlanId': case 'plannerTaskId':
@@ -1028,6 +1047,7 @@ function fangst(userId, tekst, opts) {
   const item = gemItem(userId, {
     kind: 'task',
     title: p.title,
+    caseNumber: p.caseNumber || '',
     note: p.note || '',
     projectId,
     sectionId: o.sectionId || null,
@@ -1039,7 +1059,20 @@ function fangst(userId, tekst, opts) {
     status: 'open',
     position: naestePosition(userId, 'task'),
   });
-  return { item, nye, warnings: p.warnings, recurrenceText: p.recurrenceText };
+  /*
+   * `%` starter timeren med det samme.
+   *
+   * Den gaar gennem den SAMME startTimer som alle andre veje - saa en
+   * koerende timer stoppes automatisk, og databasens unikke indeks er
+   * stadig det, der haandhaever "kun én ad gangen".
+   */
+  let timer = null;
+  if (p.startTimer) {
+    startTimer(userId, item.id, o.kilde || 'timer');
+    timer = timerStatus(userId);
+  }
+
+  return { item, nye, warnings: p.warnings, recurrenceText: p.recurrenceText, timer };
 }
 
 /**
@@ -2309,6 +2342,25 @@ const ROUTES = {
     res.end(data);
   },
 
+  /* Tags med det tal, der giver dem betydning: hvor mange opgaver de sidder paa. */
+  'GET /api/v1/tags': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const opgaver = hentItems(auth.user.id, { kind: 'task' });
+    const tags = hentItems(auth.user.id, { kind: 'tag' })
+      .map((t) => {
+        const dens = opgaver.filter((o) => (o.tagIds || []).includes(t.id));
+        return {
+          id: t.id,
+          name: t.name,
+          count: dens.length,
+          open: dens.filter((o) => o.status !== 'done').length,
+        };
+      })
+      .sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name)));
+    sendJson(res, 200, { tags });
+  },
+
   'GET /api/v1/no-project': (req, res) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;
@@ -2403,6 +2455,9 @@ const ROUTES = {
       // dagen efter i sekunder. To naboperioder taeller hverken en post to
       // gange eller taber den.
       report: b.ugerapport(dagStart(fraIso), dagStart(tilIso) + 86400),
+      // Timesedlen: timer pr. dag pr. opgave med sagsnummer - den opgoerelse,
+      // der skrives af, naar timerne skal ind i et andet system.
+      timesheet: b.timeseddel(dagStart(fraIso), dagStart(tilIso) + 86400),
       // Forrige periode af samme laengde - sammenligningen er en af de to
       // ting, rapporten er til for.
       previous: (() => {
@@ -2707,6 +2762,37 @@ const MOENSTRE = [
     },
   },
   {
+    /*
+     * Sletning af et tag skal ogsaa FJERNE det fra opgaverne.
+     *
+     * Ellers staar der et id tilbage i tagIds, som ikke peger paa noget - og
+     * saa forsvinder maerkatet fra visningen, men bliver liggende i dataene
+     * og dukker op i en eksport som et gaadefuldt id.
+     */
+    metode: 'DELETE', re: /^\/api\/v1\/tags\/([0-9a-f-]{8,64})$/,
+    kald: (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const tag = hentItem(auth.user.id, ctx.params[0]);
+      if (!tag || tag.kind !== 'tag') { apiFejl(res, 404, 'not_found', 'No such tag.'); return; }
+      const paavirkede = hentItems(auth.user.id, { kind: 'task' })
+        .filter((t) => (t.tagIds || []).includes(tag.id));
+      for (const t of paavirkede) {
+        gemItem(auth.user.id, Object.assign({}, t, {
+          tagIds: (t.tagIds || []).filter((id) => id !== tag.id),
+        }));
+      }
+      sletItem(auth.user.id, tag.id);
+      audit('tag-slettet', tag.name, String(paavirkede.length));
+      // Navnet og de ramte opgaver sendes med tilbage, saa en fortrydelse kan
+      // gendanne baade maerkatet og hvor det sad.
+      sendJson(res, 200, {
+        deleted: { id: tag.id, name: tag.name },
+        taskIds: paavirkede.map((t) => t.id),
+      });
+    },
+  },
+  {
     metode: 'DELETE', re: /^\/api\/v1\/keys\/([0-9a-f-]{8,64})$/,
     kald: (req, res, ctx) => {
       const user = requireUser(req, res);
@@ -2813,7 +2899,16 @@ const server = http.createServer(async (req, res) => {
     const ical = urlPath.match(/^\/ical\/([A-Za-z0-9_-]{16,64})\.ics$/);
     if (ical) {
       const feed = findIcalFeed(ical[1]);
-      if (!feed) {
+      // En FREMMED session giver 404 - praecis som paa /s/:token. Uden
+      // session er adressen selv legitimationen (en kalender-app kan ikke
+      // sende cookies), men er der en session, og den hoerer til en anden,
+      // ser feedet ikke ud til at findes. Reglen laa paa start-links og
+      // manglede her; isolationstjeklisten i planen kraever begge.
+      const fremmed = (() => {
+        const session = sessionUser(req);
+        return !!(feed && session && session.id !== feed.user_id);
+      })();
+      if (!feed || fremmed) {
         logSecurity(`ical-token-afvist ip=${clientIp(req)}`);
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end('Not found');

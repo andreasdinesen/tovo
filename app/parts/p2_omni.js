@@ -14,13 +14,14 @@
 const MODER = {
   '+': {
     id: 'task', pil: '+ New task', ph: 'Task title… try ~2,5t !friday',
-    legend: ['@ project', '# tag', '! date', '~ estimate'], enter: 'Create',
+    legend: ['@ project', '# tag', ': case', '! date', '~ estimate', '% start now'], enter: 'Create',
   },
   '/': { id: 'project', pil: '/ Projects', ph: 'Find or create a project…', legend: [], enter: 'Open' },
   '#': { id: 'tag', pil: '# Tags', ph: 'Find a tag…', legend: [], enter: 'Open' },
 };
 
-const STANDARD_LEGEND = ['+ task', '@ project', '# tag', '! date', '~ estimate', '⌘↵ start timer'];
+const STANDARD_LEGEND = ['+ task', '@ project', '# tag', ': case', '! date', '~ estimate',
+  '% start now', '⌘↵ start timer'];
 
 const omniState = {
   mode: null,
@@ -92,6 +93,8 @@ function tegnChips() {
     const ny = !kendteT.has(navn.toLowerCase());
     chips.push(`<span class="chip neutral">#${esc(navn)}${ny ? ' — new' : ''}</span>`);
   }
+  if (t.startTimer) chips.push('<span class="chip">starts the timer</span>');
+  if (t.caseNumber) chips.push(`<span class="chip neutral">${esc(t.caseNumber)}</span>`);
   if (t.estimateMinutes) chips.push(`<span class="chip neutral">~${esc(tovoBeregn.formatVarighed(t.estimateMinutes))}</span>`);
   if (t.due) chips.push(`<span class="chip neutral">${esc(visDato(t.due.dato))}${t.due.tid ? ` ${esc(t.due.tid)}` : ''}</span>`);
   if (t.recurrenceText) chips.push(`<span class="chip neutral">${esc(t.recurrenceText)}</span>`);
@@ -154,10 +157,21 @@ function byggRaekker() {
       raekker.push({ type: 'goto', mode: omniState.mode, id: x.id, titel: x.name,
         under: omniState.mode === '/' ? 'PROJECT' : 'TAG' });
     }
-    if (omniState.mode === '/' && q && !kilde.some((x) => x.name.toLowerCase() === q.toLowerCase())) {
-      raekker.push({ type: 'nyt', navn: q, hvad: 'project' });
+    // BEGGE tilstande kan oprette. Foer kunne kun `/` det, og `#AI` svarede
+    // "Type a name to create one" uden at tilbyde raekken - der stod altsaa en
+    // vejledning til noget, man ikke kunne gøre.
+    if (q && !kilde.some((x) => x.name.toLowerCase() === q.toLowerCase())) {
+      raekker.push(omniState.mode === '/'
+        ? { type: 'nyt', navn: q, hvad: 'project' }
+        : { type: 'nytTag', navn: q });
     }
-    if (!raekker.length) raekker.push({ type: 'tom', titel: 'Nothing yet', under: 'Type a name to create one' });
+    if (!raekker.length) {
+      raekker.push({
+        type: 'tom',
+        titel: omniState.mode === '/' ? 'No projects yet' : 'No tags yet',
+        under: 'Type a name to create one',
+      });
+    }
     return raekker;
   }
 
@@ -245,6 +259,12 @@ function tegnPanel() {
         <span class="omni-row-title">${esc(r.navn)}</span>
         <span class="omni-row-sub">NEW PROJECT</span></span></button>`;
     }
+    if (r.type === 'nytTag') {
+      return `<button class="omni-row"${valgt} data-i="${i}">
+        ${icon('plus')}<span class="omni-row-main">
+        <span class="omni-row-title">${esc(r.navn)}</span>
+        <span class="omni-row-sub">NEW TAG</span></span></button>`;
+    }
     if (r.type === 'projektforslag') {
       return `<button class="omni-row"${valgt} data-i="${i}">
         ${icon('projects')}<span class="omni-row-main">
@@ -319,7 +339,17 @@ async function aktiver() {
   if (raekke.type === 'goto') {
     luk();
     if (raekke.mode === '/') gaaTil('projects', { project: raekke.id });
-    else gaaTil('today');
+    else gaaTil('tags', { tag: raekke.id });
+    return;
+  }
+  if (raekke.type === 'nytTag') {
+    try {
+      const t = await api('POST', '/api/v1/items', { kind: 'tag', name: raekke.navn });
+      luk();
+      await genindlaes();
+      gaaTil('tags', { tag: t.item.id });
+      toast(`Tag “${t.item.name}” created.`);
+    } catch (ex) { toast(ex.message); }
     return;
   }
   if (raekke.type === 'nyt') {
@@ -350,6 +380,7 @@ async function fangstNu() {
     // Advarsler fra parseren skal SIGES. Et estimat, der ikke blev forstaaet,
     // staar stadig i titlen - og det skal brugeren vide nu, ikke om en uge.
     if (r.warnings && r.warnings.length) toast(r.warnings[0]);
+    else if (r.timer) toast(`Added and started: ${r.item.title}`, { label: 'Stop', run: stopTimer });
     else toast(`Added: ${r.item.title}`, { label: 'Open', run: () => aabnOpgave(r.item.id) });
   } catch (ex) {
     toast(ex.message);

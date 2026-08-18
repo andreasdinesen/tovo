@@ -325,6 +325,19 @@
      * viser, kommer herfra, saa MCP'ens week_report giver noejagtig samme
      * tal som siden (§9a).
      */
+    /**
+     * Sagsnummeret paa en opgave: opgavens eget, ellers projektets.
+     *
+     * Ét projekt er tit én sag. Reglen bor HER, saa rapporten, MCP og
+     * webappen ikke kan komme til at arve forskelligt.
+     */
+    function sagFor(opgave, projekter) {
+      if (!opgave) return '';
+      if (opgave.caseNumber) return opgave.caseNumber;
+      const p = opgave.projectId ? projekter.get(opgave.projectId) : null;
+      return (p && p.caseNumber) || '';
+    }
+
     function ugerapport(fra, til, nu) {
       const s = sumPeriode(fra, til, nu);
       const dage = sumPrDag(fra, til, nu);
@@ -354,12 +367,37 @@
         });
       }
 
+      /*
+       * Pr. SAG. Det er den opgoerelse, timerne skal afstemmes efter i det
+       * andet system - og derfor den, der skal kunne kopieres ud.
+       */
+      const opgaver = new Map(items('task').map((t) => [t.id, t]));
+      const projekter = new Map(items('project').map((p) => [p.id, p]));
+      const afrunding2 = afrunding();
+      const sager = new Map();
+      for (const e of entries()) {
+        if (e.startedAt < fra || e.startedAt >= til) continue;
+        const opgave = opgaver.get(e.taskId);
+        const sag = sagFor(opgave, projekter) || '(no case number)';
+        const minutter = afrund(varighed(e, nu), afrunding2);
+        if (!sager.has(sag)) sager.set(sag, { case: sag, minutter: 0, tasks: new Map() });
+        const g = sager.get(sag);
+        g.minutter += minutter;
+        const navn = opgave ? opgave.title : 'Deleted task';
+        g.tasks.set(e.taskId, {
+          taskId: e.taskId, title: navn, minutter: (g.tasks.get(e.taskId) || { minutter: 0 }).minutter + minutter,
+        });
+      }
+
       return {
         fra,
         til,
         total: s.total,
         entries: s.entries,
         projects: s.projects,
+        cases: [...sager.values()]
+          .map((g) => ({ ...g, tasks: [...g.tasks.values()].sort((a, b) => b.minutter - a.minutter) }))
+          .sort((a, b) => b.minutter - a.minutter),
         adhoc: adhoc ? adhoc.minutter : 0,
         onProjects: paaProjekt,
         norm,
@@ -411,6 +449,62 @@
       return huller;
     }
 
+    /**
+     * TIMESEDLEN: timer pr. dag pr. opgave, med sagsnummer.
+     *
+     * Det er den opgoerelse, man skriver af, naar timerne skal ind i et andet
+     * system: én raekke pr. opgave, én kolonne pr. dag, og sagsnummeret
+     * forrest, fordi det er noeglen dér.
+     */
+    function timeseddel(fra, til, nu) {
+      const opgaver = new Map(items('task').map((t) => [t.id, t]));
+      const projekter = new Map(items('project').map((p) => [p.id, p]));
+      const r = afrunding();
+
+      const dage = [];
+      for (let t = fra; t < til; t += 86400) {
+        const d = new Date(t * 1000);
+        dage.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      }
+
+      const raekker = new Map();
+      for (const e of entries()) {
+        if (e.startedAt < fra || e.startedAt >= til) continue;
+        const d = new Date(e.startedAt * 1000);
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const opgave = opgaver.get(e.taskId);
+        const projekt = opgave && opgave.projectId ? projekter.get(opgave.projectId) : null;
+        if (!raekker.has(e.taskId)) {
+          raekker.set(e.taskId, {
+            taskId: e.taskId,
+            title: opgave ? opgave.title : 'Deleted task',
+            case: sagFor(opgave, projekter),
+            project: projekt ? projekt.name : '',
+            dage: {},
+            total: 0,
+          });
+        }
+        const raekke = raekker.get(e.taskId);
+        const minutter = afrund(varighed(e, nu), r);
+        raekke.dage[iso] = (raekke.dage[iso] || 0) + minutter;
+        raekke.total += minutter;
+      }
+
+      const liste = [...raekker.values()].sort((a, b) => String(a.case).localeCompare(String(b.case))
+        || String(a.project).localeCompare(String(b.project))
+        || b.total - a.total);
+      // Kolonnesummerne skal kunne laegges sammen til totalen - ellers kan en
+      // timeseddel ikke afstemmes med sig selv.
+      const prDag = {};
+      for (const iso of dage) prDag[iso] = liste.reduce((n, x) => n + (x.dage[iso] || 0), 0);
+      return {
+        dage,
+        rows: liste,
+        perDay: prDag,
+        total: liste.reduce((n, x) => n + x.total, 0),
+      };
+    }
+
     /** Minutter pr. dato i perioden - grundlaget for dagsvisningen. */
     function sumPrDag(fra, til, nu) {
       const r = afrunding();
@@ -426,7 +520,7 @@
 
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
-      sumPeriode, sumPrDag, ugerapport, hullerPaaDag, afrunding,
+      sumPeriode, sumPrDag, ugerapport, timeseddel, hullerPaaDag, sagFor, afrunding,
     };
   }
 

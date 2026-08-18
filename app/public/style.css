@@ -2012,3 +2012,103 @@ kbd {
   border: 1px solid var(--border); border-radius: var(--r-sm);
   background: var(--bg); white-space: nowrap;
 }
+
+/* -------------------------------------------------------- kanban-tavlen */
+
+/* Tavlen er bredere end en tekstside. */
+.tavle { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; padding-bottom: 8px; }
+.kolonne {
+  flex: 0 0 260px; display: flex; flex-direction: column;
+  border-radius: var(--r); background: var(--card); border: 1px solid var(--border);
+  padding: 10px;
+}
+.kolonne-hoved { display: flex; align-items: baseline; gap: 8px; }
+.kolonne-navn { font-weight: 650; }
+.kolonne-antal { color: var(--muted); font-size: 13px; }
+.kolonne-sum { text-transform: none; letter-spacing: 0; font-size: 11.5px; margin-bottom: 8px; }
+/* min-height: en tom kolonne skal stadig kunne rammes med et kort. */
+.kolonne-kort { display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
+
+.kort {
+  border: 1px solid var(--border-soft); border-radius: var(--r-sm);
+  background: var(--bg); padding: 9px 10px; cursor: grab;
+  /* touch-action: none - ellers ruller siden i stedet for at flytte kortet. */
+  touch-action: none;
+}
+.kort:hover { border-color: var(--border); }
+.kort:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.kort-titel { font-size: 14px; line-height: 1.35; }
+.kort-meta { text-transform: none; letter-spacing: 0; font-size: 11.5px; margin-top: 3px; }
+.kort-knapper { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.kort-knapper .playbtn, .kort-knapper .flytbtn { opacity: 1; width: 26px; height: 26px; }
+.flytbtn {
+  margin-left: auto; border: 0; background: none; color: var(--muted);
+  cursor: pointer; border-radius: var(--r-sm); display: grid; place-items: center;
+}
+.flytbtn:hover { color: var(--text); background: var(--card); }
+/* Chevronen peger NED: den aabner en menu under kortet. */
+.flytbtn svg { transform: rotate(90deg); }
+
+/* Klonen, der foelger fingeren. pointer-events: none, ellers ligger den i
+   vejen for elementFromPoint og kortet kan ikke finde sin kolonne. */
+.kort.traekkes {
+  position: fixed; z-index: 90; pointer-events: none; opacity: .95;
+  box-shadow: var(--shadow-lift); transform: rotate(1.5deg); cursor: grabbing;
+}
+.kort.traekkes-fra { opacity: .35; }
+body.traekker { cursor: grabbing; user-select: none; }
+/* Pladsen, kortet lander paa. Den viser HVOR, ikke bare at der sker noget. */
+.kort-plads {
+  height: 40px; border: 2px dashed var(--accent); border-radius: var(--r-sm);
+  background: var(--accent-soft); opacity: .5;
+}
+
+li .kolonne-input { flex: 1; }
+
+@media (max-width: 900px) {
+  .kolonne { flex: 0 0 78vw; }
+}
+
+/* ---------------------------------------------------------- maerkater */
+
+.tagliste { display: flex; flex-wrap: wrap; gap: 8px; }
+.tagkort {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 13px; border-radius: var(--pill);
+  border: 1px solid var(--border); background: var(--card);
+  color: inherit; font: inherit; cursor: pointer;
+}
+.tagkort:hover { background: var(--card-hover); }
+.tagkort.on { background: var(--accent-soft); border-color: transparent; color: var(--accent-text); }
+.tagnavn { font-weight: 600; }
+/* Tallet er det, der giver maerkatet betydning - saa det staar tydeligt. */
+.tagtal { font-variant-numeric: tabular-nums; font-weight: 650; }
+.tagkort .meta { text-transform: none; letter-spacing: 0; font-size: 11.5px; }
+
+/* Sagsnummeret er en NOEGLE, ikke prosa: monospace-cifre og en ramme, saa
+   oejet kan finde den i en liste, naar der skal afstemmes. */
+.sagchip {
+  font-variant-numeric: tabular-nums; font-size: 11.5px;
+  padding: 1px 6px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); color: var(--accent-text);
+}
+
+/* Sagsnummeret som link. */
+a.saglink { text-decoration: none; }
+a.saglink:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+/* Projektlisten: kompakt, naar kortene fylder for meget. */
+table.projektliste { width: 100%; border-collapse: collapse; }
+table.projektliste th, table.projektliste td {
+  text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border-soft);
+}
+table.projektliste th.num, table.projektliste td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.projektraekke { cursor: pointer; }
+.projektraekke:hover td { background: var(--card); }
+
+/* Timesedlen kan blive bredere end siden - saa scroller TABELLEN, ikke siden. */
+.tabelrul { overflow-x: auto; }
+table.timeseddel { min-width: max-content; }
+table.timeseddel th .meta { display: block; text-transform: none; letter-spacing: 0; font-size: 10.5px; }
+/* Én lang opgavetitel maa ikke traekke tabellen i det uendelige. */
+table.timeseddel td:nth-child(2) { max-width: 22rem; }

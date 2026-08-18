@@ -135,7 +135,8 @@ async function togglImporter() {
 const GENVEJE = [
   ['⌘K / Ctrl+K', 'Open the search field from anywhere'],
   ['Just type', 'Starts writing in the search field'],
-  ['+ text', 'Create a task — @project #tag !date ~estimate'],
+  ['+ text', 'Create a task — @project #tag :case !date ~estimate'],
+  ['%', 'Anywhere in the line: create it and start the timer at once'],
   ['Enter', 'Create, or open the selected row'],
   ['⌘↵', 'Start the timer on the selected task'],
   ['↑ ↓', 'Move into the list and around in it'],
