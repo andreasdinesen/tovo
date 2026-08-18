@@ -141,7 +141,10 @@ async function tegnProjekter() {
   state.items = d.items;
 
   host.innerHTML = `<div class="page">
-    <h1>Projects</h1>
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>Projects</h1>
+      <button class="btn" id="plannerImport">Import from Planner</button>
+    </div>
     <p class="lead">${esc(BESKRIVELSER.projects)}</p>
     ${state.projects.length ? `<div class="cards">${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
@@ -153,6 +156,7 @@ async function tegnProjekter() {
     }).join('')}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
+  document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
   host.querySelectorAll('[data-projekt]').forEach((el) => {
     el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
   });
@@ -181,7 +185,11 @@ async function tegnProjekt(id) {
     <button class="linkbtn" id="tilbage">← Projects</button>
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>
-      <button class="btn" id="bulkLinks">Copy start links</button>
+      <span class="row" style="gap:8px">
+        <button class="btn" id="plannerRe">Re-import</button>
+        <button class="btn" id="kundeVis">Customer view</button>
+        <button class="btn" id="bulkLinks">Copy start links</button>
+      </span>
     </div>
     <p class="lead">${esc(p.customer || 'No customer set')}</p>
 
@@ -198,7 +206,9 @@ async function tegnProjekt(id) {
       </div>
       ${r.estimatOverRamme ? '<p class="meta warnline">The estimates add up to more than the budget — '
     + 'that is more work than was sold.</p>' : ''}
-      ${r.procent !== null && r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''}
+      ${r.procent === null ? '' : (r.procent >= 100
+    ? `<p class="meta warnline">The budget is used up — ${r.procent}% of it is spent.</p>`
+    : (r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''))}
     </div>
 
     <div data-keynav>
@@ -210,6 +220,8 @@ async function tegnProjekt(id) {
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
+  document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
   document.getElementById('bulkLinks').addEventListener('click', async () => {
     try {
       // Markdown-listen laves paa SERVEREN, saa den ser ens ud, uanset hvem

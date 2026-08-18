@@ -1728,6 +1728,32 @@ const ROUTES = {
     });
   },
 
+  /* --- ugerapport --------------------------------------------------- */
+
+  'GET /api/v1/report': (req, res, ctx) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const fraIso = dato(ctx.query.get('from')) || ugeStart(iDag());
+    const tilIso = dato(ctx.query.get('to')) || ugeSlut(fraIso);
+    const b = beregnFor(auth.user.id);
+    sendJson(res, 200, {
+      from: fraIso,
+      to: tilIso,
+      // Halvaabent interval: til-datoen er MED i rapporten, saa "til" er
+      // dagen efter i sekunder. To naboperioder taeller hverken en post to
+      // gange eller taber den.
+      report: b.ugerapport(dagStart(fraIso), dagStart(tilIso) + 86400),
+      // Forrige periode af samme laengde - sammenligningen er en af de to
+      // ting, rapporten er til for.
+      previous: (() => {
+        const dage = Math.round((dagStart(tilIso) + 86400 - dagStart(fraIso)) / 86400);
+        const slut = dagStart(fraIso);
+        return b.ugerapport(slut - dage * 86400, slut);
+      })(),
+      rounding: b.afrunding(),
+    });
+  },
+
   'GET /api/v1/search': (req, res, ctx) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;
@@ -2017,6 +2043,21 @@ const MOENSTRE = [
 
 function iDag() {
   const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Mandagen i den uge, datoen ligger i. Ugen begynder mandag (ISO). */
+function ugeStart(isoDato) {
+  const [aa, mm, dd] = String(isoDato).split('-').map(Number);
+  const d = new Date(aa, mm - 1, dd);
+  const ugedag = d.getDay() === 0 ? 7 : d.getDay();
+  d.setDate(d.getDate() - (ugedag - 1));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function ugeSlut(isoMandag) {
+  const [aa, mm, dd] = String(isoMandag).split('-').map(Number);
+  const d = new Date(aa, mm - 1, dd + 6);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 

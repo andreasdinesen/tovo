@@ -6,8 +6,16 @@
  */
 
 /*
- * Bjaelken bor i <body>, UDEN FOR det element render() skifter ud.
- * Ellers forsvinder den ved hver optegning (doda F8).
+ * Timeren staar i SIDEBAREN paa desktop og som en flydende bjaelke paa mobil.
+ *
+ * Sidebaren er der altid, naar der er plads til den, og det er dér, oejet
+ * i forvejen leder efter appens tilstand. Under mobilgraensen (900 px) er
+ * sidebaren et overlay, man ikke kan se - og saa ville timeren vaere skjult
+ * praecis naar den er mest vaerd. Derfor to placeringer og ét stykke markup.
+ *
+ * Begge steder ligger UDEN FOR det element, render() skifter ud, og uden for
+ * #navHost, som opdaterNav() tegner om. Ellers forsvinder timeren ved hver
+ * optegning (doda F8).
  *
  * Og den taeller ud fra STARTTIDSPUNKTET, aldrig ved at laegge et sekund til
  * en variabel: en taeller nulstilles ved hver gentegning og driver, naar
@@ -17,51 +25,92 @@
 const timerState = { data: null, tik: null };
 
 function tegnTimerBjaelke() {
-  let bar = document.getElementById('timerBar');
   const t = timerState.data;
+  const iSidebar = document.getElementById('timerHost');
+  const flydende = document.getElementById('timerBar');
+
   if (!t) {
-    if (bar) bar.remove();
+    if (flydende) flydende.remove();
+    if (iSidebar) iSidebar.innerHTML = '';
     document.title = state.config.appName || 'tovo';
     stopTik();
     return;
   }
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.className = 'timerbar';
-    bar.id = 'timerBar';
-    document.body.appendChild(bar);
-  }
-  const gaaet = forloebet(t);
-  bar.classList.toggle('warn', !!t.tooLong);
-  bar.innerHTML = `
-    <button class="timerbar-main" id="timerOpen">
+
+  const markup = `
+    <button class="timerbar-main" id="timerOpen" title="Open the task">
       <span class="timerbar-dot"></span>
       <span class="timerbar-text">
         <span class="timerbar-title">${esc(t.taskTitle)}</span>
         <span class="timerbar-sub meta">${esc(t.projectName || 'no project')}${t.tooLong
-    ? ` · running for over ${esc(tovoBeregn.formatVarighed(t.warnAfterMinutes))}` : ''}</span>
+    ? ` · over ${esc(tovoBeregn.formatVarighed(t.warnAfterMinutes))}` : ''}</span>
       </span>
+      <span class="timerbar-time" id="timerUr">${esc(forloebet(t))}</span>
     </button>
-    <span class="timerbar-time">${esc(gaaet)}</span>
-    <button class="btn" id="timerStop">${icon('stop', 15)} Stop</button>`;
+    <button class="btn timerstop" id="timerStop" aria-label="Stop the timer"
+      title="Stop the timer">${icon('stop', 15)}<span class="stoptekst"> Stop</span></button>`;
+
+  // Sidebaren, naar den er synlig - ellers den flydende bjaelke.
+  if (iSidebar && !smalSkaerm()) {
+    if (flydende) flydende.remove();
+    iSidebar.innerHTML = `<div class="timerbar itimerhost${t.tooLong ? ' warn' : ''}">${markup}</div>`;
+  } else {
+    if (iSidebar) iSidebar.innerHTML = '';
+    let bar = flydende;
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'timerBar';
+      document.body.appendChild(bar);
+    }
+    bar.className = `timerbar${t.tooLong ? ' warn' : ''}`;
+    bar.innerHTML = markup;
+  }
+
   document.getElementById('timerStop').addEventListener('click', stopTimer);
+  // HELE feltet - navn, projekt og uret - er ét klik ind i opgaven.
   document.getElementById('timerOpen').addEventListener('click', () => aabnOpgave(t.entry.taskId));
-  // Titlen er den eneste visning, der er der, ogsaa naar fanen ikke er det.
-  document.title = `${gaaet} · ${t.taskTitle} — tovo`;
+  opdaterUr();
   startTik();
 }
 
-/** Den forloebne tid, formateret af beregn.js. */
+/* Krydser vinduet mobilgraensen, skal timeren flytte med. Uden det staar den
+   i en sidebar, ingen kan se - eller svaever over en, der er der. */
+window.addEventListener('resize', () => { if (timerState.data) tegnTimerBjaelke(); });
+
+/**
+ * Den forloebne tid som et ur.
+ *
+ * Regnet ud fra STARTTIDSPUNKTET ved hver tegning - aldrig ved at laegge et
+ * sekund til en taeller. En taeller nulstilles ved hver gentegning og driver,
+ * naar fanen har vaeret i baggrunden; det her er korrekt efter en fuld
+ * sideindlaesning, efter en time i baggrunden og paa tvaers af faner (F8).
+ */
 function forloebet(t) {
-  const minutter = Math.max(0, Math.round((Date.now() / 1000 - t.entry.startedAt) / 60));
-  return tovoBeregn.formatVarighed(minutter);
+  return tovoBeregn.formatUr(Date.now() / 1000 - t.entry.startedAt);
+}
+
+/**
+ * Uret opdateres hvert sekund - men kun URET.
+ *
+ * Hele bjaelken tegnes IKKE om: en optegning pr. sekund ville rive fokus ud
+ * af knapper og lave arbejde for ingenting. Her skiftes ét tekstindhold.
+ */
+function opdaterUr() {
+  const t = timerState.data;
+  if (!t) return;
+  const gaaet = forloebet(t);
+  const ur = document.getElementById('timerUr');
+  if (ur) ur.textContent = gaaet;
+  // Titlen er den eneste visning, der ogsaa er der, naar fanen ikke er det.
+  document.title = `${gaaet} · ${t.taskTitle} — tovo`;
 }
 
 function startTik() {
   if (timerState.tik) return;
-  // Ét minut er den groveste opdeling, der stadig foeles praecis - og den
-  // koster ingenting. Bjaelken tegnes om, ikke hele siden.
-  timerState.tik = setInterval(() => { if (timerState.data) tegnTimerBjaelke(); }, 30000);
+  timerState.tik = setInterval(() => {
+    if (!timerState.data) { stopTik(); return; }
+    opdaterUr();
+  }, 1000);
 }
 
 function stopTik() {

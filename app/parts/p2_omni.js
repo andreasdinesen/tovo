@@ -20,7 +20,7 @@ const MODER = {
   '#': { id: 'tag', pil: '# Tags', ph: 'Find a tag…', legend: [], enter: 'Open' },
 };
 
-const STANDARD_LEGEND = ['+ task', '@ project', '# tag', '! date', '~ estimate'];
+const STANDARD_LEGEND = ['+ task', '@ project', '# tag', '! date', '~ estimate', '⌘↵ start timer'];
 
 const omniState = {
   mode: null,
@@ -99,6 +99,38 @@ function tegnChips() {
   host.innerHTML = chips.join('');
 }
 
+/**
+ * Projekter, der LIGNER det, man er ved at skrive.
+ *
+ * Uden det siger chippen "@BeanLedg — new", mens "BeanLedger" ligger lige
+ * ved siden af - og saa opretter man et projekt nummer to med et
+ * stavefejlsnavn uden at opdage det. Foerst praefiks (det man er i gang med
+ * at skrive), derefter delstreng.
+ */
+function lignendeProjekter(navn) {
+  const q = String(navn || '').toLowerCase();
+  if (!q) return [];
+  const alle = state.projects || [];
+  if (alle.some((p) => p.name.toLowerCase() === q)) return [];   // praecist match: intet at foreslaa
+  const praefiks = alle.filter((p) => p.name.toLowerCase().startsWith(q));
+  const delstreng = alle.filter((p) => !praefiks.includes(p) && p.name.toLowerCase().includes(q));
+  return praefiks.concat(delstreng).slice(0, 4);
+}
+
+/** Skifter det skrevne @navn ud med et rigtigt projektnavn i feltet. */
+function vaelgProjektForslag(navn) {
+  const el = omniEl();
+  if (!el) return;
+  const t = omniState.tolket;
+  const nyt = /\s/.test(navn) ? `"${navn}"` : navn;
+  // Kun DET token, der faktisk staar der, skiftes ud - fjernMarkoer kender
+  // den samme regel om mellemrum foran markoeren som parseren selv.
+  const uden = tovoParse.fjernMarkoer(el.value, '@/', t && t.project ? t.project : '');
+  el.value = `${uden} @${nyt} `.replace(/\s{2,}/g, ' ');
+  el.focus();
+  opdaterOmni();
+}
+
 function visDato(iso) {
   if (!iso) return '';
   if (iso === state.today) return 'today';
@@ -137,6 +169,13 @@ function byggRaekker() {
       titel,
       under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
     });
+    // Skriver man et projektnavn, der ligner et, der findes, saa vis det -
+    // FOER resultaterne, fordi det er en rettelse og ikke et opslag.
+    if (t && t.project) {
+      for (const p of lignendeProjekter(t.project)) {
+        raekker.push({ type: 'projektforslag', projekt: p });
+      }
+    }
   }
 
   for (const it of omniState.resultater.tasks) raekker.push({ type: 'task', item: it });
@@ -161,10 +200,17 @@ function tegnPanel() {
       const projekt = state.projects.find((p) => p.id === it.projectId);
       const under = [projekt ? projekt.name : '', it.dueDate ? visDato(it.dueDate) : '',
         it.estimateMinutes ? `~${tovoBeregn.formatVarighed(it.estimateMinutes)}` : ''].filter(Boolean).join(' · ');
-      return `<button class="omni-row${it.status === 'done' ? ' dim' : ''}"${valgt} data-i="${i}">
+      const koerer = timerState.data && timerState.data.entry.taskId === it.id;
+      // Start-knappen SKAL kunne naas herfra: at skulle aabne opgaven for at
+      // trykke start er tre klik til noget, der hoerer til ét.
+      return `<div class="omni-row${it.status === 'done' ? ' dim' : ''}"${valgt} data-i="${i}" data-raekke>
         ${icon('today')}<span class="omni-row-main">
         <span class="omni-row-title">${esc(it.title)}</span>
-        <span class="omni-row-sub">${esc(under || 'no project')}</span></span></button>`;
+        <span class="omni-row-sub">${esc(under || 'no project')}</span></span>
+        ${it.status === 'done' ? '' : `<button class="playbtn${koerer ? ' on' : ''}" data-omnistart="${esc(it.id)}"
+          title="${koerer ? 'Stop the timer' : 'Start a timer (⌘↵)'}"
+          aria-label="${koerer ? 'Stop the timer' : 'Start a timer'}">${icon(koerer ? 'stop' : 'play', 15)}</button>`}
+      </div>`;
     }
     if (r.type === 'tom') {
       return `<div class="omni-row empty-row"><span class="omni-row-main">
@@ -183,6 +229,12 @@ function tegnPanel() {
         <span class="omni-row-title">${esc(r.navn)}</span>
         <span class="omni-row-sub">NEW PROJECT</span></span></button>`;
     }
+    if (r.type === 'projektforslag') {
+      return `<button class="omni-row"${valgt} data-i="${i}">
+        ${icon('projects')}<span class="omni-row-main">
+        <span class="omni-row-title">${esc(r.projekt.name)}</span>
+        <span class="omni-row-sub">EXISTING PROJECT — USE THIS INSTEAD</span></span></button>`;
+    }
     return `<button class="omni-row big"${valgt} data-i="${i}">
       <span class="omni-plus">${icon('plus', 20)}</span>
       <span class="omni-row-main"><span class="omni-row-title">${esc(r.titel)}</span></span>
@@ -190,10 +242,21 @@ function tegnPanel() {
   }).join('');
   panel.hidden = false;
 
-  panel.querySelectorAll('button.omni-row').forEach((el) => {
+  panel.querySelectorAll('.omni-row[data-i]').forEach((el) => {
     el.addEventListener('mouseenter', () => { omniState.valgt = Number(el.dataset.i); markerValgt(); });
     el.addEventListener('mousedown', (e) => e.preventDefault());   // behold fokus i feltet
     el.addEventListener('click', () => { omniState.valgt = Number(el.dataset.i); aktiver(); });
+  });
+  panel.querySelectorAll('[data-omnistart]').forEach((el) => {
+    el.addEventListener('mousedown', (e) => e.preventDefault());
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = el.dataset.omnistart;
+      const koerer = timerState.data && timerState.data.entry.taskId === id;
+      luk();
+      if (koerer) await stopTimer();
+      else await startTimerPaa(id);
+    });
   });
 }
 
@@ -235,6 +298,7 @@ async function aktiver() {
   const raekke = omniState.raekker[omniState.valgt];
   if (!raekke) return;
   if (raekke.type === 'tom') return;
+  if (raekke.type === 'projektforslag') { vaelgProjektForslag(raekke.projekt.name); return; }
   if (raekke.type === 'task') { luk(); aabnOpgave(raekke.item.id); return; }
   if (raekke.type === 'goto') {
     luk();
@@ -353,7 +417,19 @@ function bindOmni() {
       markerValgt();
       return;
     }
-    if (e.key === 'Enter') { e.preventDefault(); aktiver(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Cmd/Ctrl+Enter paa en fundet opgave STARTER den i stedet for at
+      // aabne den - den hurtige vej fra soegning til registrering.
+      const raekke = omniState.raekker[omniState.valgt];
+      if ((e.metaKey || e.ctrlKey) && raekke && raekke.type === 'task') {
+        const id = raekke.item.id;
+        luk();
+        startTimerPaa(id);
+        return;
+      }
+      aktiver();
+    }
   });
 }
 

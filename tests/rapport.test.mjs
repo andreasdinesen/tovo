@@ -1,0 +1,157 @@
+/* Fase 6: ugerapporten.
+ *
+ * Accepten er, at en uge med blandede projekt- og ad hoc-timer giver en
+ * rapport, hvis tal stemmer med en MANUEL optaelling. Derfor regnes den
+ * facit i testen selv - ikke ved at kalde den samme funktion igen.
+ */
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { startServer, opretBruger } from './hjaelp.mjs';
+
+const require = createRequire(import.meta.url);
+const beregn = require('../app/shared/beregn.js');
+
+let srv;
+let k;
+let mandag;
+let projektId;
+
+/** Mandagen i indevaerende uge - rapportens standardperiode. */
+function ugensMandag() {
+  const d = new Date();
+  const ugedag = d.getDay() === 0 ? 7 : d.getDay();
+  d.setDate(d.getDate() - (ugedag - 1));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const plusDage = (iso, n) => {
+  const [aa, mm, dd] = iso.split('-').map(Number);
+  const d = new Date(aa, mm - 1, dd + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+before(async () => {
+  srv = await startServer();
+  k = (await opretBruger(srv, 'andreas')).klient;
+  mandag = ugensMandag();
+
+  // To projektopgaver og én ad hoc.
+  const a = await k.kald('POST', '/api/v1/capture', { text: 'opsaetning @Nordvind ~4t' });
+  const b = await k.kald('POST', '/api/v1/capture', { text: 'migrering @Nordvind ~2t' });
+  const c = await k.kald('POST', '/api/v1/capture', { text: 'mail og smaating' });
+  projektId = (await k.kald('GET', '/api/v1/state')).data.projects[0].id;
+
+  // Mandag: 4t + 1t (en almindelig dag). Tirsdag: 3,5t. Onsdag: 20m (tynd).
+  //
+  // Mandagen var foerst 2t + 1t, og saa blev den markeret som tynd - med
+  // rette: en dagsnorm paa 37/5 = 7,4 t goer 3 timer til under halvdelen.
+  // Det var testdataene, der var misvisende, ikke reglen.
+  await k.kald('POST', '/api/v1/entries', { taskId: a.data.item.id, date: mandag, text: '9-13' });
+  await k.kald('POST', '/api/v1/entries', { taskId: c.data.item.id, date: mandag, text: '13-14' });
+  await k.kald('POST', '/api/v1/entries', { taskId: b.data.item.id, date: plusDage(mandag, 1), text: '3,5t' });
+  await k.kald('POST', '/api/v1/entries', { taskId: a.data.item.id, date: plusDage(mandag, 2), text: '20m' });
+
+  // Én opgave afsluttes i perioden.
+  await k.kald('POST', `/api/v1/tasks/${b.data.item.id}/complete`, {});
+  await k.kald('POST', '/api/v1/settings', { norm_week_hours: 37 });
+});
+after(() => srv.stop());
+
+test('tallene stemmer med en manuel optaelling', async () => {
+  const d = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data;
+  const r = d.report;
+
+  // Manuel facit: 240 + 60 + 210 + 20 = 530 minutter.
+  assert.equal(r.total, 530);
+  assert.equal(r.entries, 4);
+  // Ad hoc er "mail og smaating" = 60. Resten er projekt.
+  assert.equal(r.adhoc, 60);
+  assert.equal(r.onProjects, 470);
+  assert.equal(r.adhoc + r.onProjects, r.total, 'fordelingen skal gaa op i totalen');
+
+  // Grupperingen: ét projekt + ad hoc-gruppen.
+  const nordvind = r.projects.find((p) => p.name === 'Nordvind');
+  assert.equal(nordvind.minutter, 470);
+  assert.equal(nordvind.tasks.find((t) => t.title === 'opsaetning').minutter, 260);
+  assert.equal(nordvind.tasks.find((t) => t.title === 'migrering').minutter, 210);
+  assert.equal(r.projects.find((p) => p.projectId === null).minutter, 60);
+
+  // Sum af raekker = projektets total = rapportens total. Kan en kunde ikke
+  // laegge tallene sammen selv og faa det samme, er rapporten ubrugelig.
+  for (const p of r.projects) {
+    assert.equal(p.tasks.reduce((n, t) => n + t.minutter, 0), p.minutter, `${p.name} stemmer ikke`);
+  }
+  assert.equal(r.projects.reduce((n, p) => n + p.minutter, 0), r.total);
+});
+
+test('estimat mod forbrug pr. opgave - og hvad der blev AFSLUTTET i perioden', async () => {
+  const d = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data;
+  const nordvind = d.report.projects.find((p) => p.name === 'Nordvind');
+  const migrering = nordvind.tasks.find((t) => t.title === 'migrering');
+  assert.equal(migrering.estimateMinutes, 120);
+  assert.equal(migrering.minutter, 210, '90 minutter over estimatet');
+  assert.equal(migrering.completedIPerioden, true);
+  assert.equal(nordvind.tasks.find((t) => t.title === 'opsaetning').completedIPerioden, false);
+  assert.equal(d.report.completed, 1);
+});
+
+test('dage med paafaldende faa timer fremhaeves - tomme dage gaettes der ikke paa', async () => {
+  const d = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data;
+  const dage = d.report.days;
+  assert.equal(dage.length, 7);
+  assert.equal(dage[0].minutter, 300);
+  assert.equal(dage[2].minutter, 20);
+  assert.equal(dage[2].tynd, true, '20 minutter paa en hverdag er glemt registrering');
+  assert.equal(dage[0].tynd, false, '5 timer paa en dag er ikke paafaldende');
+  // En weekenddag uden timer er ikke paafaldende.
+  assert.equal(dage[5].tom, false);
+  assert.equal(dage[6].tom, false);
+  assert.equal(dage[3].tom, true, 'en tom hverdag er derimod vaerd at se');
+});
+
+test('normtid og sammenligning med forrige periode', async () => {
+  const d = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data;
+  assert.equal(d.report.norm, 37 * 60);
+  assert.equal(d.report.overNorm, 530 - 37 * 60, 'forskellen maa gerne vaere negativ');
+  // Forrige uge er tom - og saa er sammenligningen 0, ikke en fejl.
+  assert.equal(d.previous.total, 0);
+  assert.equal(d.previous.days.length, 7);
+});
+
+test('perioden er halvaaben: to naboperioder taeller hverken dobbelt eller taber', async () => {
+  const uge1 = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 2)}`)).data.report;
+  const uge2 = (await k.kald('GET', `/api/v1/report?from=${plusDage(mandag, 3)}&to=${plusDage(mandag, 6)}`)).data.report;
+  const hele = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data.report;
+  assert.equal(uge1.total + uge2.total, hele.total);
+});
+
+test('rapportens tal er de SAMME som beregn.js giver frontenden', async () => {
+  // Igen Beanledger v28: to sandheder er fejlen, der skal forhindres.
+  // Skaeve tider, saa afrundingen faktisk kan ses.
+  await k.kald('POST', '/api/v1/entries', {
+    taskId: (await k.kald('GET', '/api/v1/items?kind=task')).data.items[0].id,
+    date: plusDage(mandag, 4), text: '22m',
+  });
+  const opgaver = (await k.kald('GET', '/api/v1/items?kind=task')).data.items;
+  const projekter = (await k.kald('GET', '/api/v1/items?kind=project')).data.items;
+  const poster = (await k.kald('GET', '/api/v1/entries')).data.entries;
+
+  for (const afrunding of [0, 15]) {
+    await k.kald('POST', '/api/v1/settings', { rounding: afrunding });
+    const server = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data.report;
+    const b = beregn.opret({
+      items: (kind) => ({ task: opgaver, project: projekter }[kind] || []),
+      entries: () => poster,
+      settings: () => ({ rounding: afrunding, normWeekHours: 37 }),
+    });
+    const [aa, mm, dd] = mandag.split('-').map(Number);
+    const fra = Math.floor(new Date(aa, mm - 1, dd).getTime() / 1000);
+    const lokal = b.ugerapport(fra, fra + 7 * 86400);
+    assert.equal(lokal.total, server.total, `total afviger ved afrunding ${afrunding}`);
+    assert.equal(lokal.adhoc, server.adhoc);
+    assert.equal(lokal.onProjects, server.onProjects);
+    assert.deepEqual(lokal.days.map((x) => x.minutter), server.days.map((x) => x.minutter));
+  }
+  await k.kald('POST', '/api/v1/settings', { rounding: 0 });
+});

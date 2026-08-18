@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 1;
+const APP_VERSION = 2;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -187,6 +187,7 @@ const ICONS = {
   moon: '<path d="M20 14.6A8.6 8.6 0 019.4 4 8.6 8.6 0 1020 14.6z"/>',
   pin: '<path d="M9 3.5h6l-1 5 3 3.5H7l3-3.5z"/><path d="M12 12v8.5"/>',
   out: '<path d="M14.5 4.5H18a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-3.5"/><path d="M4.5 12h10M11 8.5l3.5 3.5-3.5 3.5"/>',
+  chevron: '<path d="M9 6l6 6-6 6"/>',
 };
 
 function icon(name, size = 18) {
@@ -350,13 +351,42 @@ async function opretPasskey(navn) {
 
 /* ------------------------------------------------------------- skallen */
 
+/* Projektlisten i menuen kan foldes ud. Valget huskes - en menu, der falder
+   sammen ved hver optegning, er mere til besvaer end til hjaelp. */
+function projekterAabne() {
+  try { return localStorage.getItem('tovo_nav_projekter') !== '0'; } catch { return true; }
+}
+
+function saetProjekterAabne(aabne) {
+  try { localStorage.setItem('tovo_nav_projekter', aabne ? '1' : '0'); } catch { /* privat */ }
+}
+
 function navHtml() {
   const iNav = VIEWS.filter((v) => v.group > 0);
   const grupper = [...new Set(iNav.map((v) => v.group))];
-  return grupper.map((g) => `<nav class="nav">${iNav.filter((v) => v.group === g).map((v) => `
-      <button class="nav-item" data-view="${v.id}" ${v.id === state.view ? 'aria-current="page"' : ''}>
-        ${icon(v.icon)}<span>${esc(v.label)}</span>
-      </button>`).join('')}</nav>`).join('');
+  const aabne = projekterAabne();
+  return grupper.map((g) => `<nav class="nav">${iNav.filter((v) => v.group === g).map((v) => {
+    const paaSiden = v.id === state.view ? 'aria-current="page"' : '';
+    if (v.id !== 'projects') {
+      return `<button class="nav-item" data-view="${v.id}" ${paaSiden}>
+        ${icon(v.icon)}<span>${esc(v.label)}</span></button>`;
+    }
+    // Selve raekken navigerer; chevronen folder ud. To ting i én raekke, men
+    // to forskellige maal - derfor to knapper og ikke én.
+    return `<div class="nav-med-fold">
+        <button class="nav-item" data-view="projects" ${paaSiden}>
+          ${icon(v.icon)}<span>${esc(v.label)}</span>
+          ${state.projects.length ? `<span class="nav-count">${state.projects.length}</span>` : ''}
+        </button>
+        ${state.projects.length ? `<button class="foldbtn${aabne ? ' on' : ''}" id="foldProjekter"
+          aria-label="${aabne ? 'Hide the projects' : 'Show the projects'}"
+          aria-expanded="${aabne ? 'true' : 'false'}">${icon('chevron', 14)}</button>` : ''}
+      </div>
+      ${aabne && state.projects.length ? `<div class="nav-under">${state.projects.map((p) => `
+        <button class="nav-item nav-sub" data-projekt="${esc(p.id)}"
+          ${state.view === 'projects' && state.openProject === p.id ? 'aria-current="page"' : ''}>
+          <span class="nav-prik"></span><span>${esc(p.name)}</span></button>`).join('')}</div>` : ''}`;
+  }).join('')}</nav>`).join('');
 }
 
 function shellHtml() {
@@ -370,6 +400,7 @@ function shellHtml() {
           title="Hide the menu">${icon('pin', 16)}</button></div>
       <div id="navHost">${navHtml()}</div>
       <div class="sidebar-foot">
+        <div id="timerHost"></div>
         <button class="nav-item" id="userBtn"
           ${state.view === 'settings' ? 'aria-current="page"' : ''}>${icon('settings')}<span>${esc(state.user.username)}</span></button>
         <div class="foot-row" id="footRow">${versionHtml()}${temaKnapHtml()}</div>
@@ -455,6 +486,22 @@ function statsHtml() {
   return dele.map((d) => `<span>${esc(d)}</span>`).join('');
 }
 
+function bindNav() {
+  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil(el.dataset.view));
+  });
+  document.querySelectorAll('#navHost [data-projekt]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
+  });
+  const fold = document.getElementById('foldProjekter');
+  if (fold) {
+    fold.addEventListener('click', () => {
+      saetProjekterAabne(!projekterAabne());
+      opdaterNav();
+    });
+  }
+}
+
 function opdaterNav() {
   // Taellerne staar i skallen, som render() kun tegner ved login/logout.
   // Uden denne linje blev de staaende paa 0, mens listen viste opgaver -
@@ -463,9 +510,7 @@ function opdaterNav() {
   if (stats) stats.innerHTML = statsHtml();
   const host = document.getElementById('navHost');
   if (host) host.innerHTML = navHtml();
-  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil(el.dataset.view));
-  });
+  bindNav();
   document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
     el.setAttribute('aria-current', el.dataset.view === state.view ? 'page' : 'false');
   });
@@ -475,9 +520,7 @@ function opdaterNav() {
 
 function bindShell() {
   saetNavSkjult(navErSkjult());
-  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil(el.dataset.view));
-  });
+  bindNav();
   document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
     el.addEventListener('click', () => gaaTil(el.dataset.view));
   });
@@ -500,6 +543,11 @@ function bindShell() {
   document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
   document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
   bindOmni();
+  // Timeren tegnes IGEN her. hentState() koerer FOER skallen findes ved
+  // opstart, saa #timerHost fandtes ikke, og timeren faldt tilbage til den
+  // flydende bjaelke - ogsaa paa en bred skaerm. Symptomet var, at den
+  // flyttede sig ved en genindlaesning.
+  tegnTimerBjaelke();
 }
 
 function gaaTil(view, opt) {
@@ -634,6 +682,7 @@ async function tegnSide() {
   }
   if (state.view === 'today') { await tegnIDag(); return; }
   if (state.view === 'projects') { await tegnProjekter(); return; }
+  if (state.view === 'report') { await tegnRapport(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>
     <p class="lead">${esc(BESKRIVELSER[v.id] || '')}</p>

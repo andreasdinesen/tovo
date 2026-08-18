@@ -1770,3 +1770,130 @@ ul.plain li:last-child { border-bottom: 0; }
    er kun de faa ting, den selv har brug for. */
 .startside-status { text-align: center; font-weight: 600; margin: 4px 0 18px; }
 .startside-tal { width: 100%; margin-bottom: 18px; }
+
+/* ------------------------------------------------------ kundevisning */
+
+.kundekort { max-width: 720px; }
+.kundeark h1 { font-size: 26px; margin-bottom: 2px; }
+.kundeark .pkunde { color: var(--muted); margin: 0 0 18px; }
+.kundeark table { border-collapse: collapse; width: 100%; margin-bottom: 18px; }
+.kundeark th, .kundeark td { border-bottom: 1px solid var(--border-soft); padding: 7px 8px; text-align: left; }
+/* .num skal skrives MED tabel-praefiks, ellers slaar den generelle
+   celle-regel den (Beanledger v26 - .center havde aldrig virket). */
+.kundeark th.num, .kundeark td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.kundeark .pramme td { border-bottom: 0; padding: 4px 8px; }
+.kundeark .pdate { color: var(--muted); font-size: 13px; text-align: right; }
+
+/* ------------------------------------------------------------- print */
+
+.printsheet { display: none; }
+
+@media print {
+  /* margin: 0 fjerner browserens eget sidehoved/-fod (dato, titel, URL,
+     sidetal) - der er ingen margen-boks at tegne dem i. Papirmargenen
+     laegges i stedet som padding paa selve arket (§4). */
+  @page { margin: 0; }
+
+  /* EKSPLICITTE farver. Aldrig var(--...): i moerkt tema er --muted lys graa
+     og forsvinder paa hvidt papir (Muldbog). */
+  body { background: #fff; color: #000; }
+  .app, .navtoggle, .backdrop, .toasts, .modal, .timerbar, .bottomnav { display: none !important; }
+
+  .printsheet { display: block; color: #000; padding: 16mm 14mm; }
+  .printsheet h1 { font-size: 22pt; margin: 0 0 2mm; color: #000; }
+  .printsheet .pkunde { color: #444; font-size: 12pt; margin: 0 0 8mm; }
+  .printsheet table {
+    border-collapse: collapse; width: 100%; font-size: 11pt; margin-bottom: 8mm;
+    /* uden print-color-adjust dropper browseren baggrundsfarver, og
+       zebra-striberne forsvinder i udskriften (Beanledger v18) */
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .printsheet th, .printsheet td { border-bottom: 1px solid #999; padding: 6px 8px; text-align: left; }
+  .printsheet th { font-weight: 600; }
+  .printsheet tr:nth-child(even) td { background: #f0ece6; }
+  .printsheet th.num, .printsheet td.num { text-align: right; }
+  .printsheet .pramme td { background: #fff; border-bottom: 0; }
+  .printsheet .pdate { color: #444; font-size: 10pt; text-align: right; }
+  .printsheet tr { page-break-inside: avoid; }
+}
+
+/* ------------------------------------------------------------ rapport */
+
+.dagsliste { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 6px; }
+.dag {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 4px; border-radius: var(--r-sm); background: var(--card); min-height: 96px;
+  justify-content: flex-end;
+}
+.dagsum { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
+/* Soejlen er en HOEJDE, ikke en farve: en tynd dag skal kunne SES uden at
+   blive udskaeldt. */
+.dagbar { width: 60%; min-height: 3px; border-radius: 3px 3px 0 0; background: var(--accent); opacity: .75; }
+.dag.tynd .dagbar, .dag.tom .dagbar { background: var(--muted); opacity: .45; }
+.dag.tom .dagsum { color: var(--muted); }
+
+table.rapporttabel { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+table.rapporttabel th, table.rapporttabel td {
+  text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border-soft);
+}
+/* .num SKAL skrives med tabel-praefiks, ellers slaar den generelle
+   celle-regel den (Beanledger v26). */
+table.rapporttabel th.num, table.rapporttabel td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) {
+  .dagsliste { flex-wrap: wrap; }
+  .dag { min-width: 60px; }
+}
+
+/* Uret paa timerbjaelken taeller i sekunder, saa det skal have fast bredde -
+   ellers hopper knappen ved hvert ciffer. */
+.timerbar-time { min-width: 62px; text-align: right; }
+
+/* Start-knappen i paletten. Raekken er en <div> (ikke en <button>), fordi en
+   knap ikke maa ligge inde i en knap. */
+.omni-row .playbtn { opacity: 1; margin-left: auto; }
+.omni-row[data-raekke] { display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer; }
+
+/* ------------------------------------------- projektlisten i menuen */
+
+.nav-med-fold { display: flex; align-items: center; }
+.nav-med-fold .nav-item { flex: 1; min-width: 0; }
+.foldbtn {
+  flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+  border: 0; background: none; color: var(--muted); cursor: pointer; border-radius: var(--r-sm);
+}
+.foldbtn:hover { color: var(--text); background: var(--card); }
+/* Chevronen peger NED, naar listen er foldet ud - retningen er, hvad der
+   sker ved et klik, ikke hvad tilstanden er. */
+.foldbtn svg { transition: transform .14s; }
+.foldbtn.on svg { transform: rotate(90deg); }
+
+.nav-under { margin: 2px 0 6px; }
+.nav-item.nav-sub { padding-left: 34px; font-size: 14px; }
+.nav-prik {
+  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--muted); opacity: .6;
+}
+.nav-item.nav-sub[aria-current="page"] .nav-prik { background: var(--accent); opacity: 1; }
+
+/* --------------------------------------------- timeren i sidebaren */
+
+.timerbar.itimerhost {
+  position: static; transform: none; max-width: none; width: 100%;
+  margin-bottom: 10px; padding: 9px 10px; gap: 8px;
+  border-radius: var(--r); box-shadow: none; background: var(--accent-soft);
+  border-color: transparent;
+}
+.itimerhost .timerbar-main { flex: 1; min-width: 0; gap: 8px; align-items: flex-start; }
+.itimerhost .timerbar-dot { margin-top: 6px; }
+.itimerhost .timerbar-title { font-size: 13.5px; }
+/* Undertitlen brood over to linjer i den smalle sidebar og skubbede
+   knappen skaevt. Et projektnavn er ikke vaerd at ombryde - det er en
+   etiket, ikke en saetning. */
+.itimerhost .timerbar-sub {
+  font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.itimerhost .timerbar-time { min-width: 0; font-size: 13px; margin-top: 1px; }
+/* I sidebaren er der ikke plads til ordet - ikonet baerer betydningen. */
+.itimerhost .stoptekst { display: none; }
+.itimerhost .btn { padding: 6px 8px; }

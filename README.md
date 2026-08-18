@@ -14,10 +14,10 @@ udseende, men separate apps med hver sin database og ingen synkronisering.
 | 1 | Opgaver, projekter, søgepalet med `+`-syntaks | **færdig** |
 | 2 | Timer og manuel tidsregistrering | **færdig** |
 | 3 | Start-links til OneNote (`/s/:token`, uden login) | **færdig** |
-| 4 | Estimater, projektoverblik og kundevisning | næste |
-| 5 | Import og genimport fra Microsoft Planner | |
-| 6 | Ugerapport | |
-| 7 | Gentagelser og iCal-feed | |
+| 4 | Estimater, projektoverblik og kundevisning | **færdig** |
+| 5 | Import og genimport fra Microsoft Planner | **færdig** |
+| 6 | Ugerapport | **færdig** |
+| 7 | Gentagelser og iCal-feed | næste |
 | 8 | MCP-server + connector til claude.ai | |
 | 9 | Polering | |
 
@@ -54,7 +54,26 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
-### v1 — fase 0–3 (ikke udgivet endnu)
+### v2 — fase 4, 5 og 6
+
+- **Kundevisning** af et projekt: en ren opgørelse med estimat og forbrug pr. opgave, klar
+  til at vise eller printe. Print bruger egne, eksplicitte farver — aldrig temaets.
+- **Import og genimport fra Microsoft Planner.** Ét projekt pr. plan, buckets bliver
+  sektioner, tjeklister bliver underopgaver. En genimport opdaterer kun titel, sektion,
+  status, forfaldsdato og beskrivelse — estimater, tid, kommentarer, links og ramme er tovos
+  egne og overlever enhver import. Er `Noter`-kolonnen fyldt med tal, spørger importen, om de
+  skal læses som estimater.
+- **Ugerapport** med timer pr. projekt og opgave, estimat mod forbrug, fordeling på projekt
+  og ad hoc, sammenligning med normtid og forrige periode, og fremhævning af dage med
+  påfaldende få timer. Kan kopieres som markdown eller printes.
+- Timeren tæller **synligt i sekunder**, står i venstre menu (og som en flydende bjælke på
+  mobil, hvor menuen er skjult) og er ét klik ind i opgaven.
+- **Projekterne kan foldes ud i menuen**, så man kan hoppe direkte ind i dem.
+- Søgefeltet foreslår **eksisterende projekter**, der ligner det, man skriver — så man ikke
+  opretter »BeanLedg« ved siden af »BeanLedger«.
+- Timeren kan startes **direkte fra et søgeresultat** med knappen eller `⌘↵`.
+
+### v1 — fase 0–3
 
 - Auth-stakken fra doda: scrypt, sessionscookie `tovo_session`, passkeys (WebAuthn),
   rate-limit i databasen. Første registrerede bruger bliver admin.

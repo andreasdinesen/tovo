@@ -82,6 +82,22 @@
     return `${t}h ${rest}m`;
   }
 
+  /**
+   * Sekunder -> et UR: 0:07 · 12:34 · 1:02:03.
+   *
+   * formatVarighed skriver "1h 30m", som er rigtigt i en liste og forkert paa
+   * en koerende timer: den skal kunne SES taelle. Derfor sekunder her - og
+   * kun her, saa der stadig kun findes ét sted, tid bliver til tekst.
+   */
+  function formatUr(sekunder) {
+    const s = Math.max(0, Math.floor(Number(sekunder) || 0));
+    const t = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const rest = s % 60;
+    const to = (n) => String(n).padStart(2, '0');
+    return t ? `${t}:${to(m)}:${to(rest)}` : `${m}:${to(rest)}`;
+  }
+
   /* ------------------------------------------------------- tidsrum */
 
   /**
@@ -289,6 +305,62 @@
       };
     }
 
+    /**
+     * Ugerapportens tal.
+     *
+     * Formaalet er AFSTEMNING mod et andet system og et overblik til en
+     * kunde, der spoerger - ikke en integration. Derfor: alt hvad rapporten
+     * viser, kommer herfra, saa MCP'ens week_report giver noejagtig samme
+     * tal som siden (§9a).
+     */
+    function ugerapport(fra, til, nu) {
+      const s = sumPeriode(fra, til, nu);
+      const dage = sumPrDag(fra, til, nu);
+      const norm = Math.round((Number(settings().normWeekHours) || 0) * 60);
+
+      // Ad hoc = tid paa opgaver uden projekt. Fordelingen er hele
+      // pointen for den, der skal forklare sin uge.
+      const adhoc = s.projects.find((p) => p.projectId === null);
+      const paaProjekt = s.total - (adhoc ? adhoc.minutter : 0);
+
+      // Dage med paafaldende faa timer er dét, der afsloerer glemt
+      // registrering. En dag UDEN noget er ikke paafaldende - det kan vaere
+      // en fridag; en dag med under en fjerdedel af en normal dag er.
+      const dagsnorm = norm ? Math.round(norm / 5) : 0;
+      const dagsliste = [];
+      for (let t = fra; t < til; t += 86400) {
+        const d = new Date(t * 1000);
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const minutter = dage.get(iso) || 0;
+        const hverdag = d.getDay() >= 1 && d.getDay() <= 5;
+        dagsliste.push({
+          date: iso,
+          weekday: d.getDay(),
+          minutter,
+          tynd: !!(hverdag && dagsnorm && minutter > 0 && minutter < dagsnorm / 2),
+          tom: hverdag && minutter === 0,
+        });
+      }
+
+      return {
+        fra,
+        til,
+        total: s.total,
+        entries: s.entries,
+        projects: s.projects,
+        adhoc: adhoc ? adhoc.minutter : 0,
+        onProjects: paaProjekt,
+        norm,
+        // Forskellen mod normtiden er et TAL, ikke en dom. Den kan vaere
+        // negativ, og det er i orden.
+        overNorm: norm ? s.total - norm : null,
+        days: dagsliste,
+        // Afsluttet i perioden vs. stadig i gang - de to spoergsmaal er
+        // forskellige, og rapporten skal svare paa begge.
+        completed: s.projects.reduce((n, p) => n + p.tasks.filter((t) => t.completedIPerioden).length, 0),
+      };
+    }
+
     /** Minutter pr. dato i perioden - grundlaget for dagsvisningen. */
     function sumPrDag(fra, til, nu) {
       const r = afrunding();
@@ -304,9 +376,12 @@
 
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, rollupProjekt,
-      sumPeriode, sumPrDag, afrunding,
+      sumPeriode, sumPrDag, ugerapport, afrunding,
     };
   }
 
-  return { parseVarighed, formatVarighed, parseTidsrum, placerVarighed, tidspunkt, afrund, opret };
+  return {
+    parseVarighed, formatVarighed, formatUr, parseTidsrum, placerVarighed,
+    tidspunkt, afrund, opret,
+  };
 }));

@@ -83,6 +83,22 @@
     return `${t}h ${rest}m`;
   }
 
+  /**
+   * Sekunder -> et UR: 0:07 · 12:34 · 1:02:03.
+   *
+   * formatVarighed skriver "1h 30m", som er rigtigt i en liste og forkert paa
+   * en koerende timer: den skal kunne SES taelle. Derfor sekunder her - og
+   * kun her, saa der stadig kun findes ét sted, tid bliver til tekst.
+   */
+  function formatUr(sekunder) {
+    const s = Math.max(0, Math.floor(Number(sekunder) || 0));
+    const t = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const rest = s % 60;
+    const to = (n) => String(n).padStart(2, '0');
+    return t ? `${t}:${to(m)}:${to(rest)}` : `${m}:${to(rest)}`;
+  }
+
   /* ------------------------------------------------------- tidsrum */
 
   /**
@@ -290,6 +306,62 @@
       };
     }
 
+    /**
+     * Ugerapportens tal.
+     *
+     * Formaalet er AFSTEMNING mod et andet system og et overblik til en
+     * kunde, der spoerger - ikke en integration. Derfor: alt hvad rapporten
+     * viser, kommer herfra, saa MCP'ens week_report giver noejagtig samme
+     * tal som siden (§9a).
+     */
+    function ugerapport(fra, til, nu) {
+      const s = sumPeriode(fra, til, nu);
+      const dage = sumPrDag(fra, til, nu);
+      const norm = Math.round((Number(settings().normWeekHours) || 0) * 60);
+
+      // Ad hoc = tid paa opgaver uden projekt. Fordelingen er hele
+      // pointen for den, der skal forklare sin uge.
+      const adhoc = s.projects.find((p) => p.projectId === null);
+      const paaProjekt = s.total - (adhoc ? adhoc.minutter : 0);
+
+      // Dage med paafaldende faa timer er dét, der afsloerer glemt
+      // registrering. En dag UDEN noget er ikke paafaldende - det kan vaere
+      // en fridag; en dag med under en fjerdedel af en normal dag er.
+      const dagsnorm = norm ? Math.round(norm / 5) : 0;
+      const dagsliste = [];
+      for (let t = fra; t < til; t += 86400) {
+        const d = new Date(t * 1000);
+        const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const minutter = dage.get(iso) || 0;
+        const hverdag = d.getDay() >= 1 && d.getDay() <= 5;
+        dagsliste.push({
+          date: iso,
+          weekday: d.getDay(),
+          minutter,
+          tynd: !!(hverdag && dagsnorm && minutter > 0 && minutter < dagsnorm / 2),
+          tom: hverdag && minutter === 0,
+        });
+      }
+
+      return {
+        fra,
+        til,
+        total: s.total,
+        entries: s.entries,
+        projects: s.projects,
+        adhoc: adhoc ? adhoc.minutter : 0,
+        onProjects: paaProjekt,
+        norm,
+        // Forskellen mod normtiden er et TAL, ikke en dom. Den kan vaere
+        // negativ, og det er i orden.
+        overNorm: norm ? s.total - norm : null,
+        days: dagsliste,
+        // Afsluttet i perioden vs. stadig i gang - de to spoergsmaal er
+        // forskellige, og rapporten skal svare paa begge.
+        completed: s.projects.reduce((n, p) => n + p.tasks.filter((t) => t.completedIPerioden).length, 0),
+      };
+    }
+
     /** Minutter pr. dato i perioden - grundlaget for dagsvisningen. */
     function sumPrDag(fra, til, nu) {
       const r = afrunding();
@@ -305,11 +377,14 @@
 
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, rollupProjekt,
-      sumPeriode, sumPrDag, afrunding,
+      sumPeriode, sumPrDag, ugerapport, afrunding,
     };
   }
 
-  return { parseVarighed, formatVarighed, parseTidsrum, placerVarighed, tidspunkt, afrund, opret };
+  return {
+    parseVarighed, formatVarighed, formatUr, parseTidsrum, placerVarighed,
+    tidspunkt, afrund, opret,
+  };
 }));
 
 /* ---- shared/parse.js ---- */
@@ -943,6 +1018,315 @@
   };
 }));
 
+/* ---- shared/planner.js ---- */
+/* tovo - Planner-eksporten: arkvalg, kolonnegenkendelse, mapning og fletning.
+ *
+ * Modulet faar RAA raekker ind (arknavn -> array af celler) og kender hverken
+ * zip, XML eller databasen. Selve laesningen af .xlsx-filen sker i browseren
+ * (app/parts/p6_planner.js), fordi den bruger DecompressionStream og
+ * DOMParser - men ALT det, der kan goere skade, ligger her, hvor det kan
+ * testes uden en browser.
+ *
+ * Verificeret mod en rigtig eksport 2026-08-18. Tre ting, planen antog
+ * forkert, og som koden derfor goer anderledes:
+ *   - der er INGEN sharedStrings-fil; cellerne er t="str" med teksten i <v>
+ *   - datoer er ISO-tekst ("2026-05-12"), ikke serienumre
+ *   - statuskolonnen hedder "Status" og beskrivelsen "Noter" - ikke
+ *     "Fremdrift" og "Beskrivelse"
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.tovoPlanner = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /*
+   * Kolonnegenkendelse er PRAEFIKSMATCH paa et trimmet, lowercased navn -
+   * ikke lighed. To grunde, begge maalt paa en rigtig fil:
+   *   - overskrifterne har efterstillede mellemrum ("Opgavenavn ")
+   *   - Planner har oversat og aendret navne foer
+   *
+   * Og praefiks, ikke "indeholder": arket har BAADE "Tjeklisteelementer" og
+   * "Afsluttede tjeklisteelementer" (sidstnaevnte er en taeller som "0/3").
+   * Et indeholder-match ville goere underopgaverne til teksten "0/3".
+   */
+  const KOLONNER = {
+    plannerTaskId: (n) => n.includes('opgave-id'),
+    title: (n) => n.startsWith('opgavenavn'),
+    // "Bucket" i det konsoliderede ark er et navn; i Opgaver-arket et id.
+    section: (n) => n === 'bucket' || n.startsWith('bucket-navn'),
+    status: (n) => n.startsWith('status') || n.startsWith('fremdrift'),
+    dueDate: (n) => n.startsWith('forfaldsdato'),
+    note: (n) => n.startsWith('noter') || n.startsWith('beskrivelse'),
+    checklist: (n) => n.startsWith('tjekliste'),
+    priority: (n) => n.startsWith('prioritet'),
+    completedAt: (n) => n.startsWith('fuldføringsdato') || n.startsWith('fuldfoeringsdato'),
+  };
+
+  /* Kun ét statusord er set i virkeligheden ("Ikke startet"). De to andre er
+     kvalificerede gaet, saa mapningen er TOLERANT: en ukendt status bliver
+     til "open" frem for at faelde hele importen. */
+  const STATUS = {
+    'ikke startet': 'open', 'not started': 'open',
+    'i gang': 'doing', 'in progress': 'doing',
+    'fuldført': 'done', 'fuldfoert': 'done', 'completed': 'done',
+  };
+
+  const PRIORITET = {
+    lav: 'low', low: 'low',
+    mellem: 'medium', medium: 'medium',
+    vigtig: 'high', important: 'high', presserende: 'high', urgent: 'high',
+  };
+
+  /**
+   * Felterne en GENIMPORT maa opdatere. Alt andet er tovos eget.
+   *
+   * Skrevet som en HVIDLISTE, ikke en sortliste: en sortliste glemmer det
+   * felt, nogen tilfoejer om et halvt aar, og saa forsvinder et estimat, en
+   * bruger har sat, uden at nogen opdager det.
+   */
+  const FLETTEFELTER = ['title', 'sectionId', 'status', 'dueDate', 'note', 'completedAt'];
+
+  const norm = (s) => String(s == null ? '' : s).trim().toLowerCase();
+
+  /**
+   * Vaelger arket. "Konsoliderede data" foretraekkes: buckets er allerede
+   * oploest til navne dér, saa der er intet id-opslag at lave.
+   */
+  function vaelgArk(arknavne) {
+    const kons = arknavne.find((n) => norm(n).includes('konsoliderede'));
+    if (kons) return { ark: kons, buckets: null };
+    const opgaver = arknavne.find((n) => norm(n).includes('opgaver'));
+    if (!opgaver) return null;
+    return { ark: opgaver, buckets: arknavne.find((n) => norm(n).includes('bucket')) || null };
+  }
+
+  /** Overskriftsraekken -> {felt: kolonneindeks}. */
+  function kolonneKort(hoved) {
+    const ud = {};
+    hoved.forEach((raa, i) => {
+      const n = norm(raa);
+      if (!n) return;
+      for (const [felt, passer] of Object.entries(KOLONNER)) {
+        if (ud[felt] === undefined && passer(n)) ud[felt] = i;
+      }
+    });
+    return ud;
+  }
+
+  /** Datoer er ISO-tekst i eksporten. Et serienummer taales som fallback. */
+  function laesDato(raa) {
+    const t = String(raa == null ? '' : raa).trim();
+    if (!t) return null;
+    if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+    if (/^\d+(\.\d+)?$/.test(t)) {
+      // Dage siden 1899-12-30. Regnes i UTC og formateres som ren dato -
+      // ellers flytter en tidszone datoen en dag.
+      const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(Number(t)) * 86400000);
+      return d.toISOString().slice(0, 10);
+    }
+    return null;
+  }
+
+  /**
+   * Laeser hele eksporten.
+   *
+   * @param {object} ark  {arknavn: [[celle, ...], ...]} - foerste raekke er
+   *   overskrifterne
+   * @returns {{plan, tasks, warnings}}
+   */
+  function laesEksport(ark) {
+    const navne = Object.keys(ark);
+    const valg = vaelgArk(navne);
+    const warnings = [];
+    if (!valg) {
+      throw new Error('This file has no "Opgaver" or "Konsoliderede data" sheet. '
+        + 'Export the plan from Planner again with all sheets included.');
+    }
+
+    const raekker = ark[valg.ark] || [];
+    if (raekker.length < 2) throw new Error(`The sheet "${valg.ark}" has no rows.`);
+    const kort = kolonneKort(raekker[0]);
+
+    if (kort.plannerTaskId === undefined) {
+      // Uden den kolonne kan en genimport ikke genkende en opgave, og hele
+      // modellen falder. Stop hellere end at importere dubletter for evigt.
+      throw new Error('The export has no "Opgave-id" column. Without it a re-import '
+        + 'cannot recognise the tasks it already brought in, so every import would '
+        + 'create duplicates. Export the plan again with all columns.');
+    }
+    if (kort.title === undefined) throw new Error('The export has no "Opgavenavn" column.');
+
+    // Bucket-id -> navn, hvis vi laeser Opgaver-arket frem for det
+    // konsoliderede. Uden opslaget ville sektionen hedde et raat id.
+    let buckets = null;
+    if (valg.buckets && ark[valg.buckets] && ark[valg.buckets].length > 1) {
+      const b = ark[valg.buckets];
+      const bk = b[0].map(norm);
+      const iId = bk.findIndex((n) => n.startsWith('bucket-id'));
+      const iNavn = bk.findIndex((n) => n.startsWith('bucket-navn'));
+      if (iId >= 0 && iNavn >= 0) {
+        buckets = new Map(b.slice(1).map((r) => [String(r[iId] || '').trim(), String(r[iNavn] || '').trim()]));
+      }
+    }
+
+    const celle = (r, felt) => (kort[felt] === undefined ? '' : String(r[kort[felt]] == null ? '' : r[kort[felt]]).trim());
+
+    const tasks = [];
+    const set = new Set();
+    for (const r of raekker.slice(1)) {
+      const id = celle(r, 'plannerTaskId');
+      const titel = celle(r, 'title');
+      if (!id || !titel) continue;
+      if (set.has(id)) { warnings.push(`The task "${titel}" appears twice in the export.`); continue; }
+      set.add(id);
+
+      let sektion = celle(r, 'section');
+      if (buckets && buckets.has(sektion)) sektion = buckets.get(sektion);
+
+      const statusRaa = norm(celle(r, 'status'));
+      if (statusRaa && !(statusRaa in STATUS)) {
+        warnings.push(`Unknown status "${celle(r, 'status')}" — treated as not started.`);
+      }
+
+      tasks.push({
+        plannerTaskId: id,
+        title: titel,
+        section: sektion || '',
+        status: STATUS[statusRaa] || 'open',
+        dueDate: laesDato(celle(r, 'dueDate')),
+        completedAt: laesDato(celle(r, 'completedAt')),
+        note: celle(r, 'note'),
+        priority: PRIORITET[norm(celle(r, 'priority'))] || null,
+        // Tjeklisteelementer er ";"-separerede. Et element, der SELV
+        // indeholder et semikolon, kan ikke reddes - det staar i formatet.
+        checklist: celle(r, 'checklist').split(';').map((x) => x.trim()).filter(Boolean),
+      });
+    }
+
+    // Plan-arket giver planens id og navn. Uden det kan projektet stadig
+    // laves - men saa kan to eksporter ikke kendes fra hinanden.
+    const planArk = navne.find((n) => norm(n) === 'plan');
+    let plan = { id: null, name: null, exportedAt: null };
+    if (planArk && ark[planArk] && ark[planArk].length > 1) {
+      const h = ark[planArk][0].map(norm);
+      const v = ark[planArk][1];
+      const find = (praefiks) => {
+        const i = h.findIndex((n) => n.startsWith(praefiks));
+        return i >= 0 ? String(v[i] || '').trim() : null;
+      };
+      plan = {
+        id: find('abonnement-id') || find('plan-id'),
+        name: find('navn på plan') || find('navn paa plan'),
+        exportedAt: laesDato(find('dato for eksport')),
+      };
+    }
+
+    return { plan, tasks, warnings };
+  }
+
+  /**
+   * Ser Noter-kolonnen ud som estimater?
+   *
+   * I den foerste rigtige eksport stod der et rent tal med dansk
+   * decimalkomma (6,1 · 19,6) paa hver eneste opgave - altsaa timer. Andreas
+   * siger, at det ikke altid vil vaere saadan. Derfor: taeller efter og lader
+   * BRUGEREN bestemme. Aldrig automatik - en heuristik, der stiltiende
+   * skriver i estimatfeltet, opdages foerst tre uger senere i en rapport.
+   */
+  function noterLignerEstimater(tasks) {
+    const medNoter = tasks.filter((t) => t.note);
+    if (!medNoter.length) return { ligner: false, antal: 0, af: 0 };
+    const tal = medNoter.filter((t) => /^\d+([.,]\d+)?$/.test(t.note.trim()));
+    return { ligner: tal.length >= Math.ceil(medNoter.length / 2), antal: tal.length, af: medNoter.length };
+  }
+
+  /**
+   * Sammenligner eksporten med det, der allerede er i tovo.
+   *
+   * @param {array} planner  fra laesEksport().tasks
+   * @param {array} findes   tovos opgaver i projektet
+   * @param {object} [opt]   {sections: [{id, name}], noterSomEstimat: bool}
+   * @returns {{nye, opdaterede, forsvundne, sektioner}}
+   */
+  function sammenlign(planner, findes, opt) {
+    const o = opt || {};
+    const kendte = new Map(findes.filter((t) => t.plannerTaskId).map((t) => [t.plannerTaskId, t]));
+    const sektioner = (o.sections || []).slice();
+    const sektionId = (navn) => {
+      if (!navn) return null;
+      const fundet = sektioner.find((s) => norm(s.name) === norm(navn));
+      if (fundet) return fundet.id;
+      const ny = { id: `sek-${sektioner.length}-${norm(navn).replace(/[^a-z0-9]+/g, '-')}`, name: navn, position: sektioner.length, ny: true };
+      sektioner.push(ny);
+      return ny.id;
+    };
+
+    const nye = [];
+    const opdaterede = [];
+    for (const p of planner) {
+      const felter = {
+        title: p.title,
+        sectionId: sektionId(p.section),
+        status: p.status,
+        dueDate: p.dueDate,
+        note: p.note,
+        completedAt: p.completedAt ? Math.floor(new Date(`${p.completedAt}T12:00:00`).getTime() / 1000) : null,
+      };
+      const eksisterende = kendte.get(p.plannerTaskId);
+      if (!eksisterende) {
+        nye.push({ planner: p, felter });
+        continue;
+      }
+      // KUN hvidlistens felter sammenlignes og skrives. Estimat, tidsposter,
+      // kommentarer, links, projektramme og prioritet sat i tovo er tovos.
+      const aendringer = {};
+      for (const felt of FLETTEFELTER) {
+        const nu = eksisterende[felt] === undefined ? null : eksisterende[felt];
+        const ny = felter[felt] === undefined ? null : felter[felt];
+        if ((nu || null) !== (ny || null)) aendringer[felt] = { fra: nu, til: ny };
+      }
+      if (Object.keys(aendringer).length) opdaterede.push({ task: eksisterende, planner: p, felter, aendringer });
+    }
+
+    const iEksporten = new Set(planner.map((p) => p.plannerTaskId));
+    const forsvundne = findes.filter((t) => t.plannerTaskId && !iEksporten.has(t.plannerTaskId));
+
+    return { nye, opdaterede, forsvundne, sektioner };
+  }
+
+  /**
+   * Bygger det objekt, der skal gemmes.
+   *
+   * @param {object} [eksisterende] ved genimport - felter uden for
+   *   hvidlisten baeres UAENDRET med over.
+   */
+  function flet(planner, felter, eksisterende, opt) {
+    const o = opt || {};
+    if (!eksisterende) {
+      const ny = Object.assign({ kind: 'task', plannerTaskId: planner.plannerTaskId }, felter);
+      // Prioritet og estimat saettes KUN ved oprettelsen. Derefter er de
+      // tovos egne, og en genimport maa ikke roere dem.
+      if (planner.priority) ny.priority = planner.priority;
+      if (o.noterSomEstimat && o.estimatMinutter) {
+        ny.estimateMinutes = o.estimatMinutter;
+        // Et tal er ikke en beskrivelse. Bruges Noter som estimat, skal det
+        // ikke OGSAA staa som opgavens tekst.
+        ny.note = '';
+      }
+      return ny;
+    }
+    const ud = Object.assign({}, eksisterende);
+    for (const felt of FLETTEFELTER) ud[felt] = felter[felt];
+    return ud;
+  }
+
+  return {
+    laesEksport, sammenlign, flet, vaelgArk, kolonneKort, laesDato,
+    noterLignerEstimater, FLETTEFELTER, KOLONNER, STATUS, PRIORITET,
+  };
+}));
+
 /* ---- p1_core.js ---- */
 'use strict';
 /* tovo - kerne: opstart, tema, login, app-skal.
@@ -951,7 +1335,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 1;
+const APP_VERSION = 2;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1133,6 +1517,7 @@ const ICONS = {
   moon: '<path d="M20 14.6A8.6 8.6 0 019.4 4 8.6 8.6 0 1020 14.6z"/>',
   pin: '<path d="M9 3.5h6l-1 5 3 3.5H7l3-3.5z"/><path d="M12 12v8.5"/>',
   out: '<path d="M14.5 4.5H18a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-3.5"/><path d="M4.5 12h10M11 8.5l3.5 3.5-3.5 3.5"/>',
+  chevron: '<path d="M9 6l6 6-6 6"/>',
 };
 
 function icon(name, size = 18) {
@@ -1296,13 +1681,42 @@ async function opretPasskey(navn) {
 
 /* ------------------------------------------------------------- skallen */
 
+/* Projektlisten i menuen kan foldes ud. Valget huskes - en menu, der falder
+   sammen ved hver optegning, er mere til besvaer end til hjaelp. */
+function projekterAabne() {
+  try { return localStorage.getItem('tovo_nav_projekter') !== '0'; } catch { return true; }
+}
+
+function saetProjekterAabne(aabne) {
+  try { localStorage.setItem('tovo_nav_projekter', aabne ? '1' : '0'); } catch { /* privat */ }
+}
+
 function navHtml() {
   const iNav = VIEWS.filter((v) => v.group > 0);
   const grupper = [...new Set(iNav.map((v) => v.group))];
-  return grupper.map((g) => `<nav class="nav">${iNav.filter((v) => v.group === g).map((v) => `
-      <button class="nav-item" data-view="${v.id}" ${v.id === state.view ? 'aria-current="page"' : ''}>
-        ${icon(v.icon)}<span>${esc(v.label)}</span>
-      </button>`).join('')}</nav>`).join('');
+  const aabne = projekterAabne();
+  return grupper.map((g) => `<nav class="nav">${iNav.filter((v) => v.group === g).map((v) => {
+    const paaSiden = v.id === state.view ? 'aria-current="page"' : '';
+    if (v.id !== 'projects') {
+      return `<button class="nav-item" data-view="${v.id}" ${paaSiden}>
+        ${icon(v.icon)}<span>${esc(v.label)}</span></button>`;
+    }
+    // Selve raekken navigerer; chevronen folder ud. To ting i én raekke, men
+    // to forskellige maal - derfor to knapper og ikke én.
+    return `<div class="nav-med-fold">
+        <button class="nav-item" data-view="projects" ${paaSiden}>
+          ${icon(v.icon)}<span>${esc(v.label)}</span>
+          ${state.projects.length ? `<span class="nav-count">${state.projects.length}</span>` : ''}
+        </button>
+        ${state.projects.length ? `<button class="foldbtn${aabne ? ' on' : ''}" id="foldProjekter"
+          aria-label="${aabne ? 'Hide the projects' : 'Show the projects'}"
+          aria-expanded="${aabne ? 'true' : 'false'}">${icon('chevron', 14)}</button>` : ''}
+      </div>
+      ${aabne && state.projects.length ? `<div class="nav-under">${state.projects.map((p) => `
+        <button class="nav-item nav-sub" data-projekt="${esc(p.id)}"
+          ${state.view === 'projects' && state.openProject === p.id ? 'aria-current="page"' : ''}>
+          <span class="nav-prik"></span><span>${esc(p.name)}</span></button>`).join('')}</div>` : ''}`;
+  }).join('')}</nav>`).join('');
 }
 
 function shellHtml() {
@@ -1316,6 +1730,7 @@ function shellHtml() {
           title="Hide the menu">${icon('pin', 16)}</button></div>
       <div id="navHost">${navHtml()}</div>
       <div class="sidebar-foot">
+        <div id="timerHost"></div>
         <button class="nav-item" id="userBtn"
           ${state.view === 'settings' ? 'aria-current="page"' : ''}>${icon('settings')}<span>${esc(state.user.username)}</span></button>
         <div class="foot-row" id="footRow">${versionHtml()}${temaKnapHtml()}</div>
@@ -1401,6 +1816,22 @@ function statsHtml() {
   return dele.map((d) => `<span>${esc(d)}</span>`).join('');
 }
 
+function bindNav() {
+  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil(el.dataset.view));
+  });
+  document.querySelectorAll('#navHost [data-projekt]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
+  });
+  const fold = document.getElementById('foldProjekter');
+  if (fold) {
+    fold.addEventListener('click', () => {
+      saetProjekterAabne(!projekterAabne());
+      opdaterNav();
+    });
+  }
+}
+
 function opdaterNav() {
   // Taellerne staar i skallen, som render() kun tegner ved login/logout.
   // Uden denne linje blev de staaende paa 0, mens listen viste opgaver -
@@ -1409,9 +1840,7 @@ function opdaterNav() {
   if (stats) stats.innerHTML = statsHtml();
   const host = document.getElementById('navHost');
   if (host) host.innerHTML = navHtml();
-  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil(el.dataset.view));
-  });
+  bindNav();
   document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
     el.setAttribute('aria-current', el.dataset.view === state.view ? 'page' : 'false');
   });
@@ -1421,9 +1850,7 @@ function opdaterNav() {
 
 function bindShell() {
   saetNavSkjult(navErSkjult());
-  document.querySelectorAll('#navHost .nav-item[data-view]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil(el.dataset.view));
-  });
+  bindNav();
   document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
     el.addEventListener('click', () => gaaTil(el.dataset.view));
   });
@@ -1446,6 +1873,11 @@ function bindShell() {
   document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
   document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
   bindOmni();
+  // Timeren tegnes IGEN her. hentState() koerer FOER skallen findes ved
+  // opstart, saa #timerHost fandtes ikke, og timeren faldt tilbage til den
+  // flydende bjaelke - ogsaa paa en bred skaerm. Symptomet var, at den
+  // flyttede sig ved en genindlaesning.
+  tegnTimerBjaelke();
 }
 
 function gaaTil(view, opt) {
@@ -1580,6 +2012,7 @@ async function tegnSide() {
   }
   if (state.view === 'today') { await tegnIDag(); return; }
   if (state.view === 'projects') { await tegnProjekter(); return; }
+  if (state.view === 'report') { await tegnRapport(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>
     <p class="lead">${esc(BESKRIVELSER[v.id] || '')}</p>
@@ -1735,7 +2168,7 @@ const MODER = {
   '#': { id: 'tag', pil: '# Tags', ph: 'Find a tag…', legend: [], enter: 'Open' },
 };
 
-const STANDARD_LEGEND = ['+ task', '@ project', '# tag', '! date', '~ estimate'];
+const STANDARD_LEGEND = ['+ task', '@ project', '# tag', '! date', '~ estimate', '⌘↵ start timer'];
 
 const omniState = {
   mode: null,
@@ -1814,6 +2247,38 @@ function tegnChips() {
   host.innerHTML = chips.join('');
 }
 
+/**
+ * Projekter, der LIGNER det, man er ved at skrive.
+ *
+ * Uden det siger chippen "@BeanLedg — new", mens "BeanLedger" ligger lige
+ * ved siden af - og saa opretter man et projekt nummer to med et
+ * stavefejlsnavn uden at opdage det. Foerst praefiks (det man er i gang med
+ * at skrive), derefter delstreng.
+ */
+function lignendeProjekter(navn) {
+  const q = String(navn || '').toLowerCase();
+  if (!q) return [];
+  const alle = state.projects || [];
+  if (alle.some((p) => p.name.toLowerCase() === q)) return [];   // praecist match: intet at foreslaa
+  const praefiks = alle.filter((p) => p.name.toLowerCase().startsWith(q));
+  const delstreng = alle.filter((p) => !praefiks.includes(p) && p.name.toLowerCase().includes(q));
+  return praefiks.concat(delstreng).slice(0, 4);
+}
+
+/** Skifter det skrevne @navn ud med et rigtigt projektnavn i feltet. */
+function vaelgProjektForslag(navn) {
+  const el = omniEl();
+  if (!el) return;
+  const t = omniState.tolket;
+  const nyt = /\s/.test(navn) ? `"${navn}"` : navn;
+  // Kun DET token, der faktisk staar der, skiftes ud - fjernMarkoer kender
+  // den samme regel om mellemrum foran markoeren som parseren selv.
+  const uden = tovoParse.fjernMarkoer(el.value, '@/', t && t.project ? t.project : '');
+  el.value = `${uden} @${nyt} `.replace(/\s{2,}/g, ' ');
+  el.focus();
+  opdaterOmni();
+}
+
 function visDato(iso) {
   if (!iso) return '';
   if (iso === state.today) return 'today';
@@ -1852,6 +2317,13 @@ function byggRaekker() {
       titel,
       under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
     });
+    // Skriver man et projektnavn, der ligner et, der findes, saa vis det -
+    // FOER resultaterne, fordi det er en rettelse og ikke et opslag.
+    if (t && t.project) {
+      for (const p of lignendeProjekter(t.project)) {
+        raekker.push({ type: 'projektforslag', projekt: p });
+      }
+    }
   }
 
   for (const it of omniState.resultater.tasks) raekker.push({ type: 'task', item: it });
@@ -1876,10 +2348,17 @@ function tegnPanel() {
       const projekt = state.projects.find((p) => p.id === it.projectId);
       const under = [projekt ? projekt.name : '', it.dueDate ? visDato(it.dueDate) : '',
         it.estimateMinutes ? `~${tovoBeregn.formatVarighed(it.estimateMinutes)}` : ''].filter(Boolean).join(' · ');
-      return `<button class="omni-row${it.status === 'done' ? ' dim' : ''}"${valgt} data-i="${i}">
+      const koerer = timerState.data && timerState.data.entry.taskId === it.id;
+      // Start-knappen SKAL kunne naas herfra: at skulle aabne opgaven for at
+      // trykke start er tre klik til noget, der hoerer til ét.
+      return `<div class="omni-row${it.status === 'done' ? ' dim' : ''}"${valgt} data-i="${i}" data-raekke>
         ${icon('today')}<span class="omni-row-main">
         <span class="omni-row-title">${esc(it.title)}</span>
-        <span class="omni-row-sub">${esc(under || 'no project')}</span></span></button>`;
+        <span class="omni-row-sub">${esc(under || 'no project')}</span></span>
+        ${it.status === 'done' ? '' : `<button class="playbtn${koerer ? ' on' : ''}" data-omnistart="${esc(it.id)}"
+          title="${koerer ? 'Stop the timer' : 'Start a timer (⌘↵)'}"
+          aria-label="${koerer ? 'Stop the timer' : 'Start a timer'}">${icon(koerer ? 'stop' : 'play', 15)}</button>`}
+      </div>`;
     }
     if (r.type === 'tom') {
       return `<div class="omni-row empty-row"><span class="omni-row-main">
@@ -1898,6 +2377,12 @@ function tegnPanel() {
         <span class="omni-row-title">${esc(r.navn)}</span>
         <span class="omni-row-sub">NEW PROJECT</span></span></button>`;
     }
+    if (r.type === 'projektforslag') {
+      return `<button class="omni-row"${valgt} data-i="${i}">
+        ${icon('projects')}<span class="omni-row-main">
+        <span class="omni-row-title">${esc(r.projekt.name)}</span>
+        <span class="omni-row-sub">EXISTING PROJECT — USE THIS INSTEAD</span></span></button>`;
+    }
     return `<button class="omni-row big"${valgt} data-i="${i}">
       <span class="omni-plus">${icon('plus', 20)}</span>
       <span class="omni-row-main"><span class="omni-row-title">${esc(r.titel)}</span></span>
@@ -1905,10 +2390,21 @@ function tegnPanel() {
   }).join('');
   panel.hidden = false;
 
-  panel.querySelectorAll('button.omni-row').forEach((el) => {
+  panel.querySelectorAll('.omni-row[data-i]').forEach((el) => {
     el.addEventListener('mouseenter', () => { omniState.valgt = Number(el.dataset.i); markerValgt(); });
     el.addEventListener('mousedown', (e) => e.preventDefault());   // behold fokus i feltet
     el.addEventListener('click', () => { omniState.valgt = Number(el.dataset.i); aktiver(); });
+  });
+  panel.querySelectorAll('[data-omnistart]').forEach((el) => {
+    el.addEventListener('mousedown', (e) => e.preventDefault());
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = el.dataset.omnistart;
+      const koerer = timerState.data && timerState.data.entry.taskId === id;
+      luk();
+      if (koerer) await stopTimer();
+      else await startTimerPaa(id);
+    });
   });
 }
 
@@ -1950,6 +2446,7 @@ async function aktiver() {
   const raekke = omniState.raekker[omniState.valgt];
   if (!raekke) return;
   if (raekke.type === 'tom') return;
+  if (raekke.type === 'projektforslag') { vaelgProjektForslag(raekke.projekt.name); return; }
   if (raekke.type === 'task') { luk(); aabnOpgave(raekke.item.id); return; }
   if (raekke.type === 'goto') {
     luk();
@@ -2068,7 +2565,19 @@ function bindOmni() {
       markerValgt();
       return;
     }
-    if (e.key === 'Enter') { e.preventDefault(); aktiver(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Cmd/Ctrl+Enter paa en fundet opgave STARTER den i stedet for at
+      // aabne den - den hurtige vej fra soegning til registrering.
+      const raekke = omniState.raekker[omniState.valgt];
+      if ((e.metaKey || e.ctrlKey) && raekke && raekke.type === 'task') {
+        const id = raekke.item.id;
+        luk();
+        startTimerPaa(id);
+        return;
+      }
+      aktiver();
+    }
   });
 }
 
@@ -2302,7 +2811,10 @@ async function tegnProjekter() {
   state.items = d.items;
 
   host.innerHTML = `<div class="page">
-    <h1>Projects</h1>
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>Projects</h1>
+      <button class="btn" id="plannerImport">Import from Planner</button>
+    </div>
     <p class="lead">${esc(BESKRIVELSER.projects)}</p>
     ${state.projects.length ? `<div class="cards">${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
@@ -2314,6 +2826,7 @@ async function tegnProjekter() {
     }).join('')}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
+  document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
   host.querySelectorAll('[data-projekt]').forEach((el) => {
     el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
   });
@@ -2342,7 +2855,11 @@ async function tegnProjekt(id) {
     <button class="linkbtn" id="tilbage">← Projects</button>
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>
-      <button class="btn" id="bulkLinks">Copy start links</button>
+      <span class="row" style="gap:8px">
+        <button class="btn" id="plannerRe">Re-import</button>
+        <button class="btn" id="kundeVis">Customer view</button>
+        <button class="btn" id="bulkLinks">Copy start links</button>
+      </span>
     </div>
     <p class="lead">${esc(p.customer || 'No customer set')}</p>
 
@@ -2359,7 +2876,9 @@ async function tegnProjekt(id) {
       </div>
       ${r.estimatOverRamme ? '<p class="meta warnline">The estimates add up to more than the budget — '
     + 'that is more work than was sold.</p>' : ''}
-      ${r.procent !== null && r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''}
+      ${r.procent === null ? '' : (r.procent >= 100
+    ? `<p class="meta warnline">The budget is used up — ${r.procent}% of it is spent.</p>`
+    : (r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''))}
     </div>
 
     <div data-keynav>
@@ -2371,6 +2890,8 @@ async function tegnProjekt(id) {
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
+  document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
   document.getElementById('bulkLinks').addEventListener('click', async () => {
     try {
       // Markdown-listen laves paa SERVEREN, saa den ser ens ud, uanset hvem
@@ -2601,8 +3122,16 @@ function bindDetalje(host, it, startLink) {
  */
 
 /*
- * Bjaelken bor i <body>, UDEN FOR det element render() skifter ud.
- * Ellers forsvinder den ved hver optegning (doda F8).
+ * Timeren staar i SIDEBAREN paa desktop og som en flydende bjaelke paa mobil.
+ *
+ * Sidebaren er der altid, naar der er plads til den, og det er dér, oejet
+ * i forvejen leder efter appens tilstand. Under mobilgraensen (900 px) er
+ * sidebaren et overlay, man ikke kan se - og saa ville timeren vaere skjult
+ * praecis naar den er mest vaerd. Derfor to placeringer og ét stykke markup.
+ *
+ * Begge steder ligger UDEN FOR det element, render() skifter ud, og uden for
+ * #navHost, som opdaterNav() tegner om. Ellers forsvinder timeren ved hver
+ * optegning (doda F8).
  *
  * Og den taeller ud fra STARTTIDSPUNKTET, aldrig ved at laegge et sekund til
  * en variabel: en taeller nulstilles ved hver gentegning og driver, naar
@@ -2612,51 +3141,92 @@ function bindDetalje(host, it, startLink) {
 const timerState = { data: null, tik: null };
 
 function tegnTimerBjaelke() {
-  let bar = document.getElementById('timerBar');
   const t = timerState.data;
+  const iSidebar = document.getElementById('timerHost');
+  const flydende = document.getElementById('timerBar');
+
   if (!t) {
-    if (bar) bar.remove();
+    if (flydende) flydende.remove();
+    if (iSidebar) iSidebar.innerHTML = '';
     document.title = state.config.appName || 'tovo';
     stopTik();
     return;
   }
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.className = 'timerbar';
-    bar.id = 'timerBar';
-    document.body.appendChild(bar);
-  }
-  const gaaet = forloebet(t);
-  bar.classList.toggle('warn', !!t.tooLong);
-  bar.innerHTML = `
-    <button class="timerbar-main" id="timerOpen">
+
+  const markup = `
+    <button class="timerbar-main" id="timerOpen" title="Open the task">
       <span class="timerbar-dot"></span>
       <span class="timerbar-text">
         <span class="timerbar-title">${esc(t.taskTitle)}</span>
         <span class="timerbar-sub meta">${esc(t.projectName || 'no project')}${t.tooLong
-    ? ` · running for over ${esc(tovoBeregn.formatVarighed(t.warnAfterMinutes))}` : ''}</span>
+    ? ` · over ${esc(tovoBeregn.formatVarighed(t.warnAfterMinutes))}` : ''}</span>
       </span>
+      <span class="timerbar-time" id="timerUr">${esc(forloebet(t))}</span>
     </button>
-    <span class="timerbar-time">${esc(gaaet)}</span>
-    <button class="btn" id="timerStop">${icon('stop', 15)} Stop</button>`;
+    <button class="btn timerstop" id="timerStop" aria-label="Stop the timer"
+      title="Stop the timer">${icon('stop', 15)}<span class="stoptekst"> Stop</span></button>`;
+
+  // Sidebaren, naar den er synlig - ellers den flydende bjaelke.
+  if (iSidebar && !smalSkaerm()) {
+    if (flydende) flydende.remove();
+    iSidebar.innerHTML = `<div class="timerbar itimerhost${t.tooLong ? ' warn' : ''}">${markup}</div>`;
+  } else {
+    if (iSidebar) iSidebar.innerHTML = '';
+    let bar = flydende;
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'timerBar';
+      document.body.appendChild(bar);
+    }
+    bar.className = `timerbar${t.tooLong ? ' warn' : ''}`;
+    bar.innerHTML = markup;
+  }
+
   document.getElementById('timerStop').addEventListener('click', stopTimer);
+  // HELE feltet - navn, projekt og uret - er ét klik ind i opgaven.
   document.getElementById('timerOpen').addEventListener('click', () => aabnOpgave(t.entry.taskId));
-  // Titlen er den eneste visning, der er der, ogsaa naar fanen ikke er det.
-  document.title = `${gaaet} · ${t.taskTitle} — tovo`;
+  opdaterUr();
   startTik();
 }
 
-/** Den forloebne tid, formateret af beregn.js. */
+/* Krydser vinduet mobilgraensen, skal timeren flytte med. Uden det staar den
+   i en sidebar, ingen kan se - eller svaever over en, der er der. */
+window.addEventListener('resize', () => { if (timerState.data) tegnTimerBjaelke(); });
+
+/**
+ * Den forloebne tid som et ur.
+ *
+ * Regnet ud fra STARTTIDSPUNKTET ved hver tegning - aldrig ved at laegge et
+ * sekund til en taeller. En taeller nulstilles ved hver gentegning og driver,
+ * naar fanen har vaeret i baggrunden; det her er korrekt efter en fuld
+ * sideindlaesning, efter en time i baggrunden og paa tvaers af faner (F8).
+ */
 function forloebet(t) {
-  const minutter = Math.max(0, Math.round((Date.now() / 1000 - t.entry.startedAt) / 60));
-  return tovoBeregn.formatVarighed(minutter);
+  return tovoBeregn.formatUr(Date.now() / 1000 - t.entry.startedAt);
+}
+
+/**
+ * Uret opdateres hvert sekund - men kun URET.
+ *
+ * Hele bjaelken tegnes IKKE om: en optegning pr. sekund ville rive fokus ud
+ * af knapper og lave arbejde for ingenting. Her skiftes ét tekstindhold.
+ */
+function opdaterUr() {
+  const t = timerState.data;
+  if (!t) return;
+  const gaaet = forloebet(t);
+  const ur = document.getElementById('timerUr');
+  if (ur) ur.textContent = gaaet;
+  // Titlen er den eneste visning, der ogsaa er der, naar fanen ikke er det.
+  document.title = `${gaaet} · ${t.taskTitle} — tovo`;
 }
 
 function startTik() {
   if (timerState.tik) return;
-  // Ét minut er den groveste opdeling, der stadig foeles praecis - og den
-  // koster ingenting. Bjaelken tegnes om, ikke hele siden.
-  timerState.tik = setInterval(() => { if (timerState.data) tegnTimerBjaelke(); }, 30000);
+  timerState.tik = setInterval(() => {
+    if (!timerState.data) { stopTik(); return; }
+    opdaterUr();
+  }, 1000);
 }
 
 function stopTik() {
@@ -2801,4 +3371,595 @@ function bindPoster(host, opgaver) {
       } catch (ex) { toast(ex.message); }
     });
   });
+}
+
+/* ---- p5_kunde.js ---- */
+'use strict';
+/* tovo - kundevisning og print.
+ *
+ * Den rene udgave af projektsiden: hvad der blev aftalt, hvad der er lavet,
+ * og hvad der staar tilbage. Uden interne noter og uden kilde-maerkning -
+ * det er tovos eget bogholderi, ikke kundens aerinde.
+ *
+ * Ingen udregninger her. Tallene kommer fra serverens rollup, som kommer fra
+ * beregn.js. Kunden og ugerapporten skal svare det samme.
+ */
+
+/**
+ * Bygger arket. Bruges BAADE til visningen paa skaermen og til print - ellers
+ * ville de to kunne komme til at vise forskellige tal, og det er hele
+ * pointen, at de ikke kan (Beanledger v16-v18).
+ */
+function kundeArkHtml(p, opgaver, rollup, forbrug) {
+  const f = tovoBeregn.formatVarighed;
+  const idag = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  const raekker = opgaver
+    .slice()
+    .sort((a, b) => (a.position || 0) - (b.position || 0))
+    .map((t) => `<tr>
+      <td>${esc(t.title)}</td>
+      <td>${t.status === 'done' ? 'Done' : 'In progress'}</td>
+      <td class="num">${t.estimateMinutes ? esc(f(t.estimateMinutes)) : '—'}</td>
+      <td class="num">${esc(f(forbrug[t.id] || 0))}</td>
+    </tr>`).join('');
+
+  return `
+    <h1>${esc(p.name)}</h1>
+    <p class="pkunde">${esc(p.customer || '')}</p>
+    <table>
+      <thead><tr><th>Task</th><th>Status</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>
+      <tbody>${raekker}</tbody>
+      <tfoot><tr>
+        <td><strong>Total</strong></td><td></td>
+        <td class="num"><strong>${esc(f(rollup.estimat))}</strong></td>
+        <td class="num"><strong>${esc(f(rollup.forbrugt))}</strong></td>
+      </tr></tfoot>
+    </table>
+    ${rollup.ramme ? `<table class="pramme">
+      <tr><td>Agreed budget</td><td class="num">${esc(f(rollup.ramme))}</td></tr>
+      <tr><td>Spent</td><td class="num">${esc(f(rollup.forbrugt))}</td></tr>
+      <tr><td><strong>Remaining</strong></td>
+        <td class="num"><strong>${esc(f(Math.max(0, rollup.resterende)))}</strong></td></tr>
+    </table>` : ''}
+    <p class="pdate">${esc(idag)}</p>`;
+}
+
+/** Kundevisningen paa skaermen. Samme ark, samme tal - bare i en rude. */
+async function visKundevisning(projektId) {
+  let d;
+  try {
+    d = await api('GET', `/api/v1/projects/${projektId}`);
+  } catch (ex) { toast(ex.message); return; }
+
+  const ark = kundeArkHtml(d.project, d.tasks, d.rollup, d.spent);
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `<div class="modal-card kundekort" role="dialog" aria-label="Customer view">
+      <div class="kundeark">${ark}</div>
+      <div class="modal-foot">
+        <button class="btn primary" id="kPrint">Print / save as PDF</button>
+        <button class="btn" id="kClose">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('kClose').addEventListener('click', luk);
+  document.getElementById('kPrint').addEventListener('click', () => {
+    printArk(ark, `tovo-${d.project.name}-${state.today}`);
+  });
+}
+
+/**
+ * Print.
+ *
+ * Arket laegges i #printHost, som ligger i <body> og kun vises i @media
+ * print. Titlen bliver browserens forslag til filnavn ved "Gem som PDF" og
+ * gendannes paa afterprint.
+ *
+ * NB til den, der tester: `afterprint` fyrer ALDRIG, naar window.print er
+ * stubbet - saa skal titlen saettes tilbage i haanden (Muldbog).
+ */
+function printArk(html, filnavn) {
+  let host = document.getElementById('printHost');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'printHost';
+    host.className = 'printsheet';
+    document.body.appendChild(host);
+  }
+  host.innerHTML = html;
+  const gammelTitel = document.title;
+  document.title = filnavn;
+  const gendan = () => {
+    document.title = gammelTitel;
+    window.removeEventListener('afterprint', gendan);
+  };
+  window.addEventListener('afterprint', gendan);
+  setTimeout(() => window.print(), 60);
+}
+
+/* ---- p6_planner.js ---- */
+'use strict';
+/* tovo - import fra Microsoft Planner.
+ *
+ * En .xlsx er et ZIP-arkiv med XML. Der er ingen SheetJS og ingen anden
+ * pakke: ~120 linjers egen zip-laeser (central directory -> lokal header ->
+ * datastart) og DecompressionStream til hver entry, praecis som Kokkeris
+ * Paprika-import (§6c). XML'en laeses med DOMParser - browseren har allerede
+ * en, og en hjemmelavet XML-parser er en fejlkilde uden gevinst.
+ *
+ * ALT hvad der kan goere skade - arkvalg, kolonnegenkendelse, mapning og
+ * fletningens hvidliste - ligger i app/shared/planner.js, hvor det kan
+ * testes uden en browser. Denne fil laeser kun filen og tegner ruden.
+ */
+
+/* ------------------------------------------------------------- zip */
+
+/**
+ * Laeser et zip-arkiv til en Map(navn -> Uint8Array).
+ *
+ * Central directory findes bagfra (End of Central Directory), fordi den er
+ * det eneste sted, hvor filnavnene staar samlet. Den lokale header skal
+ * stadig laeses for hver entry: dens navne- og extra-laengde er IKKE
+ * noedvendigvis den samme som i directory'et, og datastarten ligger efter dem.
+ */
+async function laesZip(buffer) {
+  const b = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= 0 && i > bytes.length - 65558; i--) {
+    if (b.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('That file is not a .xlsx (no zip directory found).');
+
+  const antal = b.getUint16(eocd + 10, true);
+  let p = b.getUint32(eocd + 16, true);
+  const filer = new Map();
+  const tekst = new TextDecoder();
+
+  for (let i = 0; i < antal; i++) {
+    if (b.getUint32(p, true) !== 0x02014b50) break;
+    const metode = b.getUint16(p + 10, true);
+    const komprimeret = b.getUint32(p + 20, true);
+    const navnLaengde = b.getUint16(p + 28, true);
+    const ekstraLaengde = b.getUint16(p + 30, true);
+    const kommentarLaengde = b.getUint16(p + 32, true);
+    const lokal = b.getUint32(p + 42, true);
+    const navn = tekst.decode(bytes.subarray(p + 46, p + 46 + navnLaengde));
+
+    const lokalNavn = b.getUint16(lokal + 26, true);
+    const lokalEkstra = b.getUint16(lokal + 28, true);
+    const start = lokal + 30 + lokalNavn + lokalEkstra;
+    const raa = bytes.subarray(start, start + komprimeret);
+
+    if (metode === 0) filer.set(navn, raa);
+    else if (metode === 8) filer.set(navn, new Uint8Array(await udpak(raa)));
+    // Andre metoder findes ikke i en Planner-eksport; springes over frem for
+    // at faelde hele importen.
+
+    p += 46 + navnLaengde + ekstraLaengde + kommentarLaengde;
+  }
+  return filer;
+}
+
+async function udpak(raa) {
+  const strøm = new Blob([raa]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Response(strøm).arrayBuffer();
+}
+
+/* ------------------------------------------------------------- xlsx */
+
+const XML = (tekst) => new DOMParser().parseFromString(tekst, 'application/xml');
+
+/** "C5" -> 2. Kolonnebogstaverne er base-26 uden nul. */
+function kolonneIndeks(ref) {
+  const m = String(ref || '').match(/^([A-Z]+)/);
+  if (!m) return 0;
+  let n = 0;
+  for (const c of m[1]) n = n * 26 + (c.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+/**
+ * .xlsx -> {arknavn: [[celle, ...], ...]}
+ *
+ * Den rigtige eksport har INGEN sharedStrings og bruger t="str" med teksten
+ * direkte i <v>. `t="s"` (indeks i sharedStrings) og `inlineStr` haandteres
+ * ogsaa, saa en aendring hos Microsoft ikke braekker importen.
+ */
+async function laesXlsx(buffer) {
+  const filer = await laesZip(buffer);
+  const tekst = new TextDecoder();
+  const laes = (navn) => (filer.has(navn) ? tekst.decode(filer.get(navn)) : null);
+
+  const wb = laes('xl/workbook.xml');
+  if (!wb) throw new Error('That file is not an Excel workbook.');
+  const rels = laes('xl/_rels/workbook.xml.rels');
+
+  // Arkets fil findes gennem r:id i rels - IKKE ved at gaette "sheet1.xml"
+  // ud fra raekkefoelgen. De to falder ikke altid sammen.
+  const stier = new Map();
+  if (rels) {
+    for (const r of XML(rels).getElementsByTagName('Relationship')) {
+      stier.set(r.getAttribute('Id'), r.getAttribute('Target'));
+    }
+  }
+
+  const delte = [];
+  const ss = laes('xl/sharedStrings.xml');
+  if (ss) {
+    for (const si of XML(ss).getElementsByTagName('si')) {
+      delte.push([...si.getElementsByTagName('t')].map((t) => t.textContent).join(''));
+    }
+  }
+
+  const ark = {};
+  const doc = XML(wb);
+  let n = 0;
+  for (const sh of doc.getElementsByTagName('sheet')) {
+    n += 1;
+    const navn = sh.getAttribute('name');
+    const rid = sh.getAttribute('r:id') || sh.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+    let sti = stier.get(rid) || `worksheets/sheet${n}.xml`;
+    sti = sti.replace(/^\/?xl\//, '');
+    const xml = laes(`xl/${sti}`);
+    if (!xml) continue;
+
+    const raekker = [];
+    for (const row of XML(xml).getElementsByTagName('row')) {
+      const celler = [];
+      for (const c of row.getElementsByTagName('c')) {
+        const i = kolonneIndeks(c.getAttribute('r'));
+        const t = c.getAttribute('t');
+        let vaerdi = '';
+        if (t === 'inlineStr') {
+          vaerdi = [...c.getElementsByTagName('t')].map((x) => x.textContent).join('');
+        } else {
+          const v = c.getElementsByTagName('v')[0];
+          vaerdi = v ? v.textContent : '';
+          if (t === 's') vaerdi = delte[Number(vaerdi)] || '';
+        }
+        celler[i] = vaerdi;
+      }
+      for (let j = 0; j < celler.length; j++) if (celler[j] === undefined) celler[j] = '';
+      raekker.push(celler);
+    }
+    ark[navn] = raekker;
+  }
+  return ark;
+}
+
+/* ------------------------------------------------------------ ruden */
+
+const importState = { data: null, projekt: null, valg: null };
+
+function aabnPlannerImport(projektId) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.id = 'plannerModal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Import from Planner">
+      <h2>Import from Planner</h2>
+      <p class="meta">In Planner: <strong>… → Export plan to Excel</strong>. Then pick the file here.
+        Re-importing later updates the tasks — it never touches your estimates or logged time.</p>
+      <label class="field"><span>Excel file from Planner</span>
+        <input class="input" type="file" id="plFil" accept=".xlsx"></label>
+      <div id="plKrop"></div>
+      <div class="modal-foot" id="plFod">
+        <button class="btn" id="plClose">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  importState.projekt = projektId || null;
+
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  document.getElementById('plClose').addEventListener('click', luk);
+  document.getElementById('plFil').addEventListener('change', (e) => {
+    const fil = e.target.files && e.target.files[0];
+    if (fil) forhaandsvis(fil);
+  });
+}
+
+async function forhaandsvis(fil) {
+  const krop = document.getElementById('plKrop');
+  krop.innerHTML = '<p class="meta">Reading the file…</p>';
+  let eksport;
+  try {
+    eksport = tovoPlanner.laesEksport(await laesXlsx(await fil.arrayBuffer()));
+  } catch (ex) {
+    krop.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+    return;
+  }
+
+  // Ét projekt pr. plan. Findes planen allerede, er det en GENIMPORT - og
+  // saa skal den ramme det samme projekt, ikke lave et nyt ved siden af.
+  const projekt = state.projects.find((p) => (eksport.plan.id && p.plannerPlanId === eksport.plan.id))
+    || (importState.projekt ? state.projects.find((p) => p.id === importState.projekt) : null);
+
+  let findes = [];
+  if (projekt) {
+    const d = await api('GET', `/api/v1/projects/${projekt.id}`);
+    findes = d.tasks;
+  }
+  const sam = tovoPlanner.sammenlign(eksport.tasks, findes, { sections: projekt ? (projekt.sections || []) : [] });
+  const noter = tovoPlanner.noterLignerEstimater(eksport.tasks);
+  importState.data = { eksport, sam, projekt, noter, findes };
+
+  krop.innerHTML = `
+    <div class="card">
+      <h2>${esc(eksport.plan.name || fil.name)}</h2>
+      <div class="meta">${projekt ? `Re-import into “${esc(projekt.name)}”` : 'This will create a new project'}
+        ${eksport.plan.exportedAt ? ` · exported ${esc(eksport.plan.exportedAt)}` : ''}</div>
+      <ul class="plain">
+        <li><span class="post-sum">${sam.nye.length}</span><span class="post-main">new tasks</span></li>
+        <li><span class="post-sum">${sam.opdaterede.length}</span><span class="post-main">to update</span></li>
+        <li><span class="post-sum">${sam.forsvundne.length}</span><span class="post-main">gone from Planner</span></li>
+      </ul>
+    </div>
+
+    ${noter.ligner ? `<label class="check"><input type="checkbox" id="plEstimat" checked>
+      <span>The “Noter” column looks like hours (${noter.antal} of ${noter.af} rows are a plain
+      number) — set them as estimates on new tasks</span></label>` : ''}
+
+    ${sam.forsvundne.length ? `<label class="field"><span>Tasks that are gone from Planner</span>
+      <select class="input" id="plForsvundne">
+        <option value="ask">Leave them alone (decide later)</option>
+        <option value="archive">Mark them done</option>
+        <option value="ignore">Ignore them</option>
+      </select></label>` : ''}
+
+    ${eksport.warnings.length ? `<p class="meta">${eksport.warnings.map(esc).join('<br>')}</p>` : ''}
+    <p class="meta">Estimates, logged time, comments, links and the budget are never touched by an import.</p>`;
+
+  document.getElementById('plFod').innerHTML = `
+    <button class="btn primary" id="plGo">${projekt ? 'Update' : 'Import'} ${eksport.tasks.length} tasks</button>
+    <button class="btn" id="plClose2">Cancel</button>`;
+  document.getElementById('plClose2').addEventListener('click', () => document.getElementById('plannerModal').remove());
+  document.getElementById('plGo').addEventListener('click', udfoerImport);
+}
+
+async function udfoerImport() {
+  const { eksport, sam, projekt, noter } = importState.data;
+  const brugNoter = noter.ligner && document.getElementById('plEstimat')
+    && document.getElementById('plEstimat').checked;
+  const forsvundne = document.getElementById('plForsvundne')
+    ? document.getElementById('plForsvundne').value : 'ask';
+  const fod = document.getElementById('plFod');
+  fod.innerHTML = '<p class="meta" id="plFremdrift">Saving…</p>';
+
+  try {
+    // 1. Projektet. Sektionerne foelger med, saa opgaverne har noget at
+    //    pege paa, naar de gemmes.
+    const projektFelter = {
+      kind: 'project',
+      name: eksport.plan.name || 'Imported plan',
+      plannerPlanId: eksport.plan.id,
+      plannerPlanName: eksport.plan.name,
+      lastImportAt: Math.floor(Date.now() / 1000),
+      sections: sam.sektioner.map((s, i) => ({ id: s.id, name: s.name, position: i })),
+    };
+    const p = projekt
+      ? (await api('PATCH', `/api/v1/items/${projekt.id}`, projektFelter)).item
+      : (await api('POST', '/api/v1/items', projektFelter)).item;
+
+    // 2. Opgaverne i portioner à 25 med fremdrift. Bulk-endepunktet gaar
+    //    gennem den samme gemItem med den samme vagt mod delvise objekter.
+    const alle = [];
+    for (const n of sam.nye) {
+      alle.push(tovoPlanner.flet(n.planner, n.felter, null, {
+        noterSomEstimat: brugNoter,
+        estimatMinutter: brugNoter ? tovoBeregn.parseVarighed(n.planner.note) : null,
+      }));
+    }
+    for (const o of sam.opdaterede) alle.push(tovoPlanner.flet(o.planner, o.felter, o.task));
+    if (forsvundne === 'archive') {
+      for (const t of sam.forsvundne) {
+        if (t.status !== 'done') alle.push(Object.assign({}, t, { status: 'done', completedAt: Math.floor(Date.now() / 1000) }));
+      }
+    }
+    for (const t of alle) t.projectId = p.id;
+
+    let gemt = 0;
+    for (let i = 0; i < alle.length; i += 25) {
+      await api('POST', '/api/v1/items/bulk', { items: alle.slice(i, i + 25) });
+      gemt += Math.min(25, alle.length - i);
+      const f = document.getElementById('plFremdrift');
+      if (f) f.textContent = `Saving… ${gemt} of ${alle.length}`;
+    }
+
+    document.getElementById('plannerModal').remove();
+    await genindlaes();
+    gaaTil('projects', { project: p.id });
+    toast(`${sam.nye.length} new, ${sam.opdaterede.length} updated.`);
+  } catch (ex) {
+    fod.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+  }
+}
+
+/* ---- p7_rapport.js ---- */
+'use strict';
+/* tovo - ugerapporten.
+ *
+ * Formaalet er AFSTEMNING mod et andet system og et overblik til en kunde,
+ * der spoerger. Rapporten skal derfor vaere til at LAESE og KOPIERE - ikke at
+ * integrere med. Derfor markdown og print, og ingen eksportformater.
+ *
+ * Alle tal kommer fra beregn.js, saa MCP'ens week_report (fase 8) svarer
+ * noejagtig det samme.
+ */
+
+const rapportState = { fra: null, til: null, data: null };
+
+function ugeMandag(iso) {
+  const [aa, mm, dd] = iso.split('-').map(Number);
+  const d = new Date(aa, mm - 1, dd);
+  const ugedag = d.getDay() === 0 ? 7 : d.getDay();
+  d.setDate(d.getDate() - (ugedag - 1));
+  return isoDato(d);
+}
+
+function isoDato(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function flytUger(iso, n) {
+  const [aa, mm, dd] = iso.split('-').map(Number);
+  return isoDato(new Date(aa, mm - 1, dd + n * 7));
+}
+
+async function tegnRapport() {
+  const host = document.getElementById('pageHost');
+  if (!rapportState.fra) {
+    rapportState.fra = ugeMandag(state.today);
+    rapportState.til = flytUger(rapportState.fra, 1);
+    const [aa, mm, dd] = rapportState.til.split('-').map(Number);
+    rapportState.til = isoDato(new Date(aa, mm - 1, dd - 1));
+  }
+
+  host.innerHTML = '<div class="page"><h1>Report</h1><p class="lead skeleton">Adding it up…</p></div>';
+  let d;
+  try {
+    d = await api('GET', `/api/v1/report?from=${rapportState.fra}&to=${rapportState.til}`);
+  } catch (ex) { toast(ex.message); return; }
+  rapportState.data = d;
+
+  const f = tovoBeregn.formatVarighed;
+  const r = d.report;
+  const forrige = d.previous;
+  const dagsnavn = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const forskel = (a, b) => {
+    if (!b) return '';
+    const diff = a - b;
+    if (!diff) return ' · same as the period before';
+    return ` · ${diff > 0 ? '+' : '−'}${f(Math.abs(diff))} vs. the period before`;
+  };
+
+  host.innerHTML = `<div class="page">
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>Report</h1>
+      <span class="row" style="gap:8px">
+        <button class="btn" id="rMarkdown">Copy as markdown</button>
+        <button class="btn" id="rPrint">Print / PDF</button>
+      </span>
+    </div>
+
+    <div class="row" style="margin-bottom:18px">
+      <button class="btn" id="rForrige">← Previous</button>
+      <button class="btn" id="rDenne">This week</button>
+      <button class="btn" id="rNaeste">Next →</button>
+      <label class="field" style="margin:0"><input class="input" type="date" id="rFra" value="${esc(d.from)}"></label>
+      <label class="field" style="margin:0"><input class="input" type="date" id="rTil" value="${esc(d.to)}"></label>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <div style="flex:1"><div class="meta">Total</div><div class="bigtal">${esc(f(r.total))}</div></div>
+        <div style="flex:1"><div class="meta">On projects</div><div class="bigtal">${esc(f(r.onProjects))}</div></div>
+        <div style="flex:1"><div class="meta">Ad hoc</div><div class="bigtal">${esc(f(r.adhoc))}</div></div>
+        <div style="flex:1"><div class="meta">Completed</div><div class="bigtal">${r.completed}</div></div>
+      </div>
+      <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No normal week set'}${esc(forskel(r.total, forrige.total))}</p>
+      ${d.rounding ? `<p class="meta">Rounded to ${d.rounding} minutes for display — the stored times are exact.</p>` : ''}
+    </div>
+
+    <h2 class="group">Days</h2>
+    <div class="dagsliste">
+      ${r.days.map((dag) => `<div class="dag${dag.tynd ? ' tynd' : ''}${dag.tom ? ' tom' : ''}">
+        <div class="meta">${dagsnavn[dag.weekday]} ${esc(dag.date.slice(8))}</div>
+        <div class="dagsum">${esc(f(dag.minutter))}</div>
+        <div class="dagbar" style="height:${Math.min(100, Math.round((dag.minutter / Math.max(60, ...r.days.map((x) => x.minutter))) * 100))}%"></div>
+      </div>`).join('')}
+    </div>
+    ${r.days.some((x) => x.tynd || x.tom) ? `<p class="meta warnline">${
+    r.days.filter((x) => x.tynd || x.tom).map((x) => dagsnavn[x.weekday]).join(', ')
+  } look thin — that is usually forgotten registration, not a quiet day.</p>` : ''}
+
+    ${r.projects.length ? r.projects.map((p) => `
+      <h2 class="group">${esc(p.name)}<span class="group-count">${esc(f(p.minutter))}</span></h2>
+      <table class="data rapporttabel">
+        <tr><th>Task</th><th class="num">Estimated</th><th class="num">Spent</th><th>Status</th></tr>
+        ${p.tasks.map((t) => `<tr>
+          <td>${esc(t.title)}</td>
+          <td class="num">${t.estimateMinutes ? esc(f(t.estimateMinutes)) : '—'}</td>
+          <td class="num">${esc(f(t.minutter))}</td>
+          <td>${t.completedIPerioden ? 'Completed' : 'Still open'}</td>
+        </tr>`).join('')}
+      </table>`).join('')
+    : '<div class="empty"><p class="empty-title">Nothing registered in this period</p>'
+      + '<p>Start a timer, or log the hours by hand.</p></div>'}
+  </div>`;
+
+  document.getElementById('rForrige').addEventListener('click', () => skiftPeriode(-1));
+  document.getElementById('rNaeste').addEventListener('click', () => skiftPeriode(1));
+  document.getElementById('rDenne').addEventListener('click', () => {
+    rapportState.fra = null;
+    tegnRapport();
+  });
+  for (const id of ['rFra', 'rTil']) {
+    document.getElementById(id).addEventListener('change', () => {
+      rapportState.fra = document.getElementById('rFra').value;
+      rapportState.til = document.getElementById('rTil').value;
+      tegnRapport();
+    });
+  }
+  document.getElementById('rMarkdown').addEventListener('click', async () => {
+    const md = rapportMarkdown(d);
+    const ok = await kopier(md);
+    toast(ok ? 'Report copied as markdown — paste it into OneNote.' : 'Could not reach the clipboard.');
+  });
+  document.getElementById('rPrint').addEventListener('click', () => {
+    printArk(rapportArkHtml(d), `tovo-report-${d.from}`);
+  });
+}
+
+function skiftPeriode(n) {
+  rapportState.fra = flytUger(rapportState.fra, n);
+  rapportState.til = flytUger(rapportState.til, n);
+  tegnRapport();
+}
+
+/**
+ * Markdown til OneNote. Én knap, og formatet er det, man kan LAESE - ikke
+ * det, en maskine skal parse.
+ */
+function rapportMarkdown(d) {
+  const f = tovoBeregn.formatVarighed;
+  const r = d.report;
+  const linjer = [`# ${d.from} – ${d.to}`, ''];
+  linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`);
+  if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
+  linjer.push('');
+  for (const p of r.projects) {
+    linjer.push(`## ${p.name} — ${f(p.minutter)}`);
+    for (const t of p.tasks) {
+      const est = t.estimateMinutes ? ` (est. ${f(t.estimateMinutes)})` : '';
+      linjer.push(`- ${t.title}: ${f(t.minutter)}${est}${t.completedIPerioden ? ' ✓ completed' : ''}`);
+    }
+    linjer.push('');
+  }
+  return linjer.join('\n');
+}
+
+/** Samme tal, samme raekkefoelge - bare til papir. */
+function rapportArkHtml(d) {
+  const f = tovoBeregn.formatVarighed;
+  const r = d.report;
+  return `
+    <h1>${esc(d.from)} – ${esc(d.to)}</h1>
+    <p class="pkunde">${esc(f(r.total))} in total · ${esc(f(r.onProjects))} on projects
+      · ${esc(f(r.adhoc))} ad hoc${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
+    ${r.projects.map((p) => `
+      <table>
+        <thead><tr><th>${esc(p.name)}</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>
+        <tbody>${p.tasks.map((t) => `<tr>
+          <td>${esc(t.title)}${t.completedIPerioden ? ' ✓' : ''}</td>
+          <td class="num">${t.estimateMinutes ? esc(f(t.estimateMinutes)) : '—'}</td>
+          <td class="num">${esc(f(t.minutter))}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td><strong>Total</strong></td><td></td>
+          <td class="num"><strong>${esc(f(p.minutter))}</strong></td></tr></tfoot>
+      </table>`).join('')}
+    <p class="pdate">${esc(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))}</p>`;
 }

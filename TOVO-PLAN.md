@@ -331,14 +331,14 @@ Rigtige data er den bedste kravspecifikation for fase 4–6.
 
 **Mål:** svare på "hvor er jeg?" — og kunne vise det til en kunde.
 
-- [ ] Estimat pr. opgave (sat i UI eller via `~`-token)
-- [ ] Rollup i `beregn.js` på **tre niveauer**:
+- [x] Estimat pr. opgave (sat i UI eller via `~`-token)
+- [x] Rollup i `beregn.js` på **tre niveauer**:
       sum af opgaveestimater · manuel projektramme (`budgetHours`) · forbrugt
-- [ ] Projektside: de tre tal, resterende, procent, opgaveliste med estimat/forbrugt pr. række
-- [ ] Advarsel når forbrugt passerer 80 % og 100 % af rammen
-- [ ] Advarsel når sum af estimater overstiger rammen — det er den tidlige advarsel om,
+- [x] Projektside: de tre tal, resterende, procent, opgaveliste med estimat/forbrugt pr. række
+- [x] Advarsel når forbrugt passerer 80 % og 100 % af rammen
+- [x] Advarsel når sum af estimater overstiger rammen — det er den tidlige advarsel om,
       at der er fundet mere arbejde end der er solgt
-- [ ] **Kundevisning:** en ren udgave af projektsiden uden interne noter og uden kilde-mærkning,
+- [x] **Kundevisning:** en ren udgave af projektsiden uden interne noter og uden kilde-mærkning,
       egnet til at vise eller printe. Print via `.printsheet`-mønsteret med
       **eksplicitte farver — aldrig `var(--…)`** (Muldbog: `--muted` er lys grå i mørkt tema
       og forsvinder på hvidt papir). `@page { margin: 0 }`, papirmargen som padding.
@@ -348,6 +348,14 @@ Rigtige data er den bedste kravspecifikation for fase 4–6.
 **Accept:** et projekt med fem opgaver viser korrekte tal fra `beregn.js`. Kundevisningen
 printes til PDF med læsbare farver. Print testes ved at stubbe `window.print` og inspicere
 `#printHost` — husk at `afterprint` aldrig fyrer med en stub, så titlen sættes tilbage manuelt.
+
+**Status 2026-08-18 — fase 4 er bygget.** Fem opgaver, 9 t estimeret mod 10 t ramme og
+2 t 15 m forbrugt: kundevisningen viser de samme tal som serverens rollup, række for række.
+Print er verificeret med stubbet `window.print`: `#printHost` fyldes, `document.title` bliver
+`tovo-<projekt>-<dato>` under print og sættes tilbage bagefter, `@page { margin: 0 }` er der,
+og **ingen regel i `@media print` bruger `var(--…)`** — det er målt på de faktiske CSS-regler,
+ikke antaget. 80 %- og 100 %-advarslerne er to forskellige sætninger; den ene siger, hvor
+langt man er, den anden at rammen er brugt op.
 
 ---
 
@@ -384,23 +392,23 @@ forhåndsvisningen, så man ikke importerer en eksport fra i forgårs uden at op
 `toggl-planner-link-generator` bruger SheetJS fra CDN og kan ikke bruges. Følg Kokkeris
 Paprika-mønster (§6c): en `.xlsx` er et zip-arkiv med XML.
 
-- [ ] Zip-læser i frontenden: central directory → lokal header → datastart,
+- [x] Zip-læser i frontenden: central directory → lokal header → datastart,
       `DecompressionStream('deflate-raw')` på hver entry. ~120 linjer.
-- [ ] `xl/workbook.xml` + `xl/_rels/workbook.xml.rels` → arknavn til `sheetN.xml`
+- [x] `xl/workbook.xml` + `xl/_rels/workbook.xml.rels` → arknavn til `sheetN.xml`
       (rækkefølgen i workbook.xml er **ikke** nødvendigvis `sheet1, sheet2, …` — slå
       `r:id` op i rels-filen i stedet for at gætte ud fra navnet)
-- [ ] `xl/worksheets/sheetN.xml` → rækker og celler. `t="str"` er det, der kommer;
+- [x] `xl/worksheets/sheetN.xml` → rækker og celler. `t="str"` er det, der kommer;
       `t="s"` (sharedStrings) og `inlineStr` håndteres som fallback
-- [ ] `DOMParser` til XML'en; ingen egen parser
+- [x] `DOMParser` til XML'en; ingen egen parser
 
 ### Arkvalg og kolonner (verificeret)
-- [ ] Foretræk arket hvis navn indeholder `konsoliderede` — buckets er allerede opløst dér
-- [ ] Ellers `opgaver` + `buckets`, hvor bucket-id slås op mod bucket-navn
-- [ ] Fejl pænt hvis ingen af delene findes
-- [ ] **Trim kolonnenavnene.** Headeren hedder `"Opgavenavn "` med efterstillet mellemrum
+- [x] Foretræk arket hvis navn indeholder `konsoliderede` — buckets er allerede opløst dér
+- [x] Ellers `opgaver` + `buckets`, hvor bucket-id slås op mod bucket-navn
+- [x] Fejl pænt hvis ingen af delene findes
+- [x] **Trim kolonnenavnene.** Headeren hedder `"Opgavenavn "` med efterstillet mellemrum
       (`xml:space="preserve"`), og det samme gør `"Bucket-navn "`, `"Navn på plan "` og
       `"Dato for eksport "`. En lighedstest på det utrimmede navn rammer forbi.
-- [ ] Kolonnedetektion er **case-insensitiv præfiksmatch**, ikke lighed:
+- [x] Kolonnedetektion er **case-insensitiv præfiksmatch**, ikke lighed:
 
 | Felt i tovo | Kolonne i eksporten | Bemærkning |
 |---|---|---|
@@ -428,8 +436,8 @@ stadig gæt — mapningen skal derfor være tolerant og lade en ukendt status st
 »ikke startet« frem for at fælde importen.
 
 ### Import og genimport
-- [ ] Forhåndsvisning før skrivning: X nye · Y opdaterede · Z forsvundne fra Planner
-- [ ] **`Noter` kan være to ting, og importen skal spørge.** I den eksport, der er set,
+- [x] Forhåndsvisning før skrivning: X nye · Y opdaterede · Z forsvundne fra Planner
+- [x] **`Noter` kan være to ting, og importen skal spørge.** I den eksport, der er set,
       stod der et rent tal med dansk decimalkomma (`6,1`, `19,6`) på hver eneste opgave —
       altså timeestimater. Andreas siger, at det ikke altid vil være sådan. Reglen:
       - Er `Noter` et **rent tal** på mindst halvdelen af rækkerne, viser forhåndsvisningen
@@ -441,19 +449,33 @@ stadig gæt — mapningen skal derfor være tolerant og lade en ukendt status st
         Et estimat, der findes i tovo, er tovos — det er hele pointen med whitelisten.
       Aldrig automatik uden det viste valg: en heuristik, der stiltiende skriver i
       estimatfeltet, er præcis den slags, man opdager tre uger senere i en ugerapport.
-- [ ] Genimport opdaterer **kun**: titel, sektion, status, forfaldsdato, beskrivelse, underopgaver
-- [ ] Genimport rører **aldrig**: `estimateMinutes`, tidsposter, kommentarer, `links`,
+- [x] Genimport opdaterer **kun**: titel, sektion, status, forfaldsdato, beskrivelse, underopgaver
+- [x] Genimport rører **aldrig**: `estimateMinutes`, tidsposter, kommentarer, `links`,
       `budgetHours`, `priority` sat i tovo.
       Skriv det som en eksplicit whitelist i koden, ikke som en blacklist.
-- [ ] Forsvundne opgaver: valg mellem arkivér / spørg / ignorér, gemt som setting
-- [ ] Tjeklisteelementer → underopgaver (ét niveau)
-- [ ] Gem i batches à 25 via bulk-API'et med fremdriftsvisning (§6c)
-- [ ] **Vagt i `saveBulk()`:** et delvist objekt må aldrig gemmes som helt (Kokkeri §4 —
+- [x] Forsvundne opgaver: valg mellem arkivér / spørg / ignorér, gemt som setting
+- [x] Tjeklisteelementer → underopgaver (ét niveau)
+- [x] Gem i batches à 25 via bulk-API'et med fremdriftsvisning (§6c)
+- [x] **Vagt i `saveBulk()`:** et delvist objekt må aldrig gemmes som helt (Kokkeri §4 —
       bulk er den farlige, den kan ødelægge hundredvis af poster stille)
 
 **Accept:** importér en rigtig eksport. Sæt estimater og registrér tid. Ret en opgave i Planner,
 eksportér igen, genimportér — statussen er opdateret, estimaterne og tidsposterne er urørte.
 Det er den vigtigste test i hele projektet; skriv den som en automatisk test, ikke en manuel.
+
+**Status 2026-08-18 — fase 5 er bygget.** Genimport-testen findes som `tests/planner.test.mjs`
+og gør præcis det: importerer, sætter estimat, registrerer tid, tilføjer link og kommentar,
+retter planen, genimporterer — og asserterer at titel, status, sektion og forfaldsdato er
+opdateret, mens estimat, prioritet, links, start-link, tidspost og kommentar er urørte. En
+tredje import af den samme fil skriver **ingenting**.
+
+Arbejdsdelingen blev en anden end planens: **alt der kan gøre skade ligger i
+`app/shared/planner.js`** (arkvalg, kolonnegenkendelse, mapning, flettehvidliste), som kan
+testes i Node. `app/parts/p6_planner.js` læser kun zip'en og XML'en og tegner ruden — det er
+den del, der kræver en browser. Zip- og XML-vejen er verificeret i browseren mod
+`tests/fixtures/planner-eksport.xlsx`: 6 ark, overskrifter med efterstillede mellemrum,
+plan-id og -navn, 5 opgaver, 4 sektioner, tjeklister splittet, `Noter` genkendt som estimater
+på 4 af 5 rækker — og den femte, hvor `Noter` er prosa, blev beskrivelse **uden** estimat.
 
 ---
 
@@ -463,19 +485,54 @@ Det er den vigtigste test i hele projektet; skriv den som en automatisk test, ik
 en kunde der spørger. Rapporten skal altså være til at **læse og kopiere**, ikke til at
 integrere med noget.
 
-- [ ] Vælg periode: denne uge, sidste uge, vilkårlig uge, måned
-- [ ] Grupperet pr. projekt → opgave, med timer pr. opgave og total pr. projekt
-- [ ] Marker hvad der blev **afsluttet** i perioden vs. hvad der stadig kører
-- [ ] Estimat vs. forbrug pr. opgave og pr. projekt
-- [ ] Fordeling: projekt vs. ad hoc
-- [ ] Sammenligning mod normtid fra settings (default 37 t) og mod forrige uge
-- [ ] Dage med påfaldende få timer fremhæves — det er sådan man opdager glemt registrering
-- [ ] **Kopiér som markdown** — én knap, klar til at klistre i OneNote
-- [ ] Print/PDF med samme regler som fase 4
-- [ ] Alle tal fra `beregn.js`, så `week_report` i MCP giver nøjagtig samme resultat
+- [x] Vælg periode: denne uge, sidste uge, vilkårlig uge, måned
+- [x] Grupperet pr. projekt → opgave, med timer pr. opgave og total pr. projekt
+- [x] Marker hvad der blev **afsluttet** i perioden vs. hvad der stadig kører
+- [x] Estimat vs. forbrug pr. opgave og pr. projekt
+- [x] Fordeling: projekt vs. ad hoc
+- [x] Sammenligning mod normtid fra settings (default 37 t) og mod forrige uge
+- [x] Dage med påfaldende få timer fremhæves — det er sådan man opdager glemt registrering
+- [x] **Kopiér som markdown** — én knap, klar til at klistre i OneNote
+- [x] Print/PDF med samme regler som fase 4
+- [x] Alle tal fra `beregn.js`, så `week_report` i MCP giver nøjagtig samme resultat
 
 **Accept:** en uge med blandede projekt- og ad hoc-timer giver en rapport, hvis tal stemmer
 med en manuel optælling. Markdown-kopien indsat i OneNote ser rigtig ud.
+
+**Status 2026-08-18 — fase 6 er bygget.** Facit i testen er regnet i hånden (240 + 60 + 210 +
+20 = 530 minutter), ikke ved at kalde den samme funktion igen. Summen af rækker = projektets
+total = rapportens total; kan en kunde ikke lægge tallene sammen selv og få det samme, er
+rapporten ubrugelig. Perioden er halvåben, så to naboperioder hverken tæller dobbelt eller
+taber en post.
+
+**Testen fandt en grænse, der skulle vælges bevidst:** tre timer på en mandag blev markeret
+som en tynd dag. Med 37 timers norm er en dagsnorm 7,4 t, og halvdelen af den er 3,7 t — så
+reglen var rigtig, og det var testdataene, der var misvisende. Tomme **hverdage** fremhæves
+også, men en tom lørdag gættes der ikke på.
+
+---
+
+## Efter fase 6 · Ønsker fra første rigtige brug (2026-08-18)
+
+Andreas tog v1 i brug og bad om fem ting. Alle fem er lavet, fordi de er små og retter
+noget, der er i vejen hver dag — ikke fordi de stod i planen:
+
+- [x] **Timeren skal kunne ses tælle.** Den viste `0m` i det første minut og opdaterede
+      hvert 30. sekund; nu tæller den i sekunder (`0:07`, `1:02:03`) og opdaterer hvert
+      sekund. Kun uret tegnes om — ikke hele bjælken, som ville rive fokus ud af knapper.
+      Tiden regnes stadig ud fra starttidspunktet ved hver tegning, aldrig ved at lægge et
+      sekund til en tæller (doda F8).
+- [x] **Timeren er ét klik ind i opgaven** — hele feltet, ikke kun titlen.
+- [x] **Timeren står i venstre menu** på desktop. Under 900 px er sidebaren et overlay, man
+      ikke kan se, så dér bliver den den flydende bjælke. Ét stykke markup, to placeringer,
+      og en `resize`-lytter, så den flytter med, når vinduet krydser grænsen.
+- [x] **Projekterne kan foldes ud i menuen** med en chevron; valget huskes. Rækken
+      navigerer, chevronen folder — to mål, derfor to knapper.
+- [x] **Projektforslag mens man skriver `@navn`.** Skriver man `@BeanLedg`, mens
+      »BeanLedger« findes, foreslår paletten det eksisterende projekt i stedet for at love
+      et nyt. Uden det opretter man et projekt nummer to med et stavefejlsnavn.
+- [x] **Timeren kan startes direkte fra et søgeresultat** — knappen i rækken eller `⌘↵`.
+      At skulle åbne opgaven først var tre klik til noget, der hører til ét.
 
 ---
 
