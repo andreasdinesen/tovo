@@ -533,6 +533,33 @@ noget, der er i vejen hver dag — ikke fordi de stod i planen:
       et nyt. Uden det opretter man et projekt nummer to med et stavefejlsnavn.
 - [x] **Timeren kan startes direkte fra et søgeresultat** — knappen i rækken eller `⌘↵`.
       At skulle åbne opgaven først var tre klik til noget, der hører til ét.
+- [x] **`⌘↵` virker også i opgavelisterne**, ikke kun i paletten. En genvej, der kun virker
+      ét sted, er en genvej, man ikke lærer — og den står nu i hjælpelinjen begge steder.
+- [x] **Tidsstempel på kommentarer** (`today 14:33` · `18 Aug 14:32`, fuld dato som tooltip).
+- [x] **Ugekalender som i Toggl** — en ny visning: dage hen ad, timer ned ad, poster tegnet
+      hvor de ligger. Træk i et tomt felt registrerer tid (formularen åbnes udfyldt, så et
+      fejlramt træk ikke lige har bogført en time), klik på en blok retter eller sletter den.
+      Trækket bruger pointer-events og ikke HTML5 drag & drop, som ikke virker på touch (§4).
+      **Det trækker fase 9's dagslinje frem** — den er i praksis lavet her.
+- [x] **Today grupperer efter dagen**: overskredet · forfalder i dag · rørt i dag · resten.
+      Én liste med alt i betød, at man skulle lede efter dagens arbejde.
+- [x] **»Log time« viser hvilket projekt en opgave hører til.** Feltet var en flad liste af
+      titler, og med opgaver fra flere projekter kunne man ikke se, hvad man valgte.
+      Nu: et projektfelt, der filtrerer, og opgaverne grupperet under deres projekt med
+      `<optgroup>` — native, så det virker på mobil, med tastatur og med skærmlæser uden en
+      linje JavaScript. Står man i et projekt, er det forudvalgt.
+- [x] **»No project« er et sted i menuen**, ikke kun en gruppe i Today. Opgaver uden projekt
+      er ikke et projekt med tomt navn — de har hverken ramme eller kunde — så de har fået
+      deres egen visning i stedet for projektsidens skabelon med fire tomme tal i toppen.
+- [x] **Fejl fundet i brug: `@navn` alene kunne ikke lade sig gøre.** Parseren spiste hele
+      teksten, og paletten svarede »there is no text to capture« — sandt og ubrugeligt.
+      Nu opretter `@nyt navn` projektet, og `@eksisterende` åbner det. En besked om, at man
+      ikke må, hører kun hjemme, hvor der ikke findes noget fornuftigt at gøre.
+- [x] **Afsnit kan foldes sammen.** »Everything else« og »Done« begynder sammenfoldede, når
+      listen er lang (over otte) — en lang liste under »det andet« er støj på en side, der
+      skal svare på, hvad man laver i dag. Er der tre punkter, er det ingen støj, og så skal
+      man ikke skulle klikke. Valget huskes, så snart brugeren selv har taget det, og en
+      sammenfoldet række kan ikke nås med piletasterne.
 
 ---
 

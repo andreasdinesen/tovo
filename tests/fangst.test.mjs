@@ -107,6 +107,13 @@ test('kommentarer haenger paa opgaven og kommer i raekkefoelge', async () => {
   await k.kald('POST', `/api/v1/tasks/${id}/comments`, { text: 'anden' });
   const r = await k.kald('GET', `/api/v1/tasks/${id}/comments`);
   assert.deepEqual(r.data.comments.map((c) => c.text), ['foerste', 'anden']);
+  // Tidsstemplet er det, visningen daterer kommentaren med. Uden det kan
+  // raekkefoelgen kun gaettes, og "hvornaar aftalte vi det?" kan ikke besvares.
+  for (const c of r.data.comments) {
+    assert.ok(c.createdAt > 0, 'en kommentar uden tidsstempel kan ikke dateres');
+    assert.ok(Math.abs(c.createdAt - Math.floor(Date.now() / 1000)) < 120, 'stemplet skal vaere nu');
+  }
+  assert.ok(r.data.comments[0].createdAt <= r.data.comments[1].createdAt);
 
   const tom = await k.kald('POST', `/api/v1/tasks/${id}/comments`, { text: '  ' });
   assert.equal(tom.status, 400);

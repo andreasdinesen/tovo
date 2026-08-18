@@ -1897,3 +1897,94 @@ table.rapporttabel th.num, table.rapporttabel td.num { text-align: right; font-v
 /* I sidebaren er der ikke plads til ordet - ikonet baerer betydningen. */
 .itimerhost .stoptekst { display: none; }
 .itimerhost .btn { padding: 6px 8px; }
+
+/* Kommentarer: tidspunktet foerst, saa teksten. Tidspunktet har fast bredde,
+   saa teksterne flugter - en kolonne, der hopper, er svaerere at skimme. */
+.kommentarer li { align-items: flex-start; gap: 12px; }
+.kommentar-tid {
+  flex: none; min-width: 92px; text-transform: none; letter-spacing: 0;
+  font-size: 12px; padding-top: 1px;
+}
+.kommentar-tekst { flex: 1; min-width: 0; }
+
+@media (max-width: 900px) {
+  /* Paa en telefon er 92 px til et klokkeslaet for meget - saa staar
+     tidspunktet over teksten i stedet. */
+  .kommentarer li { flex-direction: column; gap: 2px; }
+  .kommentar-tid { min-width: 0; }
+}
+
+/* ------------------------------------------------------- ugekalender */
+
+/* Kalenderen er bredere end en tekstside - den skal have hele bredden. */
+.page.kalenderside { max-width: 1100px; }
+
+.kal { border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; background: var(--card); }
+
+.kal-hoved { display: grid; grid-template-columns: 56px repeat(7, 1fr); border-bottom: 1px solid var(--border); }
+.kal-hjoerne { border-right: 1px solid var(--border-soft); }
+.kal-dag { padding: 8px 6px; text-align: center; border-right: 1px solid var(--border-soft); }
+.kal-dag:last-child { border-right: 0; }
+.kal-dag.idag { background: var(--accent-soft); }
+.kal-dagnavn { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.kal-dagnavn span { display: block; font-size: 17px; letter-spacing: 0; color: var(--text); font-weight: 600; }
+.kal-dagsum { text-transform: none; letter-spacing: 0; font-size: 12px; }
+
+.kal-krop { display: grid; grid-template-columns: 56px repeat(7, 1fr); position: relative; }
+.kal-timer { border-right: 1px solid var(--border-soft); }
+.kal-time { height: var(--timepx); position: relative; }
+/* Klokkeslaettet sidder PAA stregen, ikke i feltet under den. */
+.kal-time span {
+  position: absolute; top: -7px; right: 6px; font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.kal-soejle { position: relative; border-right: 1px solid var(--border-soft); touch-action: none; }
+.kal-soejle:last-child { border-right: 0; }
+.kal-soejle.idag { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+.kal-slot { height: var(--timepx); border-bottom: 1px solid var(--border-soft); }
+.kal-soejle:hover .kal-slot { border-bottom-color: var(--border); }
+
+.kal-blok {
+  position: absolute; overflow: hidden; text-align: left; cursor: pointer;
+  padding: 3px 6px; border: 0; border-left: 3px solid var(--accent);
+  border-radius: 5px; background: var(--accent-soft); color: var(--text);
+  font: inherit; font-size: 12px; line-height: 1.25;
+}
+.kal-blok:hover { filter: brightness(1.06); }
+.kal-blok-titel { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kal-blok-sub { display: block; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Den koerende post har ingen slutning endnu - stiplet, saa den ikke ligner
+   en faerdig registrering. */
+.kal-blok.koerer { border-left-style: dashed; border-left-color: var(--text); }
+
+/* Markeringen under et traek. Den skriver selv, hvad den bliver til. */
+.kal-mark {
+  position: absolute; left: 2px; right: 2px; border-radius: 5px;
+  background: var(--accent); opacity: .35; pointer-events: none;
+  font-size: 11px; color: var(--text); padding: 2px 4px;
+}
+
+@media (max-width: 900px) {
+  /* Syv dage kan ikke vaere paa en telefon uden at blive streger. Gitteret
+     faar sin egen vandrette scroll - og KUN det, saa siden ikke kan rulle
+     sidelaens (§4). */
+  .kal { overflow-x: auto; }
+  .kal-hoved, .kal-krop { min-width: 680px; }
+}
+
+/* "No project" er ikke et projekt - prikken er hul, saa det kan ses i
+   menuen uden at laese. */
+.nav-prik.tom { background: none; border: 1.5px solid var(--muted); opacity: .7; }
+.projectcard.uden h2 { color: var(--muted); }
+
+/* Foldbare afsnit. Overskriften ER knappen - der er ikke noget andet at
+   trykke paa i en overskrift, saa et separat maal ville kun vaere i vejen. */
+.gruppefold {
+  display: inline-flex; align-items: center; gap: 8px;
+  border: 0; background: none; padding: 0; cursor: pointer;
+  color: inherit; font: inherit; font-size: inherit; font-weight: inherit;
+}
+.gruppefold svg { color: var(--muted); transition: transform .14s; }
+.gruppefold.on svg { transform: rotate(90deg); }
+.gruppefold:hover svg { color: var(--text); }

@@ -5,12 +5,17 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 2;
+const APP_VERSION = 3;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
    overlay (RUNE-ERFARINGER §4). */
 const SMAL_SKAERM = 900;
+
+/* Opgaver uden projekt er ikke et projekt med tomt navn - de er deres egen
+   plads. Id'et er en KONSTANT og ikke en tom streng, saa det aldrig kan
+   forveksles med "intet valgt". */
+const INTET_PROJEKT = '__uden';
 const smalSkaerm = () => window.matchMedia(`(max-width: ${SMAL_SKAERM}px)`).matches;
 
 const state = {
@@ -20,6 +25,7 @@ const state = {
   today: '',
   settings: {},
   projects: [],
+  unassigned: 0,
   tags: [],
   items: [],
   counts: {},
@@ -71,6 +77,36 @@ function linkify(tekst) {
     return `${foer}<a href="${ren}" target="_blank" rel="noopener noreferrer">${vis}</a>${hale ? hale[0] : ''}`;
   });
   return ud;
+}
+
+/**
+ * Et tidsstempel, som et menneske laeser det.
+ *
+ * "today 14:32" · "yesterday 09:05" · "18 Aug 14:32" · "18 Aug 2025 14:32".
+ * Aaret skrives kun, naar det ikke er i aar - ellers stjaeler det plads fra
+ * det, man faktisk kigger efter.
+ */
+/** Date -> YYYY-MM-DD i LOKAL tid. Aldrig toISOString - den er UTC og
+    flytter datoen for alle mellem midnat og to om natten. */
+function isoDato(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function visTidspunkt(unix) {
+  if (!unix) return '';
+  const d = new Date(Number(unix) * 1000);
+  const kl = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (iso === state.today) return `today ${kl}`;
+  const igaar = new Date();
+  igaar.setDate(igaar.getDate() - 1);
+  const igaarIso = `${igaar.getFullYear()}-${String(igaar.getMonth() + 1).padStart(2, '0')}-${String(igaar.getDate()).padStart(2, '0')}`;
+  if (iso === igaarIso) return `yesterday ${kl}`;
+  const iAar = d.getFullYear() === new Date().getFullYear();
+  const dato = d.toLocaleDateString('en-GB', iAar
+    ? { day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${dato} ${kl}`;
 }
 
 async function api(method, path, body) {
@@ -188,6 +224,7 @@ const ICONS = {
   pin: '<path d="M9 3.5h6l-1 5 3 3.5H7l3-3.5z"/><path d="M12 12v8.5"/>',
   out: '<path d="M14.5 4.5H18a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-3.5"/><path d="M4.5 12h10M11 8.5l3.5 3.5-3.5 3.5"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
+  kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
 };
 
 function icon(name, size = 18) {
@@ -200,6 +237,7 @@ function icon(name, size = 18) {
 // Raekkefoelgen her er ogsaa sidebarens.
 const VIEWS = [
   { id: 'today', label: 'Today', icon: 'today', group: 1 },
+  { id: 'week', label: 'Week', icon: 'kalender', group: 1 },
   { id: 'projects', label: 'Projects', icon: 'projects', group: 1 },
   { id: 'report', label: 'Report', icon: 'report', group: 2 },
   // group: 0 = staar IKKE i navigationen. Settings naas fra menuen paa
@@ -209,10 +247,11 @@ const VIEWS = [
 ];
 
 const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
-const BUND = ['today', 'projects', 'report'];
+const BUND = ['today', 'week', 'projects', 'report'];
 
 const BESKRIVELSER = {
   today: 'What you have registered today, and what is running right now.',
+  week: 'The week as a grid — drag in it to log time.',
   projects: 'Estimate, budget and hours spent — per project.',
   report: 'Hours per project and task for a week you choose.',
   settings: 'Appearance, account and access.',
@@ -385,7 +424,11 @@ function navHtml() {
       ${aabne && state.projects.length ? `<div class="nav-under">${state.projects.map((p) => `
         <button class="nav-item nav-sub" data-projekt="${esc(p.id)}"
           ${state.view === 'projects' && state.openProject === p.id ? 'aria-current="page"' : ''}>
-          <span class="nav-prik"></span><span>${esc(p.name)}</span></button>`).join('')}</div>` : ''}`;
+          <span class="nav-prik"></span><span>${esc(p.name)}</span></button>`).join('')}
+        ${state.unassigned ? `<button class="nav-item nav-sub" data-projekt="${INTET_PROJEKT}"
+          ${state.view === 'projects' && state.openProject === INTET_PROJEKT ? 'aria-current="page"' : ''}>
+          <span class="nav-prik tom"></span><span>No project</span>
+          <span class="nav-count">${state.unassigned}</span></button>` : ''}</div>` : ''}`;
   }).join('')}</nav>`).join('');
 }
 
@@ -579,6 +622,7 @@ async function hentState() {
     state.settings = d.settings || {};
     state.projects = d.projects || [];
     state.tags = d.tags || [];
+    state.unassigned = d.unassigned || 0;
     state.counts = d.counts || {};
     state.todayMinutes = d.todayMinutes || 0;
     // Den koerende timer foelger med hvert state-kald, saa bjaelken er rigtig
@@ -682,6 +726,7 @@ async function tegnSide() {
   }
   if (state.view === 'today') { await tegnIDag(); return; }
   if (state.view === 'projects') { await tegnProjekter(); return; }
+  if (state.view === 'week') { await tegnKalender(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>

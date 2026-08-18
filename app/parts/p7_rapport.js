@@ -19,10 +19,6 @@ function ugeMandag(iso) {
   return isoDato(d);
 }
 
-function isoDato(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function flytUger(iso, n) {
   const [aa, mm, dd] = iso.split('-').map(Number);
   return isoDato(new Date(aa, mm - 1, dd + n * 7));

@@ -164,11 +164,27 @@ function byggRaekker() {
   if (q) {
     const t = omniState.tolket;
     const titel = (t && t.title) || q;
-    raekker.push({
-      type: 'fangst',
-      titel,
-      under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
-    });
+    const kunProjekt = t && !t.title && t.project;
+
+    /*
+     * "@tovo" alene har ingen titel tilbage - parseren spiste det hele.
+     * Foer gav det "there is no text to capture", som er sandt og ubrugeligt:
+     * det, brugeren mente, var aabenlyst at oprette eller aabne PROJEKTET.
+     * En besked om, at man ikke maa, hoerer kun hjemme, hvor der ikke findes
+     * noget fornuftigt at goere.
+     */
+    if (kunProjekt) {
+      const findes = (state.projects || []).find((p) => p.name.toLowerCase() === t.project.toLowerCase());
+      if (findes) raekker.push({ type: 'goto', mode: '/', id: findes.id, titel: findes.name, under: 'OPEN PROJECT' });
+      else raekker.push({ type: 'nyt', navn: t.project });
+    } else {
+      raekker.push({
+        type: 'fangst',
+        titel,
+        under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
+      });
+    }
+
     // Skriver man et projektnavn, der ligner et, der findes, saa vis det -
     // FOER resultaterne, fordi det er en rettelse og ikke et opslag.
     if (t && t.project) {
@@ -307,10 +323,13 @@ async function aktiver() {
     return;
   }
   if (raekke.type === 'nyt') {
-    const p = await api('POST', '/api/v1/items', { kind: 'project', name: raekke.navn, sections: [] });
-    luk();
-    await genindlaes();
-    gaaTil('projects', { project: p.item.id });
+    try {
+      const p = await api('POST', '/api/v1/items', { kind: 'project', name: raekke.navn, sections: [] });
+      luk();
+      await genindlaes();
+      gaaTil('projects', { project: p.item.id });
+      toast(`Project “${p.item.name}” created.`);
+    } catch (ex) { toast(ex.message); }
     return;
   }
   await fangstNu();

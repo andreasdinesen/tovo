@@ -233,6 +233,18 @@
     }
 
     /**
+     * Forbruget paa opgaver UDEN projekt.
+     *
+     * Ad hoc-arbejde er ikke et projekt med et tomt navn - det er sin egen
+     * kategori, og den skal kunne summeres for sig. Ellers kan man ikke
+     * svare paa "hvor meget gik der til smaating".
+     */
+    function forbrugUdenProjekt(nu) {
+      const uden = new Set(items('task').filter((t) => !t.projectId).map((t) => t.id));
+      return sum(entries().filter((e) => uden.has(e.taskId)), nu);
+    }
+
+    /**
      * De TRE niveauer, et projekt skal kunne svare paa (fase 4):
      * summen af opgaveestimater, den manuelle projektramme, og det forbrugte.
      *
@@ -376,7 +388,7 @@
     }
 
     return {
-      varighed, forbrugPaaOpgave, forbrugPaaProjekt, rollupProjekt,
+      varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
       sumPeriode, sumPrDag, ugerapport, afrunding,
     };
   }
@@ -1335,12 +1347,17 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 2;
+const APP_VERSION = 3;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
    overlay (RUNE-ERFARINGER §4). */
 const SMAL_SKAERM = 900;
+
+/* Opgaver uden projekt er ikke et projekt med tomt navn - de er deres egen
+   plads. Id'et er en KONSTANT og ikke en tom streng, saa det aldrig kan
+   forveksles med "intet valgt". */
+const INTET_PROJEKT = '__uden';
 const smalSkaerm = () => window.matchMedia(`(max-width: ${SMAL_SKAERM}px)`).matches;
 
 const state = {
@@ -1350,6 +1367,7 @@ const state = {
   today: '',
   settings: {},
   projects: [],
+  unassigned: 0,
   tags: [],
   items: [],
   counts: {},
@@ -1401,6 +1419,36 @@ function linkify(tekst) {
     return `${foer}<a href="${ren}" target="_blank" rel="noopener noreferrer">${vis}</a>${hale ? hale[0] : ''}`;
   });
   return ud;
+}
+
+/**
+ * Et tidsstempel, som et menneske laeser det.
+ *
+ * "today 14:32" · "yesterday 09:05" · "18 Aug 14:32" · "18 Aug 2025 14:32".
+ * Aaret skrives kun, naar det ikke er i aar - ellers stjaeler det plads fra
+ * det, man faktisk kigger efter.
+ */
+/** Date -> YYYY-MM-DD i LOKAL tid. Aldrig toISOString - den er UTC og
+    flytter datoen for alle mellem midnat og to om natten. */
+function isoDato(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function visTidspunkt(unix) {
+  if (!unix) return '';
+  const d = new Date(Number(unix) * 1000);
+  const kl = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (iso === state.today) return `today ${kl}`;
+  const igaar = new Date();
+  igaar.setDate(igaar.getDate() - 1);
+  const igaarIso = `${igaar.getFullYear()}-${String(igaar.getMonth() + 1).padStart(2, '0')}-${String(igaar.getDate()).padStart(2, '0')}`;
+  if (iso === igaarIso) return `yesterday ${kl}`;
+  const iAar = d.getFullYear() === new Date().getFullYear();
+  const dato = d.toLocaleDateString('en-GB', iAar
+    ? { day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: 'numeric' });
+  return `${dato} ${kl}`;
 }
 
 async function api(method, path, body) {
@@ -1518,6 +1566,7 @@ const ICONS = {
   pin: '<path d="M9 3.5h6l-1 5 3 3.5H7l3-3.5z"/><path d="M12 12v8.5"/>',
   out: '<path d="M14.5 4.5H18a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-3.5"/><path d="M4.5 12h10M11 8.5l3.5 3.5-3.5 3.5"/>',
   chevron: '<path d="M9 6l6 6-6 6"/>',
+  kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
 };
 
 function icon(name, size = 18) {
@@ -1530,6 +1579,7 @@ function icon(name, size = 18) {
 // Raekkefoelgen her er ogsaa sidebarens.
 const VIEWS = [
   { id: 'today', label: 'Today', icon: 'today', group: 1 },
+  { id: 'week', label: 'Week', icon: 'kalender', group: 1 },
   { id: 'projects', label: 'Projects', icon: 'projects', group: 1 },
   { id: 'report', label: 'Report', icon: 'report', group: 2 },
   // group: 0 = staar IKKE i navigationen. Settings naas fra menuen paa
@@ -1539,10 +1589,11 @@ const VIEWS = [
 ];
 
 const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
-const BUND = ['today', 'projects', 'report'];
+const BUND = ['today', 'week', 'projects', 'report'];
 
 const BESKRIVELSER = {
   today: 'What you have registered today, and what is running right now.',
+  week: 'The week as a grid — drag in it to log time.',
   projects: 'Estimate, budget and hours spent — per project.',
   report: 'Hours per project and task for a week you choose.',
   settings: 'Appearance, account and access.',
@@ -1715,7 +1766,11 @@ function navHtml() {
       ${aabne && state.projects.length ? `<div class="nav-under">${state.projects.map((p) => `
         <button class="nav-item nav-sub" data-projekt="${esc(p.id)}"
           ${state.view === 'projects' && state.openProject === p.id ? 'aria-current="page"' : ''}>
-          <span class="nav-prik"></span><span>${esc(p.name)}</span></button>`).join('')}</div>` : ''}`;
+          <span class="nav-prik"></span><span>${esc(p.name)}</span></button>`).join('')}
+        ${state.unassigned ? `<button class="nav-item nav-sub" data-projekt="${INTET_PROJEKT}"
+          ${state.view === 'projects' && state.openProject === INTET_PROJEKT ? 'aria-current="page"' : ''}>
+          <span class="nav-prik tom"></span><span>No project</span>
+          <span class="nav-count">${state.unassigned}</span></button>` : ''}</div>` : ''}`;
   }).join('')}</nav>`).join('');
 }
 
@@ -1909,6 +1964,7 @@ async function hentState() {
     state.settings = d.settings || {};
     state.projects = d.projects || [];
     state.tags = d.tags || [];
+    state.unassigned = d.unassigned || 0;
     state.counts = d.counts || {};
     state.todayMinutes = d.todayMinutes || 0;
     // Den koerende timer foelger med hvert state-kald, saa bjaelken er rigtig
@@ -2012,6 +2068,7 @@ async function tegnSide() {
   }
   if (state.view === 'today') { await tegnIDag(); return; }
   if (state.view === 'projects') { await tegnProjekter(); return; }
+  if (state.view === 'week') { await tegnKalender(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>
@@ -2312,11 +2369,27 @@ function byggRaekker() {
   if (q) {
     const t = omniState.tolket;
     const titel = (t && t.title) || q;
-    raekker.push({
-      type: 'fangst',
-      titel,
-      under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
-    });
+    const kunProjekt = t && !t.title && t.project;
+
+    /*
+     * "@tovo" alene har ingen titel tilbage - parseren spiste det hele.
+     * Foer gav det "there is no text to capture", som er sandt og ubrugeligt:
+     * det, brugeren mente, var aabenlyst at oprette eller aabne PROJEKTET.
+     * En besked om, at man ikke maa, hoerer kun hjemme, hvor der ikke findes
+     * noget fornuftigt at goere.
+     */
+    if (kunProjekt) {
+      const findes = (state.projects || []).find((p) => p.name.toLowerCase() === t.project.toLowerCase());
+      if (findes) raekker.push({ type: 'goto', mode: '/', id: findes.id, titel: findes.name, under: 'OPEN PROJECT' });
+      else raekker.push({ type: 'nyt', navn: t.project });
+    } else {
+      raekker.push({
+        type: 'fangst',
+        titel,
+        under: k ? `NEW TASK IN ${k.name.toUpperCase()}` : 'NEW TASK',
+      });
+    }
+
     // Skriver man et projektnavn, der ligner et, der findes, saa vis det -
     // FOER resultaterne, fordi det er en rettelse og ikke et opslag.
     if (t && t.project) {
@@ -2455,10 +2528,13 @@ async function aktiver() {
     return;
   }
   if (raekke.type === 'nyt') {
-    const p = await api('POST', '/api/v1/items', { kind: 'project', name: raekke.navn, sections: [] });
-    luk();
-    await genindlaes();
-    gaaTil('projects', { project: p.item.id });
+    try {
+      const p = await api('POST', '/api/v1/items', { kind: 'project', name: raekke.navn, sections: [] });
+      luk();
+      await genindlaes();
+      gaaTil('projects', { project: p.item.id });
+      toast(`Project “${p.item.name}” created.`);
+    } catch (ex) { toast(ex.message); }
     return;
   }
   await fangstNu();
@@ -2717,6 +2793,12 @@ function opgaveRaekke(it, opt) {
 
 /** Binder en liste af opgaverakker. Kaldes ÉT sted pr. optegning. */
 function bindOpgaveListe(host) {
+  host.querySelectorAll('[data-fold]').forEach((el) => {
+    el.addEventListener('click', () => {
+      saetAfsnitAabent(el.dataset.fold, el.getAttribute('aria-expanded') !== 'true');
+      tegnSide();
+    });
+  });
   host.querySelectorAll('[data-start]').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2733,9 +2815,22 @@ function bindOpgaveListe(host) {
   });
   host.querySelectorAll('[data-row]').forEach((el) => {
     el.addEventListener('click', () => aabnOpgave(el.dataset.id));
-    // Enter aabner den raekke, der har fokus. Piletasterne foerte hertil.
+    // Piletasterne foerte hertil; herfra er der tre ting at goere.
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); aabnOpgave(el.dataset.id); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Cmd/Ctrl+Enter starter (eller stopper) timeren paa den raekke, der
+        // har fokus - samme genvej som i paletten. En genvej, der kun virker
+        // ét sted, er en genvej, man ikke laerer.
+        if (e.metaKey || e.ctrlKey) {
+          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.id;
+          if (koerer) stopTimer();
+          else startTimerPaa(el.dataset.id);
+          return;
+        }
+        aabnOpgave(el.dataset.id);
+        return;
+      }
       if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.id); }
     });
   });
@@ -2764,10 +2859,24 @@ async function tegnIDag() {
   ]);
   state.items = d.items;
   const aabne = d.items.filter((t) => t.status !== 'done');
-  const forfalder = aabne.filter((t) => t.dueDate && t.dueDate <= state.today);
-  const resten = aabne.filter((t) => !forfalder.includes(t));
+
+  /*
+   * Dagens raekkefoelge er et svar paa "hvad skal jeg lave nu".
+   *
+   * Overskredet foerst, saa det der forfalder i dag, saa det man allerede
+   * har roert i dag - og foerst derefter resten. Én liste med alt i ville
+   * betyde, at man skal LEDE efter dagens arbejde, og saa er visningen
+   * ingen hjaelp.
+   */
+  const overskredet = aabne.filter((t) => t.dueDate && t.dueDate < state.today);
+  const iDag = aabne.filter((t) => t.dueDate === state.today);
+  const roertIDag = new Set(p.entries.map((e) => e.taskId));
+  const arbejdet = aabne.filter((t) => roertIDag.has(t.id)
+    && !overskredet.includes(t) && !iDag.includes(t));
+  const resten = aabne.filter((t) => !overskredet.includes(t) && !iDag.includes(t)
+    && !arbejdet.includes(t));
   const faerdige = d.items.filter((t) => t.status === 'done' && t.completedAt
-    && new Date(t.completedAt * 1000).toISOString().slice(0, 10) === state.today);
+    && isoDato(new Date(t.completedAt * 1000)) === state.today);
 
   host.innerHTML = `<div class="page">
     <div class="row" style="justify-content:space-between;align-items:baseline">
@@ -2784,28 +2893,67 @@ async function tegnIDag() {
     </div>
 
     <div data-keynav>
-      ${afsnit('Due or overdue', forfalder)}
-      ${afsnit('Everything else', resten)}
-      ${faerdige.length ? afsnit('Done today', faerdige) : ''}
+      ${afsnit('Overdue', overskredet)}
+      ${afsnit('Due today', iDag)}
+      ${afsnit('Worked on today', arbejdet)}
+      ${afsnit('Everything else', resten, { foldbar: true, noegle: 'today-resten' })}
+      ${faerdige.length ? afsnit('Done today', faerdige, { foldbar: true, noegle: 'today-faerdige' }) : ''}
     </div>
     ${!d.items.length ? '<div class="empty"><p class="empty-title">Nothing here yet</p>'
       + '<p>Type in the field above to add your first task.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · Space completes · Esc leaves
-      · ⌘⇧M logs time by hand</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
+      · Space completes · Esc leaves · ⌘⇧M logs time by hand</p>
   </div>`;
   bindOpgaveListe(host);
   bindPoster(host, d.items);
   document.getElementById('logManual').addEventListener('click', () => aabnManuel());
 }
 
+/**
+ * Et afsnit med opgaver.
+ *
+ * @param {object} [opt] {forbrug, foldbar, noegle}
+ *
+ * Et FOLDBART afsnit begynder sammenfoldet, naar listen er lang (over otte).
+ * En lang liste under "det andet" er stoej paa en side, der skal svare paa
+ * hvad man laver I DAG - men et afsnit med tre punkter er ingen stoej, og
+ * saa skal man ikke skulle klikke for at se dem. Valget huskes, saa snart
+ * brugeren selv har taget det.
+ */
 function afsnit(titel, liste, opt) {
+  const o = opt || {};
   if (!liste.length) return '';
-  return `<h2 class="group">${esc(titel)}<span class="group-count">${liste.length}</span></h2>
-    ${liste.map((it) => opgaveRaekke(it, opt)).join('')}`;
+  if (!o.foldbar) {
+    return `<h2 class="group">${esc(titel)}<span class="group-count">${liste.length}</span></h2>
+      ${liste.map((it) => opgaveRaekke(it, o)).join('')}`;
+  }
+  const aabent = afsnitAabent(o.noegle, liste.length <= 8);
+  return `<h2 class="group">
+      <button class="gruppefold${aabent ? ' on' : ''}" data-fold="${esc(o.noegle)}"
+        aria-expanded="${aabent ? 'true' : 'false'}">
+        ${icon('chevron', 13)}<span>${esc(titel)}</span>
+        <span class="group-count">${liste.length}</span>
+      </button>
+    </h2>
+    ${aabent ? liste.map((it) => opgaveRaekke(it, o)).join('') : ''}`;
+}
+
+function afsnitAabent(noegle, standard) {
+  try {
+    const gemt = localStorage.getItem(`tovo_fold_${noegle}`);
+    if (gemt === '1') return true;
+    if (gemt === '0') return false;
+  } catch { /* privat tilstand */ }
+  return standard;
+}
+
+function saetAfsnitAabent(noegle, aabent) {
+  try { localStorage.setItem(`tovo_fold_${noegle}`, aabent ? '1' : '0'); } catch { /* privat */ }
 }
 
 async function tegnProjekter() {
   const host = document.getElementById('pageHost');
+  if (state.openProject === INTET_PROJEKT) { await tegnUdenProjekt(); return; }
   if (state.openProject) { await tegnProjekt(state.openProject); return; }
   const d = await api('GET', '/api/v1/items?kind=task');
   state.items = d.items;
@@ -2823,13 +2971,52 @@ async function tegnProjekter() {
         <h2>${esc(p.name)}</h2>
         <div class="meta">${esc(p.customer || 'no customer')} · ${aabne} open · ${opgaver.length} total</div>
       </button>`;
-    }).join('')}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
+    }).join('')}${(() => {
+      const uden = d.items.filter((t) => !t.projectId);
+      if (!uden.length) return '';
+      return `<button class="card projectcard uden" data-projekt="${INTET_PROJEKT}">
+        <h2>No project</h2>
+        <div class="meta">${uden.filter((t) => t.status !== 'done').length} open · ${uden.length} total</div>
+      </button>`;
+    })()}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
   document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
   host.querySelectorAll('[data-projekt]').forEach((el) => {
     el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
   });
+}
+
+/**
+ * Opgaver uden projekt.
+ *
+ * De er ikke "et projekt med tomt navn": der er ingen ramme, ingen kunde og
+ * intet at rulle op. Derfor sin egen visning frem for at presse dem ind i
+ * projektsidens skabelon med fire tomme tal i toppen.
+ */
+async function tegnUdenProjekt() {
+  const host = document.getElementById('pageHost');
+  const d = await api('GET', '/api/v1/no-project');
+  state.items = d.tasks;
+  const aabne = d.tasks.filter((t) => t.status !== 'done');
+  const faerdige = d.tasks.filter((t) => t.status === 'done');
+
+  host.innerHTML = `<div class="page">
+    <button class="linkbtn" id="tilbage">← Projects</button>
+    <h1>No project</h1>
+    <p class="lead">Ad hoc — ${esc(tovoBeregn.formatVarighed(d.minutes))} logged on these.
+      Give one a project with <code>@name</code> in the field above.</p>
+    <div data-keynav>
+      ${afsnit('Open', aabne, { forbrug: d.spent })}
+      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent, foldbar: true, noegle: 'uden-faerdige' }) : ''}
+    </div>
+    ${!d.tasks.length ? '<div class="empty"><p class="empty-title">Nothing here</p>'
+      + '<p>Every task belongs to a project.</p></div>' : ''}
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
+      · Space completes · Esc leaves</p>
+  </div>`;
+  document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  bindOpgaveListe(host);
 }
 
 async function tegnProjekt(id) {
@@ -2884,10 +3071,12 @@ async function tegnProjekt(id) {
     <div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
-      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent }) : ''}
+      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent, foldbar: true, noegle: `projekt-faerdige-${p.id}` }) : ''}
     </div>
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">No tasks in this project</p>'
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
+      · Space completes · Esc leaves</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
@@ -2968,8 +3157,11 @@ async function aabnOpgave(id) {
       </div>
 
       <h2 style="margin-top:18px">Comments</h2>
-      <ul class="plain" id="dComments">${kommentarer.map((c) => `
-        <li><span>${linkify(c.text)}</span></li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
+      <ul class="plain kommentarer" id="dComments">${kommentarer.map((c) => `
+        <li>
+          <span class="kommentar-tid meta" title="${esc(new Date((c.createdAt || 0) * 1000).toLocaleString('en-GB'))}">${esc(visTidspunkt(c.createdAt))}</span>
+          <span class="kommentar-tekst">${linkify(c.text)}</span>
+        </li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
       <div class="row">
         <input class="input" id="dComment" placeholder="Write a comment…" style="flex:1">
         <button class="btn" id="dCommentAdd">Add</button>
@@ -3260,29 +3452,57 @@ async function stopTimer() {
  * Egen knap, egen genvej, og et felt der forstaar begge maader at huske en
  * time paa: et interval (9-11.30) eller en varighed (1,5t).
  */
-function aabnManuel(forvalgtOpgave) {
+/**
+ * @param {string} [forvalgtOpgave] opgaven, feltet skal staa paa
+ * @param {object} [opt] {date, text} til at udfylde forud (kalenderen), eller
+ *   {entry} for at RETTE en post, der allerede findes.
+ */
+function aabnManuel(forvalgtOpgave, opt) {
+  const o = opt || {};
+  const post = o.entry || null;
   const host = document.createElement('div');
   host.className = 'modal';
-  const opgaver = (state.items || []).filter((t) => t.status !== 'done');
+  // Ved redigering skal opgaven kunne vaere en, der er afsluttet - ellers
+  // kan man ikke rette en tidspost paa noget, man lige har lukket.
+  const opgaver = (state.items || []).filter((t) => t.status !== 'done'
+    || (post && t.id === post.taskId) || t.id === forvalgtOpgave);
+  const start = post ? new Date(post.startedAt * 1000) : null;
+  const slut = post && post.stoppedAt ? new Date(post.stoppedAt * 1000) : null;
+  const kl = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const forvalgtDato = post ? isoDato(start) : (o.date || state.today);
+  // Staar man i et projekt, er det dét, man registrerer paa. Ellers foelger
+  // projektet den opgave, der allerede er valgt.
+  const forvalgtOpg = opgaver.find((t) => t.id === (post ? post.taskId : forvalgtOpgave));
+  const forvalgtProjekt = forvalgtOpg ? (forvalgtOpg.projectId || '__ingen')
+    : (state.openProject || '');
+  const forvalgtTekst = post
+    ? (slut ? `${kl(start)}-${kl(slut)}` : '')
+    : (o.text || '');
+  if (post) forvalgtOpgave = post.taskId;
+
   host.innerHTML = `
-    <div class="modal-card" role="dialog" aria-label="Log time">
-      <h2>Log time</h2>
-      <p class="meta">On any date — the timer is not the only way in.</p>
+    <div class="modal-card" role="dialog" aria-label="${post ? 'Edit time' : 'Log time'}">
+      <h2>${post ? 'Edit time' : 'Log time'}</h2>
+      <p class="meta">${post
+    ? `Logged by ${esc(post.source)}${post.stoppedAt ? '' : ' — this one is still running'}.`
+    : 'On any date — the timer is not the only way in.'}</p>
+      <label class="field"><span>Project</span>
+        <select class="input" id="mProject">${projektValg(opgaver, forvalgtProjekt)}</select></label>
       <label class="field"><span>Task</span>
-        <select class="input" id="mTask">
-          ${opgaver.map((t) => `<option value="${esc(t.id)}"${t.id === forvalgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`).join('')}
-        </select></label>
+        <select class="input" id="mTask">${opgaveValg(opgaver, forvalgtProjekt, forvalgtOpgave)}</select></label>
       <div class="row">
         <label class="field" style="flex:1"><span>Date</span>
-          <input class="input" id="mDate" type="date" value="${esc(state.today)}"></label>
+          <input class="input" id="mDate" type="date" value="${esc(forvalgtDato)}"></label>
         <label class="field" style="flex:1"><span>Time</span>
-          <input class="input" id="mText" placeholder="9-11.30 · 1,5t · 90m" autocomplete="off"></label>
+          <input class="input" id="mText" placeholder="9-11.30 · 1,5t · 90m"
+            value="${esc(forvalgtTekst)}" autocomplete="off"></label>
       </div>
       <label class="field"><span>Note (optional)</span>
-        <input class="input" id="mNote" placeholder="What was it?"></label>
+        <input class="input" id="mNote" placeholder="What was it?" value="${esc(post ? post.note : '')}"></label>
       <div class="modal-foot">
-        <button class="btn primary" id="mSave">Log it</button>
+        <button class="btn primary" id="mSave">${post ? 'Save' : 'Log it'}</button>
         <button class="btn" id="mClose">Cancel</button>
+        ${post ? '<span style="flex:1"></span><button class="btn danger" id="mDelete">Delete</button>' : ''}
       </div>
     </div>`;
   document.body.appendChild(host);
@@ -3292,26 +3512,109 @@ function aabnManuel(forvalgtOpgave) {
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('mClose').addEventListener('click', luk);
 
+  // Projektet filtrerer opgavelisten. Med tredive opgaver paa tvaers af
+  // projekter er en flad liste ubrugelig - man kan ikke se, hvad man vaelger.
+  const projektFelt = document.getElementById('mProject');
+  projektFelt.addEventListener('change', () => {
+    const opgaveFelt = document.getElementById('mTask');
+    const valgt = opgaveFelt.value;
+    opgaveFelt.innerHTML = opgaveValg(opgaver, projektFelt.value, valgt);
+  });
+
   const gem = async () => {
     const taskId = document.getElementById('mTask').value;
     if (!taskId) { toast('Create a task first — time is always logged on something.'); return; }
+    const dato = document.getElementById('mDate').value;
+    const tekst = document.getElementById('mText').value;
     try {
-      await api('POST', '/api/v1/entries', {
-        taskId,
-        date: document.getElementById('mDate').value,
-        text: document.getElementById('mText').value,
-        note: document.getElementById('mNote').value,
-      });
+      if (post) {
+        // Tidsrummet tolkes af beregn.js - samme funktion som serveren
+        // bruger ved oprettelse. To tolkninger ville vaere to sandheder.
+        const tidsrum = tovoBeregn.parseTidsrum(tekst, dato);
+        if (!tidsrum) { toast(`I did not understand "${tekst}". Try 9-11.30, 1,5t or 90m.`); return; }
+        const startedAt = tidsrum.fra
+          ? tovoBeregn.tidspunkt(dato, tidsrum.fra)
+          : tovoBeregn.tidspunkt(dato, `${String(new Date(post.startedAt * 1000).getHours()).padStart(2, '0')}:${String(new Date(post.startedAt * 1000).getMinutes()).padStart(2, '0')}`);
+        await api('PATCH', `/api/v1/entries/${post.id}`, {
+          taskId,
+          startedAt,
+          stoppedAt: startedAt + tidsrum.minutter * 60,
+          note: document.getElementById('mNote').value,
+        });
+      } else {
+        await api('POST', '/api/v1/entries', {
+          taskId, date: dato, text: tekst, note: document.getElementById('mNote').value,
+        });
+      }
       luk();
       await genindlaes();
-      toast('Logged.');
+      toast(post ? 'Saved.' : 'Logged.');
     } catch (ex) { toast(ex.message); }
   };
+
+  const slet = document.getElementById('mDelete');
+  if (slet) {
+    slet.addEventListener('click', async () => {
+      try {
+        const d = await api('DELETE', `/api/v1/entries/${post.id}`);
+        luk();
+        await genindlaes();
+        toast('Entry deleted.', { label: 'Undo', run: async () => {
+          const p = d.deleted;
+          await api('POST', '/api/v1/entries', {
+            id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
+            note: p.note, source: p.source,
+          });
+          await genindlaes();
+        } });
+      } catch (ex) { toast(ex.message); }
+    });
+  }
   document.getElementById('mSave').addEventListener('click', gem);
   document.getElementById('mText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); gem(); }
   });
   document.getElementById('mText').focus();
+}
+
+/** Projekterne, der FAKTISK har opgaver at registrere paa - plus "alle". */
+function projektValg(opgaver, valgt) {
+  const medOpgaver = new Set(opgaver.map((t) => t.projectId || '__ingen'));
+  const dele = [`<option value=""${valgt === '' ? ' selected' : ''}>All projects</option>`];
+  for (const p of state.projects) {
+    if (!medOpgaver.has(p.id)) continue;
+    dele.push(`<option value="${esc(p.id)}"${valgt === p.id ? ' selected' : ''}>${esc(p.name)}</option>`);
+  }
+  if (medOpgaver.has('__ingen')) {
+    dele.push(`<option value="__ingen"${valgt === '__ingen' ? ' selected' : ''}>No project</option>`);
+  }
+  return dele.join('');
+}
+
+/**
+ * Opgaverne, grupperet under deres projekt.
+ *
+ * <optgroup> er den native maade at vise gruppen paa - den virker paa mobil,
+ * med tastatur og med skaermlaeser, uden en linje JavaScript. Er der valgt et
+ * projekt, vises kun dets opgaver, og saa er grupperingen overfloedig.
+ */
+function opgaveValg(opgaver, projektId, valgtOpgave) {
+  const iProjekt = (t) => (t.projectId || '__ingen');
+  const filtreret = projektId ? opgaver.filter((t) => iProjekt(t) === projektId) : opgaver;
+  const sorter = (a, b) => (a.position || 0) - (b.position || 0);
+  const punkt = (t) => `<option value="${esc(t.id)}"${t.id === valgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`;
+
+  if (!filtreret.length) return '<option value="">No tasks in this project</option>';
+  if (projektId) return filtreret.slice().sort(sorter).map(punkt).join('');
+
+  const grupper = [];
+  for (const p of state.projects) {
+    const dens = filtreret.filter((t) => t.projectId === p.id).sort(sorter);
+    if (dens.length) grupper.push(`<optgroup label="${esc(p.name)}">${dens.map(punkt).join('')}</optgroup>`);
+  }
+  const uden = filtreret.filter((t) => !t.projectId).sort(sorter);
+  if (uden.length) grupper.push(`<optgroup label="No project">${uden.map(punkt).join('')}</optgroup>`);
+  return grupper.join('');
 }
 
 /* Genvejen skal have en modifikator: bare bogstaver aabner soegefeltet, og
@@ -3800,10 +4103,6 @@ function ugeMandag(iso) {
   return isoDato(d);
 }
 
-function isoDato(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function flytUger(iso, n) {
   const [aa, mm, dd] = iso.split('-').map(Number);
   return isoDato(new Date(aa, mm - 1, dd + n * 7));
@@ -3962,4 +4261,241 @@ function rapportArkHtml(d) {
           <td class="num"><strong>${esc(f(p.minutter))}</strong></td></tr></tfoot>
       </table>`).join('')}
     <p class="pdate">${esc(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))}</p>`;
+}
+
+/* ---- p8_kalender.js ---- */
+'use strict';
+/* tovo - ugekalenderen.
+ *
+ * Ugen som et gitter: dage hen ad, timer ned ad, og tidsposterne tegnet som
+ * blokke dér, hvor de faktisk ligger. Det er den visning, der svarer paa
+ * "hvad gik ugen med" uden at man skal laese en liste - og hvor man kan
+ * TEGNE en registrering ind i et hul i stedet for at skrive den.
+ *
+ * Ingen udregninger her ud over gitterets geometri: minutter, summer og
+ * formatering kommer fra beregn.js.
+ */
+
+const KAL_TIME_PX = 46;          // hoejden paa én time i gitteret
+const KAL_SNAP = 15;             // minutter, alt snapper til
+const kalState = { fra: null, poster: [], traek: null };
+
+/* ------------------------------------------------------------ datoer */
+
+function kalUgeStart(iso) {
+  const [aa, mm, dd] = iso.split('-').map(Number);
+  const d = new Date(aa, mm - 1, dd);
+  const ugedag = d.getDay() === 0 ? 7 : d.getDay();
+  d.setDate(d.getDate() - (ugedag - 1));
+  return isoDato(d);
+}
+
+function kalDage(fra) {
+  const [aa, mm, dd] = fra.split('-').map(Number);
+  return [0, 1, 2, 3, 4, 5, 6].map((n) => {
+    const d = new Date(aa, mm - 1, dd + n);
+    return { iso: isoDato(d), dato: d };
+  });
+}
+
+/* Minutter siden midnat for et unix-tidspunkt, i LOKAL tid. */
+function minutPaaDagen(unix) {
+  const d = new Date(unix * 1000);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+/* ------------------------------------------------------------ tegning */
+
+async function tegnKalender() {
+  const host = document.getElementById('pageHost');
+  if (!kalState.fra) kalState.fra = kalUgeStart(state.today);
+  const dage = kalDage(kalState.fra);
+  const til = dage[6].iso;
+
+  host.innerHTML = '<div class="page"><h1>Week</h1><p class="lead skeleton">Laying out the week…</p></div>';
+  let d;
+  try {
+    d = await api('GET', `/api/v1/entries?from=${kalState.fra}&to=${til}`);
+  } catch (ex) { toast(ex.message); return; }
+  kalState.poster = d.entries;
+  if (!state.items.length) {
+    state.items = (await api('GET', '/api/v1/items?kind=task')).items;
+  }
+
+  // Gitterets hoejde faelger indholdet: normalt 7-18, men en post kl. 5 eller
+  // 22 maa aldrig ligge uden for det, man kan se.
+  let tidligst = 7;
+  let senest = 18;
+  for (const e of kalState.poster) {
+    tidligst = Math.min(tidligst, Math.floor(minutPaaDagen(e.startedAt) / 60));
+    const slut = e.stoppedAt ? minutPaaDagen(e.stoppedAt) : minutPaaDagen(Math.floor(Date.now() / 1000));
+    senest = Math.max(senest, Math.ceil(slut / 60));
+  }
+  tidligst = Math.max(0, tidligst);
+  senest = Math.min(24, Math.max(senest, tidligst + 6));
+
+  const timer = [];
+  for (let t = tidligst; t <= senest; t++) timer.push(t);
+  const f = tovoBeregn.formatVarighed;
+  const dagSum = (iso) => kalState.poster
+    .filter((e) => isoDato(new Date(e.startedAt * 1000)) === iso)
+    .reduce((n, e) => n + tovoBeregn.afrund(
+      Math.round(((e.stoppedAt || Math.floor(Date.now() / 1000)) - e.startedAt) / 60), d.rounding), 0);
+  const ugeSum = dage.reduce((n, dag) => n + dagSum(dag.iso), 0);
+
+  host.innerHTML = `<div class="page kalenderside">
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>Week</h1>
+      <span class="row" style="gap:8px">
+        <button class="btn" id="kalForrige">←</button>
+        <button class="btn" id="kalDenne">This week</button>
+        <button class="btn" id="kalNaeste">→</button>
+      </span>
+    </div>
+    <p class="lead">${esc(dage[0].iso)} – ${esc(til)} · <strong>${esc(f(ugeSum))}</strong> in total.
+      Drag in the grid to log time, or click a block to change it.</p>
+
+    <div class="kal" style="--timepx:${KAL_TIME_PX}px">
+      <div class="kal-hoved">
+        <div class="kal-hjoerne"></div>
+        ${dage.map((dag) => `<div class="kal-dag${dag.iso === state.today ? ' idag' : ''}">
+          <div class="kal-dagnavn">${dag.dato.toLocaleDateString('en-GB', { weekday: 'short' })}
+            <span>${dag.dato.getDate()}</span></div>
+          <div class="kal-dagsum meta">${esc(f(dagSum(dag.iso)))}</div>
+        </div>`).join('')}
+      </div>
+      <div class="kal-krop">
+        <div class="kal-timer">
+          ${timer.map((t) => `<div class="kal-time"><span>${String(t).padStart(2, '0')}:00</span></div>`).join('')}
+        </div>
+        ${dage.map((dag) => `<div class="kal-soejle${dag.iso === state.today ? ' idag' : ''}"
+            data-dag="${dag.iso}" data-fra="${tidligst}">
+          ${timer.map(() => '<div class="kal-slot"></div>').join('')}
+          ${blokkeFor(dag.iso, tidligst).join('')}
+        </div>`).join('')}
+      </div>
+    </div>
+    <p class="hintline meta">Drag in an empty column to add time · click a block to edit it
+      · ⌘⇧M opens the form instead</p>
+  </div>`;
+
+  bindKalender(tidligst);
+}
+
+/** Blokkene for én dag, med overlap lagt ved siden af hinanden. */
+function blokkeFor(iso, tidligst) {
+  const nu = Math.floor(Date.now() / 1000);
+  const dagens = kalState.poster
+    .filter((e) => isoDato(new Date(e.startedAt * 1000)) === iso)
+    .sort((a, b) => a.startedAt - b.startedAt);
+
+  // Overlappende poster deler bredden. Uden det ligger to samtidige
+  // registreringer oven i hinanden, og den nederste er usynlig.
+  const spor = [];
+  for (const e of dagens) {
+    const slut = e.stoppedAt || nu;
+    let i = spor.findIndex((s) => s.slut <= e.startedAt);
+    if (i < 0) { spor.push({ slut }); i = spor.length - 1; } else spor[i].slut = slut;
+    e._spor = i;
+  }
+  const antalSpor = Math.max(1, spor.length);
+
+  return dagens.map((e) => {
+    const opgave = state.items.find((t) => t.id === e.taskId);
+    const projekt = opgave ? state.projects.find((p) => p.id === opgave.projectId) : null;
+    const start = minutPaaDagen(e.startedAt);
+    const slutMin = e.stoppedAt ? minutPaaDagen(e.stoppedAt) : minutPaaDagen(nu);
+    const minutter = Math.max(10, slutMin - start);
+    const top = ((start - tidligst * 60) / 60) * KAL_TIME_PX;
+    const hoejde = (minutter / 60) * KAL_TIME_PX;
+    const bredde = 100 / antalSpor;
+    const koerer = !e.stoppedAt;
+    return `<button class="kal-blok${koerer ? ' koerer' : ''}" data-post="${esc(e.id)}"
+      style="top:${top}px;height:${Math.max(16, hoejde)}px;left:${e._spor * bredde}%;width:${bredde}%">
+      <span class="kal-blok-titel">${esc(opgave ? opgave.title : 'Deleted task')}</span>
+      <span class="kal-blok-sub">${esc(projekt ? projekt.name : 'no project')} · ${esc(tovoBeregn.formatVarighed(slutMin - start))}</span>
+    </button>`;
+  });
+}
+
+function bindKalender(tidligst) {
+  document.getElementById('kalForrige').addEventListener('click', () => flytUge(-1));
+  document.getElementById('kalNaeste').addEventListener('click', () => flytUge(1));
+  document.getElementById('kalDenne').addEventListener('click', () => {
+    kalState.fra = null;
+    tegnKalender();
+  });
+
+  document.querySelectorAll('.kal-blok').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const post = kalState.poster.find((p) => p.id === el.dataset.post);
+      if (post) aabnManuel(post.taskId, { entry: post });
+    });
+  });
+
+  /*
+   * Traek i en tom soejle = et tidsrum.
+   *
+   * Pointer-events frem for HTML5 drag & drop: DnD virker ikke paa touch
+   * (§4), mens pointer-events er de samme paa mus, pen og finger. Og der
+   * oprettes ingenting af traekket selv - det aabner formularen udfyldt, saa
+   * en fejlramt finger ikke lige har registreret en time.
+   */
+  document.querySelectorAll('.kal-soejle').forEach((soejle) => {
+    soejle.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.kal-blok')) return;
+      const r = soejle.getBoundingClientRect();
+      kalState.traek = { soejle, fraY: e.clientY - r.top, tilY: e.clientY - r.top, iso: soejle.dataset.dag };
+      soejle.setPointerCapture(e.pointerId);
+      tegnMarkering(tidligst);
+    });
+    soejle.addEventListener('pointermove', (e) => {
+      if (!kalState.traek || kalState.traek.soejle !== soejle) return;
+      kalState.traek.tilY = e.clientY - soejle.getBoundingClientRect().top;
+      tegnMarkering(tidligst);
+    });
+    soejle.addEventListener('pointerup', () => {
+      const t = kalState.traek;
+      kalState.traek = null;
+      const mark = soejle.querySelector('.kal-mark');
+      if (mark) mark.remove();
+      if (!t) return;
+      const fra = snapMinut(Math.min(t.fraY, t.tilY), tidligst);
+      let til = snapMinut(Math.max(t.fraY, t.tilY), tidligst);
+      // Et klik uden traek er en time - det er den almindelige registrering,
+      // og en post paa nul minutter er ingen hjaelp for nogen.
+      if (til - fra < KAL_SNAP) til = fra + 60;
+      aabnManuel(null, { date: t.iso, text: `${klokke(fra)}-${klokke(til)}` });
+    });
+  });
+}
+
+function snapMinut(y, tidligst) {
+  const minutter = tidligst * 60 + (y / KAL_TIME_PX) * 60;
+  return Math.max(0, Math.min(24 * 60, Math.round(minutter / KAL_SNAP) * KAL_SNAP));
+}
+
+const klokke = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+function tegnMarkering(tidligst) {
+  const t = kalState.traek;
+  if (!t) return;
+  let mark = t.soejle.querySelector('.kal-mark');
+  if (!mark) {
+    mark = document.createElement('div');
+    mark.className = 'kal-mark';
+    t.soejle.appendChild(mark);
+  }
+  const fra = snapMinut(Math.min(t.fraY, t.tilY), tidligst);
+  const til = Math.max(snapMinut(Math.max(t.fraY, t.tilY), tidligst), fra + KAL_SNAP);
+  mark.style.top = `${((fra - tidligst * 60) / 60) * KAL_TIME_PX}px`;
+  mark.style.height = `${((til - fra) / 60) * KAL_TIME_PX}px`;
+  mark.textContent = `${klokke(fra)}–${klokke(til)}`;
+}
+
+function flytUge(n) {
+  const [aa, mm, dd] = kalState.fra.split('-').map(Number);
+  kalState.fra = isoDato(new Date(aa, mm - 1, dd + n * 7));
+  tegnKalender();
 }

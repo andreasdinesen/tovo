@@ -54,6 +54,19 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v3 — ugekalender og dagens overblik
+
+- **Ugekalender** som i Toggl: dage hen ad, timer ned ad, tidsposterne tegnet dér hvor de
+  ligger. Træk i et tomt felt for at registrere tid, klik en blok for at rette eller slette
+  den. Overlappende poster lægges ved siden af hinanden, og den kørende timer er stiplet.
+- **Today grupperer efter dagen**: overskredet · forfalder i dag · rørt i dag · resten.
+- Kommentarer får et **tidsstempel** (`today 14:33`, `18 Aug 14:32`).
+- `⌘↵` starter timeren på den markerede opgave — også i opgavelisterne, ikke kun i paletten.
+- »Log time« har fået et **projektfelt**, og opgaverne er grupperet under deres projekt.
+- **»No project«** i menuen: opgaver, der ikke hører til et projekt, har fået deres eget sted.
+- **`@navn` alene** opretter projektet (eller åbner det, hvis det findes).
+- **Lange afsnit kan foldes sammen** — og begynder sammenfoldede, når de er lange.
+
 ### v2 — fase 4, 5 og 6
 
 - **Kundevisning** af et projekt: en ren opgørelse med estimat og forbrug pr. opgave, klar

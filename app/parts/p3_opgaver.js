@@ -47,6 +47,12 @@ function opgaveRaekke(it, opt) {
 
 /** Binder en liste af opgaverakker. Kaldes ÉT sted pr. optegning. */
 function bindOpgaveListe(host) {
+  host.querySelectorAll('[data-fold]').forEach((el) => {
+    el.addEventListener('click', () => {
+      saetAfsnitAabent(el.dataset.fold, el.getAttribute('aria-expanded') !== 'true');
+      tegnSide();
+    });
+  });
   host.querySelectorAll('[data-start]').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -63,9 +69,22 @@ function bindOpgaveListe(host) {
   });
   host.querySelectorAll('[data-row]').forEach((el) => {
     el.addEventListener('click', () => aabnOpgave(el.dataset.id));
-    // Enter aabner den raekke, der har fokus. Piletasterne foerte hertil.
+    // Piletasterne foerte hertil; herfra er der tre ting at goere.
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); aabnOpgave(el.dataset.id); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Cmd/Ctrl+Enter starter (eller stopper) timeren paa den raekke, der
+        // har fokus - samme genvej som i paletten. En genvej, der kun virker
+        // ét sted, er en genvej, man ikke laerer.
+        if (e.metaKey || e.ctrlKey) {
+          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.id;
+          if (koerer) stopTimer();
+          else startTimerPaa(el.dataset.id);
+          return;
+        }
+        aabnOpgave(el.dataset.id);
+        return;
+      }
       if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.id); }
     });
   });
@@ -94,10 +113,24 @@ async function tegnIDag() {
   ]);
   state.items = d.items;
   const aabne = d.items.filter((t) => t.status !== 'done');
-  const forfalder = aabne.filter((t) => t.dueDate && t.dueDate <= state.today);
-  const resten = aabne.filter((t) => !forfalder.includes(t));
+
+  /*
+   * Dagens raekkefoelge er et svar paa "hvad skal jeg lave nu".
+   *
+   * Overskredet foerst, saa det der forfalder i dag, saa det man allerede
+   * har roert i dag - og foerst derefter resten. Én liste med alt i ville
+   * betyde, at man skal LEDE efter dagens arbejde, og saa er visningen
+   * ingen hjaelp.
+   */
+  const overskredet = aabne.filter((t) => t.dueDate && t.dueDate < state.today);
+  const iDag = aabne.filter((t) => t.dueDate === state.today);
+  const roertIDag = new Set(p.entries.map((e) => e.taskId));
+  const arbejdet = aabne.filter((t) => roertIDag.has(t.id)
+    && !overskredet.includes(t) && !iDag.includes(t));
+  const resten = aabne.filter((t) => !overskredet.includes(t) && !iDag.includes(t)
+    && !arbejdet.includes(t));
   const faerdige = d.items.filter((t) => t.status === 'done' && t.completedAt
-    && new Date(t.completedAt * 1000).toISOString().slice(0, 10) === state.today);
+    && isoDato(new Date(t.completedAt * 1000)) === state.today);
 
   host.innerHTML = `<div class="page">
     <div class="row" style="justify-content:space-between;align-items:baseline">
@@ -114,28 +147,67 @@ async function tegnIDag() {
     </div>
 
     <div data-keynav>
-      ${afsnit('Due or overdue', forfalder)}
-      ${afsnit('Everything else', resten)}
-      ${faerdige.length ? afsnit('Done today', faerdige) : ''}
+      ${afsnit('Overdue', overskredet)}
+      ${afsnit('Due today', iDag)}
+      ${afsnit('Worked on today', arbejdet)}
+      ${afsnit('Everything else', resten, { foldbar: true, noegle: 'today-resten' })}
+      ${faerdige.length ? afsnit('Done today', faerdige, { foldbar: true, noegle: 'today-faerdige' }) : ''}
     </div>
     ${!d.items.length ? '<div class="empty"><p class="empty-title">Nothing here yet</p>'
       + '<p>Type in the field above to add your first task.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · Space completes · Esc leaves
-      · ⌘⇧M logs time by hand</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
+      · Space completes · Esc leaves · ⌘⇧M logs time by hand</p>
   </div>`;
   bindOpgaveListe(host);
   bindPoster(host, d.items);
   document.getElementById('logManual').addEventListener('click', () => aabnManuel());
 }
 
+/**
+ * Et afsnit med opgaver.
+ *
+ * @param {object} [opt] {forbrug, foldbar, noegle}
+ *
+ * Et FOLDBART afsnit begynder sammenfoldet, naar listen er lang (over otte).
+ * En lang liste under "det andet" er stoej paa en side, der skal svare paa
+ * hvad man laver I DAG - men et afsnit med tre punkter er ingen stoej, og
+ * saa skal man ikke skulle klikke for at se dem. Valget huskes, saa snart
+ * brugeren selv har taget det.
+ */
 function afsnit(titel, liste, opt) {
+  const o = opt || {};
   if (!liste.length) return '';
-  return `<h2 class="group">${esc(titel)}<span class="group-count">${liste.length}</span></h2>
-    ${liste.map((it) => opgaveRaekke(it, opt)).join('')}`;
+  if (!o.foldbar) {
+    return `<h2 class="group">${esc(titel)}<span class="group-count">${liste.length}</span></h2>
+      ${liste.map((it) => opgaveRaekke(it, o)).join('')}`;
+  }
+  const aabent = afsnitAabent(o.noegle, liste.length <= 8);
+  return `<h2 class="group">
+      <button class="gruppefold${aabent ? ' on' : ''}" data-fold="${esc(o.noegle)}"
+        aria-expanded="${aabent ? 'true' : 'false'}">
+        ${icon('chevron', 13)}<span>${esc(titel)}</span>
+        <span class="group-count">${liste.length}</span>
+      </button>
+    </h2>
+    ${aabent ? liste.map((it) => opgaveRaekke(it, o)).join('') : ''}`;
+}
+
+function afsnitAabent(noegle, standard) {
+  try {
+    const gemt = localStorage.getItem(`tovo_fold_${noegle}`);
+    if (gemt === '1') return true;
+    if (gemt === '0') return false;
+  } catch { /* privat tilstand */ }
+  return standard;
+}
+
+function saetAfsnitAabent(noegle, aabent) {
+  try { localStorage.setItem(`tovo_fold_${noegle}`, aabent ? '1' : '0'); } catch { /* privat */ }
 }
 
 async function tegnProjekter() {
   const host = document.getElementById('pageHost');
+  if (state.openProject === INTET_PROJEKT) { await tegnUdenProjekt(); return; }
   if (state.openProject) { await tegnProjekt(state.openProject); return; }
   const d = await api('GET', '/api/v1/items?kind=task');
   state.items = d.items;
@@ -153,13 +225,52 @@ async function tegnProjekter() {
         <h2>${esc(p.name)}</h2>
         <div class="meta">${esc(p.customer || 'no customer')} · ${aabne} open · ${opgaver.length} total</div>
       </button>`;
-    }).join('')}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
+    }).join('')}${(() => {
+      const uden = d.items.filter((t) => !t.projectId);
+      if (!uden.length) return '';
+      return `<button class="card projectcard uden" data-projekt="${INTET_PROJEKT}">
+        <h2>No project</h2>
+        <div class="meta">${uden.filter((t) => t.status !== 'done').length} open · ${uden.length} total</div>
+      </button>`;
+    })()}</div>` : '<div class="empty"><p class="empty-title">No projects yet</p>'
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
   document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
   host.querySelectorAll('[data-projekt]').forEach((el) => {
     el.addEventListener('click', () => gaaTil('projects', { project: el.dataset.projekt }));
   });
+}
+
+/**
+ * Opgaver uden projekt.
+ *
+ * De er ikke "et projekt med tomt navn": der er ingen ramme, ingen kunde og
+ * intet at rulle op. Derfor sin egen visning frem for at presse dem ind i
+ * projektsidens skabelon med fire tomme tal i toppen.
+ */
+async function tegnUdenProjekt() {
+  const host = document.getElementById('pageHost');
+  const d = await api('GET', '/api/v1/no-project');
+  state.items = d.tasks;
+  const aabne = d.tasks.filter((t) => t.status !== 'done');
+  const faerdige = d.tasks.filter((t) => t.status === 'done');
+
+  host.innerHTML = `<div class="page">
+    <button class="linkbtn" id="tilbage">← Projects</button>
+    <h1>No project</h1>
+    <p class="lead">Ad hoc — ${esc(tovoBeregn.formatVarighed(d.minutes))} logged on these.
+      Give one a project with <code>@name</code> in the field above.</p>
+    <div data-keynav>
+      ${afsnit('Open', aabne, { forbrug: d.spent })}
+      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent, foldbar: true, noegle: 'uden-faerdige' }) : ''}
+    </div>
+    ${!d.tasks.length ? '<div class="empty"><p class="empty-title">Nothing here</p>'
+      + '<p>Every task belongs to a project.</p></div>' : ''}
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
+      · Space completes · Esc leaves</p>
+  </div>`;
+  document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  bindOpgaveListe(host);
 }
 
 async function tegnProjekt(id) {
@@ -214,10 +325,12 @@ async function tegnProjekt(id) {
     <div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
-      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent }) : ''}
+      ${faerdige.length ? afsnit('Done', faerdige, { forbrug: d.spent, foldbar: true, noegle: `projekt-faerdige-${p.id}` }) : ''}
     </div>
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">No tasks in this project</p>'
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
+      · Space completes · Esc leaves</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
@@ -298,8 +411,11 @@ async function aabnOpgave(id) {
       </div>
 
       <h2 style="margin-top:18px">Comments</h2>
-      <ul class="plain" id="dComments">${kommentarer.map((c) => `
-        <li><span>${linkify(c.text)}</span></li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
+      <ul class="plain kommentarer" id="dComments">${kommentarer.map((c) => `
+        <li>
+          <span class="kommentar-tid meta" title="${esc(new Date((c.createdAt || 0) * 1000).toLocaleString('en-GB'))}">${esc(visTidspunkt(c.createdAt))}</span>
+          <span class="kommentar-tekst">${linkify(c.text)}</span>
+        </li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
       <div class="row">
         <input class="input" id="dComment" placeholder="Write a comment…" style="flex:1">
         <button class="btn" id="dCommentAdd">Add</button>

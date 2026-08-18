@@ -1608,6 +1608,7 @@ const ROUTES = {
       projects: projekter.filter((p) => !p.archivedAt),
       archivedProjects: projekter.filter((p) => p.archivedAt).length,
       tags: hentItems(auth.user.id, { kind: 'tag' }),
+      unassigned: opgaver.filter((t) => !t.projectId && t.status !== 'done').length,
       counts: {
         tasks: opgaver.filter((t) => t.status !== 'done').length,
         done: opgaver.filter((t) => t.status === 'done').length,
@@ -1663,6 +1664,20 @@ const ROUTES = {
   },
 
   /* --- tidsposter -------------------------------------------------- */
+
+  /* Opgaver uden projekt. De hoerer ingen steder hjemme i projektlisten og
+     ville ellers kun kunne findes gennem soegning eller Today. */
+  'GET /api/v1/no-project': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const b = beregnFor(auth.user.id);
+    const opgaver = hentItems(auth.user.id, { kind: 'task' }).filter((t) => !t.projectId);
+    sendJson(res, 200, {
+      tasks: opgaver,
+      spent: Object.fromEntries(opgaver.map((t) => [t.id, b.forbrugPaaOpgave(t.id)])),
+      minutes: b.forbrugUdenProjekt(),
+    });
+  },
 
   'GET /api/v1/entries': (req, res, ctx) => {
     const auth = godkend(req, res, 'read');

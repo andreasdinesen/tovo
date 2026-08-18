@@ -232,6 +232,18 @@
     }
 
     /**
+     * Forbruget paa opgaver UDEN projekt.
+     *
+     * Ad hoc-arbejde er ikke et projekt med et tomt navn - det er sin egen
+     * kategori, og den skal kunne summeres for sig. Ellers kan man ikke
+     * svare paa "hvor meget gik der til smaating".
+     */
+    function forbrugUdenProjekt(nu) {
+      const uden = new Set(items('task').filter((t) => !t.projectId).map((t) => t.id));
+      return sum(entries().filter((e) => uden.has(e.taskId)), nu);
+    }
+
+    /**
      * De TRE niveauer, et projekt skal kunne svare paa (fase 4):
      * summen af opgaveestimater, den manuelle projektramme, og det forbrugte.
      *
@@ -375,7 +387,7 @@
     }
 
     return {
-      varighed, forbrugPaaOpgave, forbrugPaaProjekt, rollupProjekt,
+      varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
       sumPeriode, sumPrDag, ugerapport, afrunding,
     };
   }

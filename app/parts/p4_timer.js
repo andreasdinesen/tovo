@@ -144,29 +144,57 @@ async function stopTimer() {
  * Egen knap, egen genvej, og et felt der forstaar begge maader at huske en
  * time paa: et interval (9-11.30) eller en varighed (1,5t).
  */
-function aabnManuel(forvalgtOpgave) {
+/**
+ * @param {string} [forvalgtOpgave] opgaven, feltet skal staa paa
+ * @param {object} [opt] {date, text} til at udfylde forud (kalenderen), eller
+ *   {entry} for at RETTE en post, der allerede findes.
+ */
+function aabnManuel(forvalgtOpgave, opt) {
+  const o = opt || {};
+  const post = o.entry || null;
   const host = document.createElement('div');
   host.className = 'modal';
-  const opgaver = (state.items || []).filter((t) => t.status !== 'done');
+  // Ved redigering skal opgaven kunne vaere en, der er afsluttet - ellers
+  // kan man ikke rette en tidspost paa noget, man lige har lukket.
+  const opgaver = (state.items || []).filter((t) => t.status !== 'done'
+    || (post && t.id === post.taskId) || t.id === forvalgtOpgave);
+  const start = post ? new Date(post.startedAt * 1000) : null;
+  const slut = post && post.stoppedAt ? new Date(post.stoppedAt * 1000) : null;
+  const kl = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const forvalgtDato = post ? isoDato(start) : (o.date || state.today);
+  // Staar man i et projekt, er det dét, man registrerer paa. Ellers foelger
+  // projektet den opgave, der allerede er valgt.
+  const forvalgtOpg = opgaver.find((t) => t.id === (post ? post.taskId : forvalgtOpgave));
+  const forvalgtProjekt = forvalgtOpg ? (forvalgtOpg.projectId || '__ingen')
+    : (state.openProject || '');
+  const forvalgtTekst = post
+    ? (slut ? `${kl(start)}-${kl(slut)}` : '')
+    : (o.text || '');
+  if (post) forvalgtOpgave = post.taskId;
+
   host.innerHTML = `
-    <div class="modal-card" role="dialog" aria-label="Log time">
-      <h2>Log time</h2>
-      <p class="meta">On any date — the timer is not the only way in.</p>
+    <div class="modal-card" role="dialog" aria-label="${post ? 'Edit time' : 'Log time'}">
+      <h2>${post ? 'Edit time' : 'Log time'}</h2>
+      <p class="meta">${post
+    ? `Logged by ${esc(post.source)}${post.stoppedAt ? '' : ' — this one is still running'}.`
+    : 'On any date — the timer is not the only way in.'}</p>
+      <label class="field"><span>Project</span>
+        <select class="input" id="mProject">${projektValg(opgaver, forvalgtProjekt)}</select></label>
       <label class="field"><span>Task</span>
-        <select class="input" id="mTask">
-          ${opgaver.map((t) => `<option value="${esc(t.id)}"${t.id === forvalgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`).join('')}
-        </select></label>
+        <select class="input" id="mTask">${opgaveValg(opgaver, forvalgtProjekt, forvalgtOpgave)}</select></label>
       <div class="row">
         <label class="field" style="flex:1"><span>Date</span>
-          <input class="input" id="mDate" type="date" value="${esc(state.today)}"></label>
+          <input class="input" id="mDate" type="date" value="${esc(forvalgtDato)}"></label>
         <label class="field" style="flex:1"><span>Time</span>
-          <input class="input" id="mText" placeholder="9-11.30 · 1,5t · 90m" autocomplete="off"></label>
+          <input class="input" id="mText" placeholder="9-11.30 · 1,5t · 90m"
+            value="${esc(forvalgtTekst)}" autocomplete="off"></label>
       </div>
       <label class="field"><span>Note (optional)</span>
-        <input class="input" id="mNote" placeholder="What was it?"></label>
+        <input class="input" id="mNote" placeholder="What was it?" value="${esc(post ? post.note : '')}"></label>
       <div class="modal-foot">
-        <button class="btn primary" id="mSave">Log it</button>
+        <button class="btn primary" id="mSave">${post ? 'Save' : 'Log it'}</button>
         <button class="btn" id="mClose">Cancel</button>
+        ${post ? '<span style="flex:1"></span><button class="btn danger" id="mDelete">Delete</button>' : ''}
       </div>
     </div>`;
   document.body.appendChild(host);
@@ -176,26 +204,109 @@ function aabnManuel(forvalgtOpgave) {
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('mClose').addEventListener('click', luk);
 
+  // Projektet filtrerer opgavelisten. Med tredive opgaver paa tvaers af
+  // projekter er en flad liste ubrugelig - man kan ikke se, hvad man vaelger.
+  const projektFelt = document.getElementById('mProject');
+  projektFelt.addEventListener('change', () => {
+    const opgaveFelt = document.getElementById('mTask');
+    const valgt = opgaveFelt.value;
+    opgaveFelt.innerHTML = opgaveValg(opgaver, projektFelt.value, valgt);
+  });
+
   const gem = async () => {
     const taskId = document.getElementById('mTask').value;
     if (!taskId) { toast('Create a task first — time is always logged on something.'); return; }
+    const dato = document.getElementById('mDate').value;
+    const tekst = document.getElementById('mText').value;
     try {
-      await api('POST', '/api/v1/entries', {
-        taskId,
-        date: document.getElementById('mDate').value,
-        text: document.getElementById('mText').value,
-        note: document.getElementById('mNote').value,
-      });
+      if (post) {
+        // Tidsrummet tolkes af beregn.js - samme funktion som serveren
+        // bruger ved oprettelse. To tolkninger ville vaere to sandheder.
+        const tidsrum = tovoBeregn.parseTidsrum(tekst, dato);
+        if (!tidsrum) { toast(`I did not understand "${tekst}". Try 9-11.30, 1,5t or 90m.`); return; }
+        const startedAt = tidsrum.fra
+          ? tovoBeregn.tidspunkt(dato, tidsrum.fra)
+          : tovoBeregn.tidspunkt(dato, `${String(new Date(post.startedAt * 1000).getHours()).padStart(2, '0')}:${String(new Date(post.startedAt * 1000).getMinutes()).padStart(2, '0')}`);
+        await api('PATCH', `/api/v1/entries/${post.id}`, {
+          taskId,
+          startedAt,
+          stoppedAt: startedAt + tidsrum.minutter * 60,
+          note: document.getElementById('mNote').value,
+        });
+      } else {
+        await api('POST', '/api/v1/entries', {
+          taskId, date: dato, text: tekst, note: document.getElementById('mNote').value,
+        });
+      }
       luk();
       await genindlaes();
-      toast('Logged.');
+      toast(post ? 'Saved.' : 'Logged.');
     } catch (ex) { toast(ex.message); }
   };
+
+  const slet = document.getElementById('mDelete');
+  if (slet) {
+    slet.addEventListener('click', async () => {
+      try {
+        const d = await api('DELETE', `/api/v1/entries/${post.id}`);
+        luk();
+        await genindlaes();
+        toast('Entry deleted.', { label: 'Undo', run: async () => {
+          const p = d.deleted;
+          await api('POST', '/api/v1/entries', {
+            id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
+            note: p.note, source: p.source,
+          });
+          await genindlaes();
+        } });
+      } catch (ex) { toast(ex.message); }
+    });
+  }
   document.getElementById('mSave').addEventListener('click', gem);
   document.getElementById('mText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); gem(); }
   });
   document.getElementById('mText').focus();
+}
+
+/** Projekterne, der FAKTISK har opgaver at registrere paa - plus "alle". */
+function projektValg(opgaver, valgt) {
+  const medOpgaver = new Set(opgaver.map((t) => t.projectId || '__ingen'));
+  const dele = [`<option value=""${valgt === '' ? ' selected' : ''}>All projects</option>`];
+  for (const p of state.projects) {
+    if (!medOpgaver.has(p.id)) continue;
+    dele.push(`<option value="${esc(p.id)}"${valgt === p.id ? ' selected' : ''}>${esc(p.name)}</option>`);
+  }
+  if (medOpgaver.has('__ingen')) {
+    dele.push(`<option value="__ingen"${valgt === '__ingen' ? ' selected' : ''}>No project</option>`);
+  }
+  return dele.join('');
+}
+
+/**
+ * Opgaverne, grupperet under deres projekt.
+ *
+ * <optgroup> er den native maade at vise gruppen paa - den virker paa mobil,
+ * med tastatur og med skaermlaeser, uden en linje JavaScript. Er der valgt et
+ * projekt, vises kun dets opgaver, og saa er grupperingen overfloedig.
+ */
+function opgaveValg(opgaver, projektId, valgtOpgave) {
+  const iProjekt = (t) => (t.projectId || '__ingen');
+  const filtreret = projektId ? opgaver.filter((t) => iProjekt(t) === projektId) : opgaver;
+  const sorter = (a, b) => (a.position || 0) - (b.position || 0);
+  const punkt = (t) => `<option value="${esc(t.id)}"${t.id === valgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`;
+
+  if (!filtreret.length) return '<option value="">No tasks in this project</option>';
+  if (projektId) return filtreret.slice().sort(sorter).map(punkt).join('');
+
+  const grupper = [];
+  for (const p of state.projects) {
+    const dens = filtreret.filter((t) => t.projectId === p.id).sort(sorter);
+    if (dens.length) grupper.push(`<optgroup label="${esc(p.name)}">${dens.map(punkt).join('')}</optgroup>`);
+  }
+  const uden = filtreret.filter((t) => !t.projectId).sort(sorter);
+  if (uden.length) grupper.push(`<optgroup label="No project">${uden.map(punkt).join('')}</optgroup>`);
+  return grupper.join('');
 }
 
 /* Genvejen skal have en modifikator: bare bogstaver aabner soegefeltet, og
