@@ -17,8 +17,8 @@ udseende, men separate apps med hver sin database og ingen synkronisering.
 | 4 | Estimater, projektoverblik og kundevisning | **færdig** |
 | 5 | Import og genimport fra Microsoft Planner | **færdig** |
 | 6 | Ugerapport | **færdig** |
-| 7 | Gentagelser og iCal-feed | næste |
-| 8 | MCP-server + connector til claude.ai | |
+| 7 | Gentagelser og iCal-feed | **færdig** |
+| 8 | MCP-server + connector til claude.ai | næste |
 | 9 | Polering | |
 
 Hele planen står i `TOVO-PLAN.md`, projektreglerne i `CLAUDE.md`.
@@ -53,6 +53,17 @@ Serveren → Settings → Update/Reinstall installerer selve appen; `/data` over
 mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
+
+### v4 — gentagelser og kalender (ikke udgivet endnu)
+
+- **Gentagne opgaver.** `!every monday at 9` i søgefeltet; næste forekomst opstår, når den
+  nuværende afsluttes, og arver estimat, projekt, links og tags.
+- **iCal-feed:** abonnér i Outlook eller på telefonen, så deadlines står i din egen kalender.
+  Aftalen varer så længe estimatet siger, beskrivelsen indeholder både link til opgaven og
+  start-linket, og påmindelser sættes kun på opgaver med et klokkeslæt.
+- **»Add to calendar«** på en enkelt opgave (.ics-download).
+- Projekter kan **redigeres** (navn, kunde, budget, arkivér), og de fire tal på projektsiden
+  forklarer sig selv.
 
 ### v3 — ugekalender og dagens overblik
 

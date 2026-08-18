@@ -892,7 +892,14 @@ function renseItem(kind, raa) {
         ud[felt] = str(v, 200); break;
       case 'note': case 'text': ud[felt] = str(v, 20000); break;
       case 'estimateMinutes': ud[felt] = tal(v, 1, 365 * 24 * 60); break;
-      case 'budgetHours': ud[felt] = tal(v, 0, 100000); break;
+      case 'budgetHours': {
+        // Rammen er TIMER og maa gerne have decimaler: 80,5 t er et helt
+        // almindeligt tilbud. tal() runder til heltal, og det aad den halve
+        // time uden at sige noget.
+        const n = Number(v);
+        ud[felt] = isFinite(n) && n >= 0 ? Math.round(Math.min(n, 100000) * 100) / 100 : null;
+        break;
+      }
       case 'position': ud[felt] = tal(v, 0, 1e9); break;
       case 'lastImportAt': case 'archivedAt': case 'completedAt': ud[felt] = tal(v, 0, 1e11); break;
       case 'dueDate': ud[felt] = dato(v); break;
@@ -1385,6 +1392,198 @@ function basisUrl(req) {
   return `${proto}://${vaert}`;
 }
 
+/* ------------------------------------------------------- gentagelser */
+
+/**
+ * Naeste forekomst af en gentagen opgave.
+ *
+ * Tre regler fra dodas gentagelses-motor (F4), som goer resten enkel:
+ *  1. **Kun ÉN aaben forekomst.** Den naeste materialiseres foerst, naar den
+ *     nuvaerende lukkes. Saa er der intet at rydde op i, ingen dubletter og
+ *     ingen "tolv kopier"-faelde.
+ *  2. De to tilstande adskiller sig kun i ÉT tal: hvad man regner videre fra.
+ *     Fra fuldfoerelse -> i dag. Fast plan -> forekomstens egen forfaldsdato.
+ *  3. Estimatet og alt andet ARVES - en gentagelse er den samme opgave igen,
+ *     ikke en ny slags arbejde.
+ *
+ * @returns {object|null} den nye opgave, eller null hvis der ingen regel er
+ */
+function naesteForekomst(userId, item) {
+  const regel = item.recurrenceRule;
+  if (!regel || !regel.freq) return null;
+  const fra = regel.mode === 'completion' ? iDag() : (item.dueDate || iDag());
+  const naeste = parse.naesteForekomst(regel, fra);
+  if (!naeste) return null;
+
+  const ny = gemItem(userId, {
+    kind: 'task',
+    title: item.title,
+    note: item.note,
+    projectId: item.projectId,          // gentagelser maa gerne ligge i et projekt
+    sectionId: item.sectionId,
+    estimateMinutes: item.estimateMinutes,
+    priority: item.priority,
+    tagIds: item.tagIds,
+    links: item.links,
+    recurrenceRule: regel,
+    dueDate: naeste,
+    dueTime: regel.time || item.dueTime || null,
+    status: 'open',
+    position: naestePosition(userId, 'task'),
+  });
+  // Den gamle beholder IKKE reglen: ellers ville en genaabning af en lukket
+  // forekomst lave endnu en - og saa er reglen om én aaben forekomst brudt.
+  gemItem(userId, Object.assign({}, item, { recurrenceRule: null }));
+  audit('gentagelse-forekomst', item.id, naeste);
+  return ny;
+}
+
+/* ------------------------------------------------------ kalenderfeed */
+
+/*
+ * iCal-feed med KUN reelle deadlines.
+ *
+ * To ting er kritiske (§4-5):
+ *  - Endepunktet er UDEN login (kalender-apps kan ikke sende cookies), saa det
+ *    maa ALDRIG scanne hele datasaettet. Kalendere poller hvert kvarter;
+ *    Kokkeris feed laa og parsede hele biblioteket doegnet rundt.
+ *  - Adressen ER hemmeligheden. Den kan tilbagekaldes, og et nyt token goer
+ *    det gamle vaerdiloest med det samme.
+ */
+
+function hentIcalFeed(userId, opret, projectId) {
+  const p = projectId || null;
+  let row = db.prepare(`SELECT * FROM ical_feeds
+                         WHERE user_id = ? AND revoked_at IS NULL
+                           AND (project_id IS ? OR project_id = ?)`).get(userId, p, p);
+  if (!row && opret) {
+    const token = crypto.randomBytes(24).toString('base64url');
+    db.prepare('INSERT INTO ical_feeds (token, user_id, project_id, created_at) VALUES (?,?,?,?)')
+      .run(token, userId, p, now());
+    audit('ical-token-oprettet', p, null);
+    row = db.prepare('SELECT * FROM ical_feeds WHERE token = ?').get(token);
+  }
+  return row || null;
+}
+
+function findIcalFeed(raa) {
+  const t = String(raa || '');
+  if (t.length < 16 || t.length > 64) return null;
+  const row = db.prepare('SELECT * FROM ical_feeds WHERE token = ? AND revoked_at IS NULL').get(t);
+  if (!row) return null;
+  if (row.token.length !== t.length) return null;
+  if (!crypto.timingSafeEqual(Buffer.from(row.token), Buffer.from(t))) return null;
+  return row;
+}
+
+function icalEscape(s) {
+  return String(s || '').replace(/([\\;,])/g, '\\$1').replace(/\n/g, '\\n');
+}
+
+function foldLinje(l) {
+  // RFC 5545: linjer over 75 oktetter skal foldes, ellers afviser strenge
+  // klienter HELE filen. Der foldes paa BYTES - ae, oe og aa fylder to.
+  if (Buffer.byteLength(l) <= 74) return l;
+  const dele = [];
+  let rest = l;
+  while (Buffer.byteLength(rest) > 74) {
+    let n = 74;
+    while (Buffer.byteLength(rest.slice(0, n)) > 74) n--;
+    dele.push(dele.length ? ` ${rest.slice(0, n)}` : rest.slice(0, n));
+    rest = rest.slice(n);
+  }
+  dele.push(` ${rest}`);
+  return dele.join('\r\n');
+}
+
+const ICAL_STEMPEL = () => new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+/**
+ * Én VEVENT ud af én opgave.
+ *
+ * VEVENT og ikke VTODO: Outlook haandterer VTODO daarligt, og en deadline,
+ * man ikke kan se i sin kalender, er ingen deadline.
+ */
+function icalEvent(userId, opgave, base, alarmMin) {
+  const d = opgave.dueDate.replace(/-/g, '');
+  const projekt = opgave.projectId ? hentItem(userId, opgave.projectId) : null;
+  const ud = ['BEGIN:VEVENT', `UID:${opgave.id}@tovo`, `DTSTAMP:${ICAL_STEMPEL()}`];
+
+  if (opgave.dueTime) {
+    // LOKAL tid med tidszone-reference. Konverteres der til UTC her, ligger
+    // aftalen en time forkert paa den anden side af sommertidsskiftet.
+    const start = `${d}T${opgave.dueTime.replace(':', '')}00`;
+    // Varigheden er opgavens ESTIMAT, hvis der er et - ellers en time. En
+    // aftale uden udstraekning ser ud som ingenting i en ugevisning.
+    const minutter = Number(opgave.estimateMinutes) || 60;
+    const [t, m] = opgave.dueTime.split(':').map(Number);
+    const slutDato = new Date(`${opgave.dueDate}T00:00:00`);
+    slutDato.setMinutes(t * 60 + m + minutter);
+    const slut = `${parse.fmtDato(slutDato).replace(/-/g, '')}T${String(slutDato.getHours()).padStart(2, '0')}${String(slutDato.getMinutes()).padStart(2, '0')}00`;
+    ud.push(`DTSTART;TZID=Europe/Copenhagen:${start}`, `DTEND;TZID=Europe/Copenhagen:${slut}`);
+  } else {
+    const slut = new Date(`${opgave.dueDate}T12:00:00`);
+    slut.setDate(slut.getDate() + 1);
+    ud.push(`DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${parse.fmtDato(slut).replace(/-/g, '')}`);
+  }
+
+  ud.push(foldLinje(`SUMMARY:${icalEscape(opgave.title)}`));
+
+  // Beskrivelsen indeholder BEGGE veje ind: til opgaven i tovo, og
+  // start-linket, saa timeren kan startes fra selve kalenderaftalen.
+  const startToken = hentStartTokenFor(userId, opgave.id);
+  const tilOpgaven = base ? `${base}/?item=${encodeURIComponent(opgave.id)}` : '';
+  const startLink = (base && startToken) ? `${base}/s/${startToken.token}` : '';
+  const beskrivelse = [
+    projekt ? projekt.name : '',
+    opgave.estimateMinutes ? `Estimate: ${beregn.formatVarighed(opgave.estimateMinutes)}` : '',
+    tilOpgaven ? `Open in tovo: ${tilOpgaven}` : '',
+    startLink ? `Start the timer: ${startLink}` : '',
+  ].filter(Boolean).join('\n');
+  if (beskrivelse) ud.push(foldLinje(`DESCRIPTION:${icalEscape(beskrivelse)}`));
+  if (tilOpgaven) ud.push(foldLinje(`URL:${tilOpgaven}`));
+
+  /*
+   * VALARM KUN paa begivenheder med et klokkeslaet.
+   *
+   * En heldagspost ringer ved midnat, og en paamindelse, man ikke bad om, er
+   * den hurtigste vej til at slaa hele feedet fra (doda v12).
+   */
+  if (opgave.dueTime && alarmMin >= 0) {
+    ud.push('BEGIN:VALARM', 'ACTION:DISPLAY',
+      foldLinje(`DESCRIPTION:${icalEscape(opgave.title)}`),
+      alarmMin === 0 ? 'TRIGGER:PT0S' : `TRIGGER:-PT${alarmMin}M`,
+      'END:VALARM');
+  }
+  ud.push('END:VEVENT');
+  return ud;
+}
+
+function byggIcal(userId, base, projectId) {
+  /*
+   * Kun opgaver MED en dato og kun de aabne. Feedet henter aldrig alt:
+   * hentItems giver denne brugers opgaver, og filteret skaerer resten fra,
+   * foer der bygges noget som helst.
+   */
+  const opgaver = hentItems(userId, { kind: 'task' })
+    .filter((t) => t.dueDate && t.status !== 'done')
+    .filter((t) => !projectId || t.projectId === projectId)
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)))
+    .slice(0, 2000);
+
+  const alarm = Number(getSetting(userId, 'ical_alarm', '15'));
+  const navn = projectId
+    ? `${APP_NAME} · ${(hentItem(userId, projectId) || {}).name || ''}`
+    : APP_NAME;
+
+  const ud = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//tovo//EN',
+    'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', foldLinje(`X-WR-CALNAME:${icalEscape(navn)}`),
+    'X-WR-TIMEZONE:Europe/Copenhagen'];
+  for (const opgave of opgaver) ud.push(...icalEvent(userId, opgave, base, alarm));
+  ud.push('END:VCALENDAR');
+  return `${ud.join('\r\n')}\r\n`;
+}
+
 /* ---------------------------------------------------------- passkeys */
 
 function hentCredentials(userId) {
@@ -1667,6 +1866,45 @@ const ROUTES = {
 
   /* Opgaver uden projekt. De hoerer ingen steder hjemme i projektlisten og
      ville ellers kun kunne findes gennem soegning eller Today. */
+  /* Kalenderfeedet: adressen vises kun til den indloggede ejer. */
+  'POST /api/v1/ical': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    const body = await readJsonBody(req, auth.viaToken);
+    const projectId = str(body.projectId, 64) || null;
+    if (projectId && !hentItem(auth.user.id, projectId)) {
+      apiFejl(res, 404, 'not_found', 'No such project.');
+      return;
+    }
+    const feed = hentIcalFeed(auth.user.id, true, projectId);
+    sendJson(res, 200, {
+      feed: { token: feed.token, projectId: feed.project_id, url: `${basisUrl(req)}/ical/${feed.token}.ics` },
+    });
+  },
+
+  'GET /api/v1/ical': (req, res, ctx) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const feed = hentIcalFeed(auth.user.id, false, ctx.query.get('project') || null);
+    sendJson(res, 200, {
+      feed: feed ? { token: feed.token, projectId: feed.project_id, url: `${basisUrl(req)}/ical/${feed.token}.ics` } : null,
+      alarm: Number(getSetting(auth.user.id, 'ical_alarm', '15')),
+    });
+  },
+
+  'DELETE /api/v1/ical': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    const body = await readJsonBody(req, auth.viaToken);
+    const r = db.prepare(`UPDATE ical_feeds SET revoked_at = ?
+                           WHERE user_id = ? AND revoked_at IS NULL
+                             AND (project_id IS ? OR project_id = ?)`)
+      .run(now(), auth.user.id, str(body.projectId, 64) || null, str(body.projectId, 64) || null);
+    if (!r.changes) { apiFejl(res, 404, 'not_found', 'There is no feed to revoke.'); return; }
+    audit('ical-token-tilbagekaldt', null, clientIp(req));
+    sendJson(res, 200, { ok: true });
+  },
+
   'GET /api/v1/no-project': (req, res) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;
@@ -1940,12 +2178,41 @@ const MOENSTRE = [
       const item = hentItem(auth.user.id, ctx.params[0]);
       if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
       const luk = body.done !== false;
+      const opdateret = gemItem(auth.user.id, Object.assign({}, item, {
+        status: luk ? 'done' : 'open',
+        completedAt: luk ? now() : null,
+      }));
+      // Naeste forekomst materialiseres FOERST, naar den nuvaerende lukkes.
+      const naeste = luk ? naesteForekomst(auth.user.id, opdateret) : null;
       sendJson(res, 200, {
-        item: gemItem(auth.user.id, Object.assign({}, item, {
-          status: luk ? 'done' : 'open',
-          completedAt: luk ? now() : null,
-        })),
+        item: naeste ? hentItem(auth.user.id, opdateret.id) : opdateret,
+        next: naeste,
       });
+    },
+  },
+  {
+    /* Ét .ics til ÉN opgave: den oejeblikkelige placering i en kalender, uden
+       at abonnere paa noget. Kraever login - det er en download, ikke et feed. */
+    metode: 'GET', re: /^\/api\/v1\/tasks\/([0-9a-f-]{8,64})\/ics$/,
+    kald: (req, res, ctx) => {
+      const auth = godkend(req, res, 'read');
+      if (!auth) return;
+      const opgave = hentItem(auth.user.id, ctx.params[0]);
+      if (!opgave || opgave.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
+      if (!opgave.dueDate) {
+        apiFejl(res, 400, 'no_date', 'That task has no date, so there is nothing to put in a calendar.');
+        return;
+      }
+      const alarm = Number(getSetting(auth.user.id, 'ical_alarm', '15'));
+      const krop = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//tovo//EN', 'CALSCALE:GREGORIAN',
+        ...icalEvent(auth.user.id, opgave, basisUrl(req), alarm), 'END:VCALENDAR'].join('\r\n');
+      res.writeHead(200, {
+        'Content-Type': 'text/calendar; charset=utf-8',
+        'Content-Disposition': `attachment; filename="tovo-${opgave.id}.ics"`,
+        'Content-Length': Buffer.byteLength(krop),
+        'Cache-Control': 'no-store',
+      });
+      res.end(krop);
     },
   },
   {
@@ -2117,6 +2384,28 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       haandterStartLink(req, res, start[1]);
+      return;
+    }
+
+    // Kalenderfeedet er UDEN login - en kalender-app kan ikke sende cookies.
+    // Adressen ER hemmeligheden, og den kan tilbagekaldes.
+    const ical = urlPath.match(/^\/ical\/([A-Za-z0-9_-]{16,64})\.ics$/);
+    if (ical) {
+      const feed = findIcalFeed(ical[1]);
+      if (!feed) {
+        logSecurity(`ical-token-afvist ip=${clientIp(req)}`);
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+        return;
+      }
+      const krop = byggIcal(feed.user_id, basisUrl(req), feed.project_id);
+      res.writeHead(200, {
+        'Content-Type': 'text/calendar; charset=utf-8',
+        'Content-Length': Buffer.byteLength(krop),
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      res.end(req.method === 'HEAD' ? undefined : krop);
       return;
     }
 

@@ -1347,7 +1347,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 3;
+const APP_VERSION = 4;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1938,8 +1938,16 @@ function bindShell() {
 function gaaTil(view, opt) {
   const skifter = state.view !== view;
   state.view = view;
-  if (skifter) state.openProject = null;
-  if (opt && opt.project !== undefined) state.openProject = opt.project;
+  /*
+   * Projektet nulstilles ALTID, medmindre kaldet selv angiver et.
+   *
+   * Foer stod der `if (skifter) state.openProject = null`, og saa gjorde
+   * "← Projects" inde fra et projekt ingenting: view'et var allerede
+   * 'projects', saa der var intet "skift", og det aabne projekt blev
+   * staaende. Knappen saa ud til at vaere doed. Naar en tilstand hoerer til
+   * en SIDE og ikke til et view, skal den ryddes af den, der navigerer.
+   */
+  state.openProject = (opt && opt.project !== undefined) ? opt.project : null;
   document.body.classList.remove('navopen');
   opdaterNav();
   // Feltet arbejder i den side, man staar paa - og skal vise det.
@@ -2087,6 +2095,7 @@ function tomHtml(view) {
 
 async function settingsHtml() {
   const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
+  const kal = await api('GET', '/api/v1/ical').catch(() => ({ feed: null, alarm: 15 }));
   const tema = nuvaerendeTema();
   const knap = (id, navn) => `<button class="btn ${tema === id ? 'primary' : ''}" data-tema="${id}">${navn}</button>`;
   return `
@@ -2108,6 +2117,31 @@ async function settingsHtml() {
           <input class="input" id="pwNew" type="password" autocomplete="new-password"></label>
         <button class="btn" type="submit">Change password</button>
       </form>
+    </div>
+
+    <div class="card">
+      <h2>Calendar</h2>
+      <p class="meta">Tasks with a date become appointments in your own calendar. The address
+        is the secret — anyone who has it can read the feed, and revoking it kills every copy.</p>
+      ${kal.feed ? `
+        <p class="meta startlink-url" id="icalUrl">${esc(kal.feed.url)}</p>
+        <div class="row">
+          <button class="btn" id="icalCopy">Copy the address</button>
+          <button class="linkbtn" id="icalRevoke">revoke</button>
+        </div>`
+    : '<div class="row"><button class="btn" id="icalCreate">Create a calendar feed</button></div>'}
+      <label class="field" style="margin-top:14px"><span>Reminder before an appointment</span>
+        <select class="input" id="icalAlarm">
+          ${[['-1', 'No reminder'], ['0', 'At the time'], ['5', '5 minutes before'],
+    ['15', '15 minutes before'], ['30', '30 minutes before'], ['60', '1 hour before']]
+    .map(([v, n]) => `<option value="${v}"${String(kal.alarm) === v ? ' selected' : ''}>${n}</option>`).join('')}
+        </select></label>
+      <p class="meta">Reminders are only set on tasks that have a <strong>time</strong> —
+        an all-day task would ring at midnight.</p>
+      <p class="meta"><strong>Two things worth knowing.</strong> Outlook refreshes a subscribed
+        calendar every 3–24 hours on its own schedule, so a task you add now may take a while to
+        appear. And on iOS you must turn <strong>“Remove Alarms”</strong> off when you add the
+        subscription — otherwise the phone strips the reminders without telling you.</p>
     </div>
 
     <div class="card">
@@ -2170,6 +2204,44 @@ function bindSettings() {
       } catch (ex) { toast(ex.message); }
     });
   });
+
+  const icalCreate = document.getElementById('icalCreate');
+  if (icalCreate) {
+    icalCreate.addEventListener('click', async () => {
+      try {
+        await api('POST', '/api/v1/ical', {});
+        tegnSide();
+        toast('Calendar feed created.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  const icalCopy = document.getElementById('icalCopy');
+  if (icalCopy) {
+    icalCopy.addEventListener('click', async () => {
+      const url = document.getElementById('icalUrl').textContent;
+      const ok = await kopier(url);
+      toast(ok ? 'Address copied — add it as a subscribed calendar.' : `Copy it by hand: ${url}`);
+    });
+  }
+  const icalRevoke = document.getElementById('icalRevoke');
+  if (icalRevoke) {
+    icalRevoke.addEventListener('click', async () => {
+      try {
+        await api('DELETE', '/api/v1/ical', {});
+        tegnSide();
+        toast('The feed is dead. Any calendar still subscribed will stop updating.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  const icalAlarm = document.getElementById('icalAlarm');
+  if (icalAlarm) {
+    icalAlarm.addEventListener('change', async () => {
+      try {
+        await api('POST', '/api/v1/settings', { ical_alarm: icalAlarm.value });
+        toast('Saved. Calendars pick it up at their next refresh.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
 
   const reg = document.getElementById('setReg');
   if (reg) {
@@ -3043,6 +3115,7 @@ async function tegnProjekt(id) {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>
       <span class="row" style="gap:8px">
+        <button class="btn" id="projektRet">Edit project</button>
         <button class="btn" id="plannerRe">Re-import</button>
         <button class="btn" id="kundeVis">Customer view</button>
         <button class="btn" id="bulkLinks">Copy start links</button>
@@ -3052,14 +3125,22 @@ async function tegnProjekt(id) {
 
     <div class="card">
       <div class="row">
-        <div style="flex:1"><div class="meta">Estimated</div>
-          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.estimat))}</div></div>
-        <div style="flex:1"><div class="meta">Budget</div>
-          <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div></div>
-        <div style="flex:1"><div class="meta">Spent</div>
-          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div></div>
-        <div style="flex:1"><div class="meta">Left</div>
-          <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div></div>
+        <div style="flex:1" title="The task estimates added up. It grows as you find more work.">
+          <div class="meta">Estimated</div>
+          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.estimat))}</div>
+          <div class="meta talforklaring">${r.opgaver} task estimates, added up</div></div>
+        <div style="flex:1" title="What you agreed with the customer. You set it by hand.">
+          <div class="meta">Budget</div>
+          <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div>
+          <div class="meta talforklaring">${r.ramme ? 'what was agreed' : 'not set — Edit project'}</div></div>
+        <div style="flex:1" title="Time actually logged on the tasks in this project.">
+          <div class="meta">Spent</div>
+          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div>
+          <div class="meta talforklaring">logged so far</div></div>
+        <div style="flex:1" title="Budget minus spent.">
+          <div class="meta">Left</div>
+          <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div>
+          <div class="meta talforklaring">${r.ramme ? 'of the budget' : 'needs a budget'}</div></div>
       </div>
       ${r.estimatOverRamme ? '<p class="meta warnline">The estimates add up to more than the budget — '
     + 'that is more work than was sold.</p>' : ''}
@@ -3079,6 +3160,7 @@ async function tegnProjekt(id) {
       · Space completes · Esc leaves</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  document.getElementById('projektRet').addEventListener('click', () => aabnProjektRuden(p));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
   document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
   document.getElementById('bulkLinks').addEventListener('click', async () => {
@@ -3093,6 +3175,73 @@ async function tegnProjekt(id) {
     } catch (ex) { toast(ex.message); }
   });
   bindOpgaveListe(host);
+}
+
+/**
+ * Projektets egne felter.
+ *
+ * Kunden, rammen og navnet kunne indtil nu kun saettes gennem API'et - der
+ * var ingen vej i interfacet, og saa findes funktionen ikke.
+ */
+function aabnProjektRuden(p) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="Edit project">
+      <h2>Edit project</h2>
+      <label class="field"><span>Name</span>
+        <input class="input" id="pjName" value="${esc(p.name || '')}"></label>
+      <label class="field"><span>Customer</span>
+        <input class="input" id="pjKunde" placeholder="Who is it for?" value="${esc(p.customer || '')}"></label>
+      <label class="field"><span>Budget (hours)</span>
+        <input class="input" id="pjRamme" inputmode="decimal" placeholder="e.g. 40"
+          value="${esc(p.budgetHours || '')}"></label>
+      <p class="meta">The <strong>budget</strong> is what you agreed with the customer.
+        <strong>Estimated</strong> is your own task estimates added up — when they pass the
+        budget, you have found more work than was sold.</p>
+      ${p.plannerPlanName ? `<p class="meta">Linked to the Planner plan “${esc(p.plannerPlanName)}”.</p>` : ''}
+      <div class="modal-foot">
+        <button class="btn primary" id="pjSave">Save</button>
+        <button class="btn" id="pjClose">Cancel</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="pjArkiv">${p.archivedAt ? 'Unarchive' : 'Archive'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('pjClose').addEventListener('click', luk);
+
+  document.getElementById('pjSave').addEventListener('click', async () => {
+    const raa = document.getElementById('pjRamme').value.trim().replace(',', '.');
+    if (raa && !(Number(raa) >= 0)) { toast(`"${raa}" is not a number of hours.`); return; }
+    try {
+      await api('PATCH', `/api/v1/items/${p.id}`, {
+        name: document.getElementById('pjName').value,
+        customer: document.getElementById('pjKunde').value,
+        budgetHours: raa ? Number(raa) : null,
+      });
+      luk();
+      await genindlaes();
+      toast('Saved.');
+    } catch (ex) { toast(ex.message); }
+  });
+
+  document.getElementById('pjArkiv').addEventListener('click', async () => {
+    try {
+      await api('PATCH', `/api/v1/items/${p.id}`,
+        { archivedAt: p.archivedAt ? null : Math.floor(Date.now() / 1000) });
+      luk();
+      // Et arkiveret projekt er ikke i listen laengere - saa staar man et
+      // sted, der ikke findes.
+      if (!p.archivedAt) gaaTil('projects');
+      await genindlaes();
+      toast(p.archivedAt ? 'Unarchived.' : 'Archived.');
+    } catch (ex) { toast(ex.message); }
+  });
+
+  document.getElementById('pjName').focus();
 }
 
 /* ---------------------------------------------------------- detaljeruden */
@@ -3136,7 +3285,12 @@ async function aabnOpgave(id) {
           </select></label>
       </div>
 
-      <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
+      <div class="meta">${esc(projekt ? projekt.name : 'No project')}${it.recurrenceRule
+    ? ` · repeats ${esc(tovoParse.beskrivGentagelse(it.recurrenceRule))}` : ''}</div>
+      ${it.dueDate ? `<div class="row" style="margin-top:8px">
+        <button class="btn" id="dIcs">Add to calendar</button>
+        <span class="meta">One-off .ics — the feed in Settings keeps everything in sync.</span>
+      </div>` : ''}
 
       <h2 style="margin-top:18px">Start link</h2>
       <p class="meta">Paste it into OneNote next to the task. One click starts the timer,
@@ -3218,6 +3372,20 @@ function bindDetalje(host, it, startLink) {
       toast('Saved.');
     } catch (ex) { toast(ex.message); }
   });
+
+  const ics = document.getElementById('dIcs');
+  if (ics) {
+    ics.addEventListener('click', () => {
+      // En almindelig <a download>: browseren henter filen med cookien og
+      // aabner den i kalenderen. Ingen blob, intet at rydde op.
+      const a = document.createElement('a');
+      a.href = `/api/v1/tasks/${it.id}/ics`;
+      a.download = `tovo-${it.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.ics`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
 
   document.getElementById('dStartLink').addEventListener('click', async () => {
     try {

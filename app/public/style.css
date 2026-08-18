@@ -1988,3 +1988,7 @@ table.rapporttabel th.num, table.rapporttabel td.num { text-align: right; font-v
 .gruppefold svg { color: var(--muted); transition: transform .14s; }
 .gruppefold.on svg { transform: rotate(90deg); }
 .gruppefold:hover svg { color: var(--text); }
+
+/* Et tal uden en forklaring er en gaade. Linjen under staar smaat, saa den
+   kan laeses én gang og derefter overses. */
+.talforklaring { text-transform: none; letter-spacing: 0; font-size: 11.5px; margin-top: 2px; }

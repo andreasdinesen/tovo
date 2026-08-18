@@ -297,6 +297,7 @@ async function tegnProjekt(id) {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>
       <span class="row" style="gap:8px">
+        <button class="btn" id="projektRet">Edit project</button>
         <button class="btn" id="plannerRe">Re-import</button>
         <button class="btn" id="kundeVis">Customer view</button>
         <button class="btn" id="bulkLinks">Copy start links</button>
@@ -306,14 +307,22 @@ async function tegnProjekt(id) {
 
     <div class="card">
       <div class="row">
-        <div style="flex:1"><div class="meta">Estimated</div>
-          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.estimat))}</div></div>
-        <div style="flex:1"><div class="meta">Budget</div>
-          <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div></div>
-        <div style="flex:1"><div class="meta">Spent</div>
-          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div></div>
-        <div style="flex:1"><div class="meta">Left</div>
-          <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div></div>
+        <div style="flex:1" title="The task estimates added up. It grows as you find more work.">
+          <div class="meta">Estimated</div>
+          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.estimat))}</div>
+          <div class="meta talforklaring">${r.opgaver} task estimates, added up</div></div>
+        <div style="flex:1" title="What you agreed with the customer. You set it by hand.">
+          <div class="meta">Budget</div>
+          <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div>
+          <div class="meta talforklaring">${r.ramme ? 'what was agreed' : 'not set — Edit project'}</div></div>
+        <div style="flex:1" title="Time actually logged on the tasks in this project.">
+          <div class="meta">Spent</div>
+          <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div>
+          <div class="meta talforklaring">logged so far</div></div>
+        <div style="flex:1" title="Budget minus spent.">
+          <div class="meta">Left</div>
+          <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div>
+          <div class="meta talforklaring">${r.ramme ? 'of the budget' : 'needs a budget'}</div></div>
       </div>
       ${r.estimatOverRamme ? '<p class="meta warnline">The estimates add up to more than the budget — '
     + 'that is more work than was sold.</p>' : ''}
@@ -333,6 +342,7 @@ async function tegnProjekt(id) {
       · Space completes · Esc leaves</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
+  document.getElementById('projektRet').addEventListener('click', () => aabnProjektRuden(p));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
   document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
   document.getElementById('bulkLinks').addEventListener('click', async () => {
@@ -347,6 +357,73 @@ async function tegnProjekt(id) {
     } catch (ex) { toast(ex.message); }
   });
   bindOpgaveListe(host);
+}
+
+/**
+ * Projektets egne felter.
+ *
+ * Kunden, rammen og navnet kunne indtil nu kun saettes gennem API'et - der
+ * var ingen vej i interfacet, og saa findes funktionen ikke.
+ */
+function aabnProjektRuden(p) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="Edit project">
+      <h2>Edit project</h2>
+      <label class="field"><span>Name</span>
+        <input class="input" id="pjName" value="${esc(p.name || '')}"></label>
+      <label class="field"><span>Customer</span>
+        <input class="input" id="pjKunde" placeholder="Who is it for?" value="${esc(p.customer || '')}"></label>
+      <label class="field"><span>Budget (hours)</span>
+        <input class="input" id="pjRamme" inputmode="decimal" placeholder="e.g. 40"
+          value="${esc(p.budgetHours || '')}"></label>
+      <p class="meta">The <strong>budget</strong> is what you agreed with the customer.
+        <strong>Estimated</strong> is your own task estimates added up — when they pass the
+        budget, you have found more work than was sold.</p>
+      ${p.plannerPlanName ? `<p class="meta">Linked to the Planner plan “${esc(p.plannerPlanName)}”.</p>` : ''}
+      <div class="modal-foot">
+        <button class="btn primary" id="pjSave">Save</button>
+        <button class="btn" id="pjClose">Cancel</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="pjArkiv">${p.archivedAt ? 'Unarchive' : 'Archive'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('pjClose').addEventListener('click', luk);
+
+  document.getElementById('pjSave').addEventListener('click', async () => {
+    const raa = document.getElementById('pjRamme').value.trim().replace(',', '.');
+    if (raa && !(Number(raa) >= 0)) { toast(`"${raa}" is not a number of hours.`); return; }
+    try {
+      await api('PATCH', `/api/v1/items/${p.id}`, {
+        name: document.getElementById('pjName').value,
+        customer: document.getElementById('pjKunde').value,
+        budgetHours: raa ? Number(raa) : null,
+      });
+      luk();
+      await genindlaes();
+      toast('Saved.');
+    } catch (ex) { toast(ex.message); }
+  });
+
+  document.getElementById('pjArkiv').addEventListener('click', async () => {
+    try {
+      await api('PATCH', `/api/v1/items/${p.id}`,
+        { archivedAt: p.archivedAt ? null : Math.floor(Date.now() / 1000) });
+      luk();
+      // Et arkiveret projekt er ikke i listen laengere - saa staar man et
+      // sted, der ikke findes.
+      if (!p.archivedAt) gaaTil('projects');
+      await genindlaes();
+      toast(p.archivedAt ? 'Unarchived.' : 'Archived.');
+    } catch (ex) { toast(ex.message); }
+  });
+
+  document.getElementById('pjName').focus();
 }
 
 /* ---------------------------------------------------------- detaljeruden */
@@ -390,7 +467,12 @@ async function aabnOpgave(id) {
           </select></label>
       </div>
 
-      <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
+      <div class="meta">${esc(projekt ? projekt.name : 'No project')}${it.recurrenceRule
+    ? ` · repeats ${esc(tovoParse.beskrivGentagelse(it.recurrenceRule))}` : ''}</div>
+      ${it.dueDate ? `<div class="row" style="margin-top:8px">
+        <button class="btn" id="dIcs">Add to calendar</button>
+        <span class="meta">One-off .ics — the feed in Settings keeps everything in sync.</span>
+      </div>` : ''}
 
       <h2 style="margin-top:18px">Start link</h2>
       <p class="meta">Paste it into OneNote next to the task. One click starts the timer,
@@ -472,6 +554,20 @@ function bindDetalje(host, it, startLink) {
       toast('Saved.');
     } catch (ex) { toast(ex.message); }
   });
+
+  const ics = document.getElementById('dIcs');
+  if (ics) {
+    ics.addEventListener('click', () => {
+      // En almindelig <a download>: browseren henter filen med cookien og
+      // aabner den i kalenderen. Ingen blob, intet at rydde op.
+      const a = document.createElement('a');
+      a.href = `/api/v1/tasks/${it.id}/ics`;
+      a.download = `tovo-${it.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.ics`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
 
   document.getElementById('dStartLink').addEventListener('click', async () => {
     try {

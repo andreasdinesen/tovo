@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 3;
+const APP_VERSION = 4;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -596,8 +596,16 @@ function bindShell() {
 function gaaTil(view, opt) {
   const skifter = state.view !== view;
   state.view = view;
-  if (skifter) state.openProject = null;
-  if (opt && opt.project !== undefined) state.openProject = opt.project;
+  /*
+   * Projektet nulstilles ALTID, medmindre kaldet selv angiver et.
+   *
+   * Foer stod der `if (skifter) state.openProject = null`, og saa gjorde
+   * "← Projects" inde fra et projekt ingenting: view'et var allerede
+   * 'projects', saa der var intet "skift", og det aabne projekt blev
+   * staaende. Knappen saa ud til at vaere doed. Naar en tilstand hoerer til
+   * en SIDE og ikke til et view, skal den ryddes af den, der navigerer.
+   */
+  state.openProject = (opt && opt.project !== undefined) ? opt.project : null;
   document.body.classList.remove('navopen');
   opdaterNav();
   // Feltet arbejder i den side, man staar paa - og skal vise det.
@@ -745,6 +753,7 @@ function tomHtml(view) {
 
 async function settingsHtml() {
   const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
+  const kal = await api('GET', '/api/v1/ical').catch(() => ({ feed: null, alarm: 15 }));
   const tema = nuvaerendeTema();
   const knap = (id, navn) => `<button class="btn ${tema === id ? 'primary' : ''}" data-tema="${id}">${navn}</button>`;
   return `
@@ -766,6 +775,31 @@ async function settingsHtml() {
           <input class="input" id="pwNew" type="password" autocomplete="new-password"></label>
         <button class="btn" type="submit">Change password</button>
       </form>
+    </div>
+
+    <div class="card">
+      <h2>Calendar</h2>
+      <p class="meta">Tasks with a date become appointments in your own calendar. The address
+        is the secret — anyone who has it can read the feed, and revoking it kills every copy.</p>
+      ${kal.feed ? `
+        <p class="meta startlink-url" id="icalUrl">${esc(kal.feed.url)}</p>
+        <div class="row">
+          <button class="btn" id="icalCopy">Copy the address</button>
+          <button class="linkbtn" id="icalRevoke">revoke</button>
+        </div>`
+    : '<div class="row"><button class="btn" id="icalCreate">Create a calendar feed</button></div>'}
+      <label class="field" style="margin-top:14px"><span>Reminder before an appointment</span>
+        <select class="input" id="icalAlarm">
+          ${[['-1', 'No reminder'], ['0', 'At the time'], ['5', '5 minutes before'],
+    ['15', '15 minutes before'], ['30', '30 minutes before'], ['60', '1 hour before']]
+    .map(([v, n]) => `<option value="${v}"${String(kal.alarm) === v ? ' selected' : ''}>${n}</option>`).join('')}
+        </select></label>
+      <p class="meta">Reminders are only set on tasks that have a <strong>time</strong> —
+        an all-day task would ring at midnight.</p>
+      <p class="meta"><strong>Two things worth knowing.</strong> Outlook refreshes a subscribed
+        calendar every 3–24 hours on its own schedule, so a task you add now may take a while to
+        appear. And on iOS you must turn <strong>“Remove Alarms”</strong> off when you add the
+        subscription — otherwise the phone strips the reminders without telling you.</p>
     </div>
 
     <div class="card">
@@ -828,6 +862,44 @@ function bindSettings() {
       } catch (ex) { toast(ex.message); }
     });
   });
+
+  const icalCreate = document.getElementById('icalCreate');
+  if (icalCreate) {
+    icalCreate.addEventListener('click', async () => {
+      try {
+        await api('POST', '/api/v1/ical', {});
+        tegnSide();
+        toast('Calendar feed created.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  const icalCopy = document.getElementById('icalCopy');
+  if (icalCopy) {
+    icalCopy.addEventListener('click', async () => {
+      const url = document.getElementById('icalUrl').textContent;
+      const ok = await kopier(url);
+      toast(ok ? 'Address copied — add it as a subscribed calendar.' : `Copy it by hand: ${url}`);
+    });
+  }
+  const icalRevoke = document.getElementById('icalRevoke');
+  if (icalRevoke) {
+    icalRevoke.addEventListener('click', async () => {
+      try {
+        await api('DELETE', '/api/v1/ical', {});
+        tegnSide();
+        toast('The feed is dead. Any calendar still subscribed will stop updating.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  const icalAlarm = document.getElementById('icalAlarm');
+  if (icalAlarm) {
+    icalAlarm.addEventListener('change', async () => {
+      try {
+        await api('POST', '/api/v1/settings', { ical_alarm: icalAlarm.value });
+        toast('Saved. Calendars pick it up at their next refresh.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
 
   const reg = document.getElementById('setReg');
   if (reg) {

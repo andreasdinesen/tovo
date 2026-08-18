@@ -236,6 +236,13 @@ test('rollup svarer paa de tre niveauer - og siger til, naar estimaterne spræng
   const r = (await kald('GET', `/api/v1/projects/${lille.data.item.id}`)).data.rollup;
   assert.equal(r.estimat, 300);
   assert.equal(r.ramme, 60);
+
+  // Rammen maa have decimaler - 80,5 t er et almindeligt tilbud, og en
+  // afrunding til hele timer aad en halv time tavst.
+  await kald('PATCH', `/api/v1/items/${lille.data.item.id}`, { budgetHours: 80.5 });
+  const halv = (await kald('GET', `/api/v1/projects/${lille.data.item.id}`)).data.rollup;
+  assert.equal(halv.ramme, 4830, '80,5 timer er 4830 minutter - ikke 81 timer');
+  await kald('PATCH', `/api/v1/items/${lille.data.item.id}`, { budgetHours: 1 });
   assert.equal(r.estimatOverRamme, true, 'den tidlige advarsel: mere arbejde end der er solgt');
   assert.equal(r.forbrugt, 0);
   assert.equal(r.resterende, 60);

@@ -565,24 +565,65 @@ noget, der er i vejen hver dag — ikke fordi de stod i planen:
 
 ## Fase 7 · Gentagelser og iCal
 
-- [ ] Gentagelsesregel på opgave: dagligt, hverdage, ugentligt, månedligt, hver n'te
-- [ ] Ny forekomst ved afslutning; estimatet arves
-- [ ] Gentagne opgaver kan ligge under et projekt
-- [ ] iCal-motoren kopieret fra doda/Muldbog. Fælderne:
-  - [ ] **Aldrig UTC.** `DTSTART;TZID=Europe/Copenhagen:20260817T090000`
-  - [ ] Linjefoldning ved **75 oktetter**, foldet på bytes — æøå fylder to
-  - [ ] Token i URL'en, opslag på primærnøgle, **404** ved forkert token
-  - [ ] Feedet må aldrig scanne datasættet — kalender-apps poller hvert kvarter
-  - [ ] `VALARM` **kun** på begivenheder med klokkeslæt; en heldagspost ringer ved midnat
-  - [ ] `VEVENT`, ikke `VTODO` — Outlook håndterer VTODO dårligt
-- [ ] Eventets beskrivelse indeholder **både** link til opgaven i tovo **og** start-linket
-- [ ] Varighed = opgavens estimat, hvis sat; ellers 1 time
-- [ ] "Tilføj til kalender": download af enkelt `.ics` for øjeblikkelig placering
-- [ ] I UI'et: skriv at Outlook opdaterer abonnementer hver 3.–24. time, og at iOS skal have
+- [x] Gentagelsesregel på opgave: dagligt, hverdage, ugentligt, månedligt, hver n'te
+- [x] Ny forekomst ved afslutning; estimatet arves
+- [x] Gentagne opgaver kan ligge under et projekt
+- [x] iCal-motoren kopieret fra doda/Muldbog. Fælderne:
+  - [x] **Aldrig UTC.** `DTSTART;TZID=Europe/Copenhagen:20260817T090000`
+  - [x] Linjefoldning ved **75 oktetter**, foldet på bytes — æøå fylder to
+  - [x] Token i URL'en, opslag på primærnøgle, **404** ved forkert token
+  - [x] Feedet må aldrig scanne datasættet — kalender-apps poller hvert kvarter
+  - [x] `VALARM` **kun** på begivenheder med klokkeslæt; en heldagspost ringer ved midnat
+  - [x] `VEVENT`, ikke `VTODO` — Outlook håndterer VTODO dårligt
+- [x] Eventets beskrivelse indeholder **både** link til opgaven i tovo **og** start-linket
+- [x] Varighed = opgavens estimat, hvis sat; ellers 1 time
+- [x] "Tilføj til kalender": download af enkelt `.ics` for øjeblikkelig placering
+- [x] I UI'et: skriv at Outlook opdaterer abonnementer hver 3.–24. time, og at iOS skal have
       "Remove Alarms" slået fra
 
 **Accept:** abonnér i Outlook, verificér at en aftale kl. 9 står kl. 9 — også på den anden side
 af sommertidsskiftet. Klik start-linket fra kalenderaftalen.
+
+**Status 2026-08-18 — fase 7 er bygget.** 92 tests grønne. Sommertidsprøven er en test og ikke
+en formodning: to opgaver, én 3/9 (sommertid) og én 3/12 (vintertid), begge kl. 9 — begge står
+som `DTSTART;TZID=Europe/Copenhagen:…T090000`, og ingen `DTSTART` har et `Z`-suffiks.
+Linjefoldningen er målt på **oktetter** på hver eneste linje i feedet, og teksten kan foldes ud
+igen med æ, ø og å i behold.
+
+Fire ting, der er værd at kende:
+
+- **Kun én åben forekomst.** Den næste materialiseres først, når den nuværende lukkes, og den
+  lukkede beholder ikke reglen — ellers ville en genåbning lave endnu en, og så er reglen om
+  én åben forekomst brudt. Estimat, projekt, sektion, links og tags arves: en gentagelse er
+  den samme opgave igen, ikke en ny slags arbejde.
+- **Varigheden i kalenderen er opgavens estimat**, ellers en time. En aftale uden udstrækning
+  ser ud som ingenting i en ugevisning.
+- **Beskrivelsen bærer begge veje ind:** link til opgaven i tovo *og* start-linket, så timeren
+  kan startes fra selve kalenderaftalen.
+- **De to fælder står i UI'et**, ikke kun i planen: at Outlook opdaterer hver 3.–24. time, og
+  at iOS stripper alarmerne, hvis »Remove Alarms« ikke slås fra ved abonnementet.
+
+**Ikke verificeret:** at abonnementet virker i din Outlook. Feedet er kørt igennem som tekst
+og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
+
+---
+
+## Efter fase 7 · Flere fund fra brug
+
+- [x] **»← Projects« var død.** `gaaTil('projects')` nulstillede kun det åbne projekt, når
+      view'et *skiftede* — og man var allerede på `projects`, så knappen så ud til at gøre
+      ingenting. Tilstanden hører til siden, ikke til view'et, så den ryddes nu altid,
+      medmindre kaldet selv angiver et projekt.
+- [x] **Et projekt kunne ikke redigeres.** Navn, kunde og ramme kunne kun sættes gennem
+      API'et — altså fandtes funktionen ikke. Nu er der en rude med navn, kunde, budget,
+      arkivér, og en forklaring på forskellen mellem de to tal.
+- [x] **Estimated vs. Budget forklarede sig ikke selv.** Hvert af de fire tal har fået en
+      linje under sig (»9 task estimates, added up« · »what was agreed« · »logged so far«),
+      så spørgsmålet ikke skal stilles igen.
+- [x] **Budgettet blev rundet til hele timer.** 80,5 t blev til 81 — en halv time ædt tavst,
+      fordi feltet gik gennem en heltals-hjælper. Rammen tåler nu decimaler.
+
+
 
 ---
 
