@@ -11,6 +11,12 @@
 
 const rapportState = { fra: null, til: null, data: null };
 
+/* Decimaltimer er standard: rapporten er et overfoerselsbilag, ikke en
+   laeseoplevelse. Den, der vil se 3h 30m, kan skifte. */
+function rapportDecimal() {
+  try { return localStorage.getItem('tovo_rapport_decimal') !== '0'; } catch { return true; }
+}
+
 function ugeMandag(iso) {
   const [aa, mm, dd] = iso.split('-').map(Number);
   const d = new Date(aa, mm - 1, dd);
@@ -40,7 +46,15 @@ async function tegnRapport() {
   } catch (ex) { toast(ex.message); return; }
   rapportState.data = d;
 
-  const f = tovoBeregn.formatVarighed;
+  /*
+   * Rapporten har ÉT talformat, og det kan skiftes.
+   *
+   * Decimaltimer (3,5) er den form, timerne overfoeres i til et andet
+   * system; timer og minutter (3h 30m) er den, man laeser. Valget huskes -
+   * man skifter ikke frem og tilbage.
+   */
+  const decimal = rapportDecimal();
+  const f = (m) => (decimal ? tovoBeregn.formatDecimal(m) : tovoBeregn.formatVarighed(m));
   const r = d.report;
   const ts = d.timesheet;
   const forrige = d.previous;
@@ -57,6 +71,9 @@ async function tegnRapport() {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Report</h1>
       <span class="row" style="gap:8px">
+        <button class="btn${decimal ? ' primary' : ''}" id="rFormat"
+          title="Decimal hours are what you type into the other system">${decimal ? '3,5' : '3h 30m'}</button>
+        <button class="btn" id="rExcel">Excel</button>
         <button class="btn" id="rMarkdown">Copy as markdown</button>
         <button class="btn" id="rPrint">Print / PDF</button>
       </span>
@@ -93,17 +110,29 @@ async function tegnRapport() {
     r.days.filter((x) => x.tynd || x.tom).map((x) => dagsnavn[x.weekday]).join(', ')
   } look thin — that is usually forgotten registration, not a quiet day.</p>` : ''}
 
-    ${r.cases.length ? `<h2 class="group">Per case number<span class="group-count">${r.cases.length}</span></h2>
-      <table class="data rapporttabel">
-        <tr><th>Case</th><th class="num">Hours</th><th>Tasks</th></tr>
-        ${r.cases.map((c) => `<tr>
-          <td>${c.case === '(no case number)' ? '<span class="meta">(no case number)</span>' : sagHtml(c.case)}</td>
-          <td class="num">${esc(f(c.minutter))}</td>
-          <td class="meta">${esc(c.tasks.map((t) => t.title).join(', ').slice(0, 90))}</td>
+    ${ts.caseRows.length ? `<h2 class="group">Per case number, per day<span class="group-count">${ts.caseRows.length}</span></h2>
+      <div class="tabelrul">
+      <table class="data rapporttabel timeseddel">
+        <tr><th>Case</th>
+          ${ts.dage.map((iso) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return `<th class="num">${dagsnavn[d.getDay()]}<span class="meta">${iso.slice(8)}</span></th>`;
+  }).join('')}
+          <th class="num">Total</th></tr>
+        ${ts.caseRows.map((c) => `<tr>
+          <td>${c.case ? sagHtml(c.case) : '<span class="meta">(no case number)</span>'}</td>
+          ${ts.dage.map((iso) => `<td class="num">${c.dage[iso] ? esc(f(c.dage[iso])) : ''}</td>`).join('')}
+          <td class="num"><strong>${esc(f(c.total))}</strong></td>
         </tr>`).join('')}
+        <tr><td><strong>Total</strong></td>
+          ${ts.dage.map((iso) => `<td class="num"><strong>${ts.perDay[iso] ? esc(f(ts.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(ts.total))}</strong></td></tr>
       </table>
-      <p class="meta">This is the list to reconcile against — the hours you register elsewhere,
-        per case number.</p>` : ''}
+      </div>
+      <p class="meta">This is what you type into the other system: one number per case,
+        per day.${decimal ? ' Hours as decimals — 3,5 is three and a half. They are rounded to two '
+    + 'places for display; the minutes behind them are exact, and the totals are added up from those.'
+    : ''}</p>` : ''}
 
     ${ts.rows.length ? `<h2 class="group">Per day, per task<span class="group-count">${ts.rows.length}</span></h2>
       <div class="tabelrul">
@@ -154,6 +183,10 @@ async function tegnRapport() {
       tegnRapport();
     });
   }
+  document.getElementById('rFormat').addEventListener('click', () => {
+    try { localStorage.setItem('tovo_rapport_decimal', decimal ? '0' : '1'); } catch { /* privat */ }
+    tegnRapport();
+  });
   document.getElementById('rMarkdown').addEventListener('click', async () => {
     const md = rapportMarkdown(d);
     const ok = await kopier(md);
@@ -161,6 +194,40 @@ async function tegnRapport() {
   });
   document.getElementById('rPrint').addEventListener('click', () => {
     printArk(rapportArkHtml(d), `tovo-report-${d.from}`);
+  });
+  document.getElementById('rExcel').addEventListener('click', () => {
+    // Tre ark: det man skal REGISTRERE efter, det man skal kunne forklare
+    // det ud fra, og de raa poster til den, der vil regne selv.
+    const dagsHoved = ts.dage.map((iso) => iso.slice(5));
+    hentExcel([
+      {
+        navn: 'Per case per day',
+        rows: [
+          ['Case', ...dagsHoved, 'Total (hours)'],
+          ...ts.caseRows.map((c) => [c.case || '(no case number)',
+            ...ts.dage.map((iso) => excelTimer(c.dage[iso])), excelTimer(c.total)]),
+          ['Total', ...ts.dage.map((iso) => excelTimer(ts.perDay[iso])), excelTimer(ts.total)],
+        ],
+      },
+      {
+        navn: 'Per task per day',
+        rows: [
+          ['Case', 'Project', 'Task', ...dagsHoved, 'Total (hours)'],
+          ...ts.rows.map((x) => [x.case || '', x.project || '', x.title,
+            ...ts.dage.map((iso) => excelTimer(x.dage[iso])), excelTimer(x.total)]),
+        ],
+      },
+      {
+        navn: 'Per project',
+        rows: [
+          ['Project', 'Task', 'Estimated (hours)', 'Spent (hours)', 'Status'],
+          ...r.projects.flatMap((p) => p.tasks.map((t) => [p.name, t.title,
+            excelTimer(t.estimateMinutes), excelTimer(t.minutter),
+            t.completedIPerioden ? 'Completed' : 'Still open'])),
+        ],
+      },
+    ], `tovo-${d.from}_${d.to}.xlsx`);
+    toast('Excel file downloaded.');
   });
 }
 
@@ -175,18 +242,25 @@ function skiftPeriode(n) {
  * det, en maskine skal parse.
  */
 function rapportMarkdown(d) {
-  const f = tovoBeregn.formatVarighed;
+  const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
   const r = d.report;
   const linjer = [`# ${d.from} – ${d.to}`, ''];
   linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`);
   if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
   linjer.push('');
-  if (r.cases.length) {
-    linjer.push('## Per case number', '');
-    for (const c of r.cases) linjer.push(`- **${c.case}**: ${f(c.minutter)}`);
+  const ts = d.timesheet;
+  if (ts && ts.caseRows.length) {
+    // Sagen pr. dag foerst: det er den, der skal skrives af.
+    linjer.push('## Per case number, per day', '');
+    linjer.push(`| Case | ${ts.dage.map((iso) => iso.slice(5)).join(' | ')} | Total |`);
+    linjer.push(`|---|${ts.dage.map(() => '--:').join('|')}|--:|`);
+    for (const c of ts.caseRows) {
+      linjer.push(`| ${c.case || '(no case number)'} | `
+        + `${ts.dage.map((iso) => (c.dage[iso] ? f(c.dage[iso]) : '')).join(' | ')} | ${f(c.total)} |`);
+    }
+    linjer.push(`| **Total** | ${ts.dage.map((iso) => (ts.perDay[iso] ? f(ts.perDay[iso]) : '')).join(' | ')} | **${f(ts.total)}** |`);
     linjer.push('');
   }
-  const ts = d.timesheet;
   if (ts && ts.rows.length) {
     // En markdown-tabel: den kan klistres i OneNote og laeses som den er.
     linjer.push('## Per day, per task', '');
@@ -212,12 +286,21 @@ function rapportMarkdown(d) {
 
 /** Samme tal, samme raekkefoelge - bare til papir. */
 function rapportArkHtml(d) {
-  const f = tovoBeregn.formatVarighed;
+  const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
   const r = d.report;
   return `
     <h1>${esc(d.from)} – ${esc(d.to)}</h1>
     <p class="pkunde">${esc(f(r.total))} in total · ${esc(f(r.onProjects))} on projects
       · ${esc(f(r.adhoc))} ad hoc${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
+    ${d.timesheet && d.timesheet.caseRows.length ? `<table>
+        <thead><tr><th>Case</th>
+          ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
+          <th class="num">Total</th></tr></thead>
+        <tbody>${d.timesheet.caseRows.map((c) => `<tr>
+          <td>${esc(c.case || '(no case number)')}</td>
+          ${d.timesheet.dage.map((iso) => `<td class="num">${c.dage[iso] ? esc(f(c.dage[iso])) : ''}</td>`).join('')}
+          <td class="num">${esc(f(c.total))}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
     ${d.timesheet && d.timesheet.rows.length ? `<table>
         <thead><tr><th>Case</th><th>Task</th>
           ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}

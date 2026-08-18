@@ -409,7 +409,9 @@ async function tegnProjekt(id) {
         <button class="linkbtn" id="tvKolonner">Edit columns</button>
         <span class="meta">Drag a card between columns — or use the arrow on the card.</span>
       </div>
-      ${tavleHtml(p, d.tasks, d.spent)}`
+      ${tavleHtml(p, d.tasks, d.spent)}
+      <p class="hintline meta">Arrow keys move into the board · ← → change column
+        · Enter opens · ⌘↵ starts the timer · Space completes · Esc leaves</p>`
     : `<div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
@@ -542,7 +544,8 @@ async function aabnOpgave(id) {
       <div class="detail-head">
         <button class="tick big${it.status === 'done' ? ' on' : ''}" id="dTick"
           aria-label="${it.status === 'done' ? 'Reopen' : 'Complete'}"></button>
-        <input class="detail-title input" id="dTitle" value="${esc(it.title)}">
+        <input class="detail-title input" id="dTitle" value="${esc(it.title)}"
+          title="You can write #tag, @project, :case, ~estimate and !date here too">
       </div>
 
       <label class="field"><span>Notes</span>
@@ -681,6 +684,34 @@ function bindDetalje(host, it, startLink) {
       f.recurrenceRule = regel;
     } else f.recurrenceRule = null;
     try {
+      /*
+       * Staar der SYNTAKS i titlen, skal den virke - ogsaa naar man retter.
+       * Serveren tolker den med den samme parser som fangsten og opretter
+       * det, der mangler, saa "#Ai" i en titel bliver et maerkat og ikke
+       * bare tekst.
+       */
+      const harSyntaks = typeof tovoParse !== 'undefined'
+        && new RegExp(`(^|\\s)[${tovoParse.MARKOERER}]`).test(f.title);
+      if (harSyntaks) {
+        /*
+         * Ruden FOERST, syntaksen bagefter.
+         *
+         * Den omvendte raekkefoelge var en fejl: `:SAG-77` i titlen satte
+         * sagsnummeret, og den efterfoelgende gemning af rudens felter
+         * skrev det tomme sagsfelt hen over igen. Det, man lige har skrevet,
+         * er det mest specifikke - saa det skal have det sidste ord.
+         */
+        await api('PATCH', `/api/v1/items/${it.id}`, f);
+        const d = await api('POST', `/api/v1/tasks/${it.id}/syntax`, { text: f.title });
+        luk();
+        await genindlaes();
+        const dele = [];
+        if (d.nye.length) dele.push(`created ${d.nye.map((n) => `${n.kind === 'tag' ? '#' : '@'}${n.name}`).join(', ')}`);
+        if (d.ignored.length) dele.push('% only works when you create a task');
+        if (d.warnings.length) dele.push(d.warnings[0]);
+        toast(dele.length ? `Saved — ${dele.join(' · ')}` : 'Saved.');
+        return;
+      }
       await api('PATCH', `/api/v1/items/${it.id}`, f);
       luk();
       await genindlaes();

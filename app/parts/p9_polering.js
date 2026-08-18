@@ -163,3 +163,36 @@ function visGenveje() {
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
 }
+
+
+/* ------------------------------------------------------ excel-download */
+
+/**
+ * Henter en .xlsx ned.
+ *
+ * Blob + object-URL og et <a download>. URL'en frigives bagefter - ellers
+ * ligger filen i hukommelsen, saa laenge fanen er aaben.
+ */
+function hentExcel(ark, filnavn) {
+  const data = tovoXlsx.byg(ark);
+  const blob = new Blob([data], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filnavn;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Timer som TAL, ikke tekst.
+ *
+ * Det er hele grunden til at lave en rigtig regnearksfil frem for en CSV:
+ * 3,5 skal kunne laegges sammen i Excel, uanset om maskinen staar paa dansk
+ * eller engelsk komma. Excel viser det med maskinens eget komma af sig selv.
+ */
+const excelTimer = (minutter) => (minutter ? Math.round((minutter / 60) * 100) / 100 : null);

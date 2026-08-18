@@ -219,3 +219,55 @@ test('timesedlen har én raekke pr. opgave - ikke pr. tidspost', async () => {
   assert.equal(raekker[0].dage[plusDage(mandag, 1)], 60, '45m + 15m = 1t i den ene celle');
   assert.equal(raekker[0].total, 120);
 });
+
+test('sagen pr. DAG - den opgoerelse, timerne skrives af fra', async () => {
+  const opgaver = (await k.kald('GET', '/api/v1/items?kind=task')).data.items;
+  const paaSagen = opgaver.filter((t) => t.caseNumber === 'SAG-2000');
+  // Samme sag, to forskellige dage.
+  await k.kald('POST', '/api/v1/entries', { taskId: paaSagen[0].id, date: plusDage(mandag, 2), text: '2t' });
+
+  const ts = (await k.kald('GET', `/api/v1/report?from=${mandag}&to=${plusDage(mandag, 6)}`)).data.timesheet;
+  const sag = ts.caseRows.find((c) => c.case === 'SAG-2000');
+  assert.equal(sag.dage[mandag], 30, 'mandagens tal paa sagen');
+  assert.equal(sag.dage[plusDage(mandag, 2)], 120, 'onsdagens tal paa sagen');
+  assert.equal(sag.total, 150);
+
+  // Summen af dagene paa en sag SKAL vaere sagens total, og summen af
+  // sagerne skal vaere ugens total. Kan de to ikke afstemmes, kan
+  // opgoerelsen ikke bruges til at registrere efter.
+  for (const c of ts.caseRows) {
+    assert.equal(Object.values(c.dage).reduce((n, m) => n + m, 0), c.total, `${c.case} stemmer ikke`);
+  }
+  assert.equal(ts.caseRows.reduce((n, c) => n + c.total, 0), ts.total);
+  assert.equal(ts.caseRows.reduce((n, c) => n + c.total, 0), ts.rows.reduce((n, x) => n + x.total, 0),
+    'pr. sag og pr. opgave skal give det samme');
+
+  // Det UDEN sagsnummer staar nederst - men det staar der.
+  const uden = ts.caseRows[ts.caseRows.length - 1];
+  assert.equal(uden.case, '', 'raekken uden sagsnummer hoerer nederst');
+  assert.ok(uden.total > 0);
+});
+
+test('decimaltimer: 3h 30m skrives 3,5 - og totalen regnes paa MINUTTERNE', () => {
+  const b = beregn;
+  assert.equal(b.formatDecimal(210), '3,5');
+  assert.equal(b.formatDecimal(15), '0,25');
+  assert.equal(b.formatDecimal(60), '1');
+  assert.equal(b.formatDecimal(1), '0,02');
+  assert.equal(b.formatDecimal(0), '0');
+  assert.equal(b.formatDecimal(423), '7,05');
+  // Dansk komma - det er sådan tallet skal skrives i det andet system.
+  assert.ok(!b.formatDecimal(210).includes('.'));
+
+  /*
+   * Summen af AFRUNDEDE decimaler er ikke altid den afrundede sum:
+   * 3 x 3h 20m viser 3,33 + 3,33 + 3,33 = 9,99, men totalen er 10.
+   * Derfor regnes totalerne paa minutterne og formateres til sidst - og
+   * derfor staar der i UI'et, at decimalerne er en VISNING.
+   */
+  const dele = [200, 200, 200];
+  const visteLagtSammen = dele.reduce((n, m) => n + Number(b.formatDecimal(m).replace(',', '.')), 0);
+  const rigtigTotal = Number(b.formatDecimal(dele.reduce((n, m) => n + m, 0)).replace(',', '.'));
+  assert.equal(rigtigTotal, 10);
+  assert.notEqual(visteLagtSammen, rigtigTotal, 'det er derfor totalen skal regnes paa minutterne');
+});

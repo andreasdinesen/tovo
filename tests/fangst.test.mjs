@@ -257,3 +257,57 @@ test('% i almindelig tekst er almindelig tekst', async () => {
     assert.equal(r.data.item.title, tekst, `"${tekst}" blev aendret`);
   }
 });
+
+test('syntaks i en titel, man RETTER, virker ligesom ved oprettelsen', async () => {
+  const ny = await k.kald('POST', '/api/v1/capture', { text: 'status moede' });
+  const id = ny.data.item.id;
+
+  // Skriv "#Ai" ind i titlen paa en opgave, der allerede findes.
+  const r = await k.kald('POST', `/api/v1/tasks/${id}/syntax`, { text: 'status moede #Ai' });
+  assert.equal(r.data.item.title, 'status moede', 'markoeren maa ikke blive staaende i titlen');
+  assert.deepEqual(r.data.nye, [{ kind: 'tag', name: 'Ai' }], 'maerkatet oprettes');
+  assert.equal(r.data.item.tagIds.length, 1);
+
+  const tags = (await k.kald('GET', '/api/v1/tags')).data.tags;
+  assert.ok(tags.some((t) => t.name === 'Ai' && t.count === 1));
+});
+
+test('et maerkat LAEGGES TIL - de gamle ryger ikke', async () => {
+  const opgaver = (await k.kald('GET', '/api/v1/items?kind=task')).data.items;
+  const en = opgaver.find((t) => t.title === 'status moede');
+  const r = await k.kald('POST', `/api/v1/tasks/${en.id}/syntax`, { text: 'status moede #internt' });
+  assert.equal(r.data.item.tagIds.length, 2, 'skriver man #internt, mener man ikke at #Ai skal vaek');
+});
+
+test('hele syntaksen virker ved redigering - undtagen %', async () => {
+  const ny = await k.kald('POST', '/api/v1/capture', { text: 'ren opgave' });
+  const r = await k.kald('POST', `/api/v1/tasks/${ny.data.item.id}/syntax`,
+    // Et projektnavn med mellemrum SKAL i anfoerselstegn - ellers tager
+    // parseren kun det foerste ord, og resten bliver staaende i titlen.
+    { text: 'ren opgave @"Nyt projekt" :SAG-9 ~90m !3/9' });
+  assert.equal(r.data.item.title, 'ren opgave');
+  assert.equal(r.data.item.caseNumber, 'SAG-9');
+  assert.equal(r.data.item.estimateMinutes, 90);
+  assert.equal(r.data.item.dueDate, '2026-09-03');
+  assert.ok(r.data.item.projectId, 'projektet blev oprettet og sat');
+  assert.equal(r.data.nye[0].name, 'Nyt projekt');
+
+  // `%` har ingen modtager ved en REDIGERING: at starte en timer er en
+  // handling ved oprettelsen. Saa bliver tegnet staaende, og svaret siger det.
+  const medProcent = await k.kald('POST', `/api/v1/tasks/${ny.data.item.id}/syntax`,
+    { text: 'ren opgave %' });
+  assert.match(medProcent.data.item.title, /%$/, 'tegnet maa ikke bare forsvinde');
+  assert.deepEqual(medProcent.data.ignored, ['%']);
+  assert.equal((await k.kald('GET', '/api/v1/timer/current')).data.timer, null, 'og der maa ikke starte en timer');
+});
+
+test('syntaksen har det sidste ord over rudens tomme felter', async () => {
+  // Fejlen der var: ruden gemte sit TOMME sagsfelt oven paa det, ":SAG-77"
+  // i titlen lige havde sat. Det man skriver, er det mest specifikke.
+  const ny = await k.kald('POST', '/api/v1/capture', { text: 'rydde op' });
+  await k.kald('PATCH', `/api/v1/items/${ny.data.item.id}`, { caseNumber: '' });
+  const r = await k.kald('POST', `/api/v1/tasks/${ny.data.item.id}/syntax`,
+    { text: 'rydde op :SAG-77 ~45m' });
+  assert.equal(r.data.item.caseNumber, 'SAG-77');
+  assert.equal(r.data.item.estimateMinutes, 45);
+});

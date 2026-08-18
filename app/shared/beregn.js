@@ -83,6 +83,23 @@
   }
 
   /**
+   * Minutter -> DECIMALTIMER med dansk komma: 3,5 · 0,25 · 7,05.
+   *
+   * Det er den form, timerne overfoeres i til et andet system - dér skriver
+   * man 3,5 og ikke "3h 30m". To decimaler: et kvarter er 0,25, og et minut
+   * er 0,02, saa der er ikke noget at hente ved flere.
+   *
+   * Bemaerk: summen af afrundede decimaler er ikke altid den afrundede sum
+   * (3 x 3h 20m = 3,33 + 3,33 + 3,33 = 9,99 mod 10). MINUTTERNE bagved er
+   * eksakte, og totalerne regnes paa dem - ikke paa de viste tal.
+   */
+  function formatDecimal(minutter) {
+    const m = Math.round(Number(minutter) || 0);
+    const timer = Math.round((m / 60) * 100) / 100;
+    return String(timer).replace('.', ',');
+  }
+
+  /**
    * Sekunder -> et UR: 0:07 · 12:34 · 1:02:03.
    *
    * formatVarighed skriver "1h 30m", som er rigtigt i en liste og forkert paa
@@ -493,6 +510,31 @@
       const liste = [...raekker.values()].sort((a, b) => String(a.case).localeCompare(String(b.case))
         || String(a.project).localeCompare(String(b.project))
         || b.total - a.total);
+
+      /*
+       * SAMME seddel, rullet op paa SAG.
+       *
+       * Det er den, timerne skrives af fra: i det andet system registreres
+       * der pr. dag pr. sagsnummer, ikke pr. opgave. En total for hele ugen
+       * kan ikke bruges til det - man skal vide, hvad der gik paa sagen om
+       * mandagen.
+       */
+      const perSag = new Map();
+      for (const raekke of liste) {
+        const sag = raekke.case || '';
+        if (!perSag.has(sag)) perSag.set(sag, { case: sag, dage: {}, total: 0, tasks: [] });
+        const g = perSag.get(sag);
+        g.tasks.push(raekke.title);
+        g.total += raekke.total;
+        for (const [iso, m] of Object.entries(raekke.dage)) g.dage[iso] = (g.dage[iso] || 0) + m;
+      }
+      const sagsliste = [...perSag.values()].sort((a, b) => {
+        // Det uden sagsnummer staar NEDERST: det er ikke noget, der skal
+        // registreres et andet sted - men det skal med, ellers stemmer
+        // totalen ikke.
+        if (!a.case !== !b.case) return a.case ? -1 : 1;
+        return String(a.case).localeCompare(String(b.case));
+      });
       // Kolonnesummerne skal kunne laegges sammen til totalen - ellers kan en
       // timeseddel ikke afstemmes med sig selv.
       const prDag = {};
@@ -500,6 +542,7 @@
       return {
         dage,
         rows: liste,
+        caseRows: sagsliste,
         perDay: prDag,
         total: liste.reduce((n, x) => n + x.total, 0),
       };
@@ -525,7 +568,7 @@
   }
 
   return {
-    parseVarighed, formatVarighed, formatUr, parseTidsrum, placerVarighed,
+    parseVarighed, formatVarighed, formatDecimal, formatUr, parseTidsrum, placerVarighed,
     tidspunkt, afrund, opret,
   };
 }));

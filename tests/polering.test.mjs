@@ -12,6 +12,7 @@ import { startServer, opretBruger } from './hjaelp.mjs';
 const require = createRequire(import.meta.url);
 const beregn = require('../app/shared/beregn.js');
 const toggl = require('../app/shared/toggl.js');
+const xlsx = require('../app/shared/xlsx.js');
 
 let srv;
 let k;
@@ -182,4 +183,65 @@ test('Toggl: varigheden laeses af Duration, og sekunder rundes', () => {
   assert.equal(toggl.togglVarighed('00:00:45'), 1, '45 sekunder er ét minut, ikke nul');
   assert.equal(toggl.togglVarighed('00:00:20'), 0);
   assert.equal(toggl.togglVarighed('vroevl'), null);
+});
+
+/* ---------------------------------------------------------- xlsx */
+
+
+test('xlsx: CRC32 er rigtig - ellers afviser Excel filen', () => {
+  // Den kendte proeve: CRC32("123456789") = 0xCBF43926.
+  assert.equal(xlsx.crc32(new TextEncoder().encode('123456789')), 0xCBF43926);
+});
+
+test('xlsx: celle-referencerne er base-26 uden nul', () => {
+  assert.equal(xlsx.celleRef(0, 0), 'A1');
+  assert.equal(xlsx.celleRef(25, 0), 'Z1');
+  assert.equal(xlsx.celleRef(26, 4), 'AA5');
+  assert.equal(xlsx.celleRef(51, 0), 'AZ1');
+  assert.equal(xlsx.celleRef(52, 0), 'BA1');
+});
+
+test('xlsx: filen er et gyldigt zip-arkiv, som vores EGEN laeser kan aabne', () => {
+  // Planner-importen laeser zip; her skriver vi ét. Kan de to tale sammen,
+  // er formatet rigtigt - og saa kan Excel ogsaa.
+  const b = xlsx.byg([{ navn: 'Ark', rows: [['Sag', 'Timer'], ['SAG-1', 3.5]] }]);
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+
+  let eocd = -1;
+  for (let i = b.length - 22; i >= 0; i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  assert.ok(eocd > 0, 'End of central directory mangler');
+  const antal = dv.getUint16(eocd + 10, true);
+  assert.equal(antal, 5, 'fem dele: content-types, rels, workbook, workbook-rels og ét ark');
+
+  // Hver lokal header skal staa, hvor det centrale directory siger.
+  let p = dv.getUint32(eocd + 16, true);
+  for (let i = 0; i < antal; i++) {
+    assert.equal(dv.getUint32(p, true), 0x02014b50, 'central header');
+    const offset = dv.getUint32(p + 42, true);
+    assert.equal(dv.getUint32(offset, true), 0x04034b50, 'lokal header ligger ikke, hvor der staar');
+    p += 46 + dv.getUint16(p + 28, true) + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+});
+
+test('xlsx: TAL skrives som tal - det er hele pointen frem for en CSV', () => {
+  const b = xlsx.byg([{ navn: 'Ark', rows: [['Sag', 'Timer'], ['SAG-1', 3.5], ['Tom', null]] }]);
+  const tekst = new TextDecoder().decode(b);
+  assert.match(tekst, /<c r="B2"><v>3\.5<\/v><\/c>/, 'tallet skal vaere en talcelle');
+  assert.match(tekst, /<c r="A2" t="inlineStr"><is><t[^>]*>SAG-1</);
+  assert.doesNotMatch(tekst, /<c r="B3"/, 'tomme celler skrives slet ikke');
+});
+
+test('xlsx: arknavne og tegn, der ellers vaelter filen', () => {
+  const b = xlsx.byg([
+    { navn: 'Per case: 2026/08 [uge 34]', rows: [['æøå & <tag>', 1]] },
+    { navn: 'x'.repeat(60), rows: [] },
+  ]);
+  const tekst = new TextDecoder().decode(b);
+  // : \ / ? * [ ] er forbudt i arknavne, og over 31 tegn afvises. Fejlen
+  // kommer foerst, naar brugeren aabner filen - saa den skal fanges her.
+  assert.doesNotMatch(tekst, /name="[^"]*[:\\/?*[\]]/);
+  for (const m of tekst.matchAll(/<sheet name="([^"]*)"/g)) {
+    assert.ok(m[1].length <= 31, `arknavnet er ${m[1].length} tegn`);
+  }
+  assert.match(tekst, /æøå &amp; &lt;tag&gt;/, 'danske tegn og escaping');
 });

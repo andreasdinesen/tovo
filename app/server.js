@@ -1011,15 +1011,17 @@ function findTagVedNavn(userId, navn) {
  * @param {boolean} [opretNye] opret ukendte projekter og tags. Falsk fra en
  *   forhaandsvisning, hvor intet endnu skal skrives.
  */
-function fangst(userId, tekst, opts) {
+/**
+ * Navne -> id'er, og opret det, der ikke findes.
+ *
+ * Bruges baade af fangsten og af den syntaks, man kan skrive i en TITEL, man
+ * retter. Ét sted: ellers ville "@Nyt projekt" oprette et projekt det ene
+ * sted og fejle det andet.
+ */
+function opslagFraSyntaks(userId, p, opts) {
   const o = opts || {};
-  const p = parse.tolkFangst(tekst);
-  if (!p.title) {
-    throw Object.assign(new Error('there is no text to capture'), { status: 400 });
-  }
-
   const nye = [];
-  let projectId = o.projectId || null;
+  let projectId;
   if (p.project) {
     let projekt = findProjektVedNavn(userId, p.project);
     if (!projekt) {
@@ -1043,6 +1045,18 @@ function fangst(userId, tekst, opts) {
     }
     if (tag) tagIds.push(tag.id);
   }
+  return { projectId, tagIds, nye };
+}
+
+function fangst(userId, tekst, opts) {
+  const o = opts || {};
+  const p = parse.tolkFangst(tekst);
+  if (!p.title) {
+    throw Object.assign(new Error('there is no text to capture'), { status: 400 });
+  }
+
+  const { projectId: fundet, tagIds, nye } = opslagFraSyntaks(userId, p, o);
+  const projectId = fundet || o.projectId || null;
 
   const item = gemItem(userId, {
     kind: 'task',
@@ -2625,6 +2639,50 @@ const MOENSTRE = [
       if (!tekst) { apiFejl(res, 400, 'empty_comment', 'A comment needs some text.'); return; }
       sendJson(res, 200, {
         comment: gemItem(auth.user.id, { kind: 'comment', taskId: ctx.params[0], text: tekst }),
+      });
+    },
+  },
+  {
+    /*
+     * Syntaks i en titel, man RETTER.
+     *
+     * "#Ai" skrevet ind i en eksisterende titel skal blive et maerkat -
+     * ellers virker syntaksen kun ved oprettelsen, og det er der ingen grund
+     * til at forvente som bruger.
+     *
+     * `%` er den ENESTE markoer uden en modtager her: at starte en timer er
+     * en handling ved oprettelsen, ikke en egenskab ved opgaven. Den bliver
+     * derfor STAAENDE i titlen, og svaret siger hvorfor - alt uden en
+     * modtager skal enten blive i teksten eller afvises hoejlydt.
+     */
+    metode: 'POST', re: /^\/api\/v1\/tasks\/([0-9a-f-]{8,64})\/syntax$/,
+    kald: async (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const body = await readJsonBody(req, auth.viaToken);
+      const item = hentItem(auth.user.id, ctx.params[0]);
+      if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
+
+      const p = parse.tolkFangst(String(body.text || ''));
+      const { projectId, tagIds, nye } = opslagFraSyntaks(auth.user.id, p, {});
+
+      const felter = { title: p.startTimer ? `${p.title} %`.trim() : p.title };
+      if (projectId) felter.projectId = projectId;
+      if (tagIds.length) {
+        // Maerkater LAEGGES TIL. Skriver man #Ai i en titel, mener man ikke,
+        // at de andre skal vaek.
+        felter.tagIds = [...new Set((item.tagIds || []).concat(tagIds))];
+      }
+      if (p.caseNumber) felter.caseNumber = p.caseNumber;
+      if (p.estimateMinutes) felter.estimateMinutes = p.estimateMinutes;
+      if (p.due) { felter.dueDate = p.due.dato; if (p.due.tid) felter.dueTime = p.due.tid; }
+      if (p.recurrenceRule) felter.recurrenceRule = p.recurrenceRule;
+
+      sendJson(res, 200, {
+        item: gemItem(auth.user.id, Object.assign({}, item, felter)),
+        nye,
+        warnings: p.warnings,
+        ignored: p.startTimer ? ['%'] : [],
       });
     },
   },

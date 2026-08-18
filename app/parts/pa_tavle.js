@@ -44,7 +44,10 @@ function tavleHtml(p, opgaver, forbrug) {
       <p>Add the phases this project runs through — they belong to this project alone.</p>
       <div class="row" style="justify-content:center"><button class="btn" id="tvKolonner">Add columns</button></div></div>`;
   }
-  return `<div class="tavle" id="tavle">
+  // data-keynav: den globale piletast-handler leder efter [data-keynav]
+  // [data-row]. Uden den kunne man ikke komme ned i tavlen med tastaturet -
+  // listen kunne, og forskellen var usynlig, indtil man proevede.
+  return `<div class="tavle" id="tavle" data-keynav>
     ${kolonner.map((k) => {
     const dens = iKolonne(opgaver, k.id);
     const minutter = dens.reduce((n, t) => n + (forbrug[t.id] || 0), 0);
@@ -75,7 +78,8 @@ function kortHtml(t, forbrug) {
     const forsinket = t.status !== 'done' && t.dueDate < state.today;
     dele.push(`<span class="${forsinket ? 'overdue' : ''}">${esc(visDato(t.dueDate))}</span>`);
   }
-  return `<div class="kort${t.status === 'done' ? ' dim' : ''}" data-kort="${esc(t.id)}" tabindex="0">
+  return `<div class="kort${t.status === 'done' ? ' dim' : ''}" data-kort="${esc(t.id)}"
+    data-row tabindex="0">
     <div class="kort-titel">${esc(t.title)}</div>
     ${dele.length ? `<div class="kort-meta meta">${dele.join(' · ')}</div>` : ''}
     <div class="kort-knapper">
@@ -110,8 +114,41 @@ function bindTavle(host, p, opgaver, forbrug) {
 
   host.querySelectorAll('[data-kort]').forEach((el) => {
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); aabnOpgave(el.dataset.kort); }
-      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.kort); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Samme genvej som i listerne: ⌘↵ starter uret paa den markerede.
+        if (e.metaKey || e.ctrlKey) {
+          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.kort;
+          if (koerer) stopTimer();
+          else startTimerPaa(el.dataset.kort);
+          return;
+        }
+        aabnOpgave(el.dataset.kort);
+        return;
+      }
+      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.kort); return; }
+
+      /*
+       * Venstre og hoejre skifter KOLONNE.
+       *
+       * Op og ned haandteres af den globale handler, som gaar gennem alle
+       * kort i dokumentets raekkefoelge - altsaa kolonne for kolonne. Uden
+       * venstre/hoejre skulle man taste sig igennem en hel kolonne for at
+       * naa nabokolonnen, og paa en tavle er det den forkerte vej.
+       */
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const kolonne = el.closest('.kolonne');
+      const alle = [...host.querySelectorAll('.kolonne')];
+      const i = alle.indexOf(kolonne);
+      const naeste = alle[i + (e.key === 'ArrowRight' ? 1 : -1)];
+      if (!naeste) return;
+      const her = [...kolonne.querySelectorAll('[data-kort]')].indexOf(el);
+      const derovre = [...naeste.querySelectorAll('[data-kort]')];
+      if (!derovre.length) return;
+      // Er nabokolonnen kortere, lander man paa dens sidste kort - ikke paa
+      // ingenting.
+      (derovre[Math.min(her, derovre.length - 1)]).focus();
     });
     el.addEventListener('pointerdown', (e) => startTraek(e, el, p, opgaver, forbrug));
   });

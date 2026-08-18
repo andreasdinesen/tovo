@@ -250,9 +250,15 @@ function opret(srv) {
         const linjer = [`${fra} – ${til}: ${f(r.total)} in total`,
           `On projects: ${f(r.onProjects)} · Ad hoc: ${f(r.adhoc)} · Completed: ${r.completed}`];
         if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
-        if (r.cases.length) {
-          linjer.push('', 'Per case number:');
-          for (const c of r.cases) linjer.push(`  ${c.case}: ${f(c.minutter)}`);
+        // Pr. sag PR. DAG - det er den opgoerelse, timerne skrives af fra.
+        const ts = b.timeseddel(srv.dagStart(fra), srv.dagStart(til) + 86400);
+        if (ts.caseRows.length) {
+          linjer.push('', 'Per case number, per day:');
+          for (const c of ts.caseRows) {
+            const dage = ts.dage.filter((iso) => c.dage[iso])
+              .map((iso) => `${iso}: ${f(c.dage[iso])}`).join(' · ');
+            linjer.push(`  ${c.case || '(no case number)'} — ${f(c.total)}${dage ? ` (${dage})` : ''}`);
+          }
         }
         for (const p of r.projects) {
           linjer.push('', `${p.name} — ${f(p.minutter)}`);
@@ -264,7 +270,7 @@ function opret(srv) {
         }
         const tynde = r.days.filter((d) => d.tynd || d.tom);
         if (tynde.length) linjer.push('', `Thin days: ${tynde.map((d) => d.date).join(', ')} — probably forgotten registration.`);
-        return { tekst: linjer.join('\n'), data: { report: r } };
+        return { tekst: linjer.join('\n'), data: { report: r, timesheet: ts } };
       },
     },
 

@@ -61,7 +61,8 @@ async function visKundevisning(projektId) {
   host.innerHTML = `<div class="modal-card kundekort" role="dialog" aria-label="Customer view">
       <div class="kundeark">${ark}</div>
       <div class="modal-foot">
-        <button class="btn primary" id="kPrint">Print / save as PDF</button>
+        <button class="btn primary" id="kExcel">Excel</button>
+        <button class="btn" id="kPrint">Print / save as PDF</button>
         <button class="btn" id="kClose">Close</button>
       </div>
     </div>`;
@@ -72,6 +73,24 @@ async function visKundevisning(projektId) {
   document.getElementById('kClose').addEventListener('click', luk);
   document.getElementById('kPrint').addEventListener('click', () => {
     printArk(ark, `tovo-${d.project.name}-${state.today}`);
+  });
+  document.getElementById('kExcel').addEventListener('click', () => {
+    const t = (m) => excelTimer(m);
+    hentExcel([{
+      navn: d.project.name,
+      rows: [
+        [d.project.name, d.project.customer || '', d.project.caseNumber || ''],
+        [],
+        ['Task', 'Status', 'Estimated (hours)', 'Spent (hours)'],
+        ...d.tasks.slice().sort((a, b) => (a.position || 0) - (b.position || 0))
+          .map((x) => [x.title, x.status === 'done' ? 'Done' : 'In progress',
+            t(x.estimateMinutes), t(d.spent[x.id] || 0)]),
+        ['Total', '', t(d.rollup.estimat), t(d.rollup.forbrugt)],
+        ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
+          ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
+      ],
+    }], `tovo-${d.project.name.replace(/[^\w-]+/g, '-')}-${state.today}.xlsx`);
+    toast('Excel file downloaded.');
   });
 }
 

@@ -84,6 +84,23 @@
   }
 
   /**
+   * Minutter -> DECIMALTIMER med dansk komma: 3,5 · 0,25 · 7,05.
+   *
+   * Det er den form, timerne overfoeres i til et andet system - dér skriver
+   * man 3,5 og ikke "3h 30m". To decimaler: et kvarter er 0,25, og et minut
+   * er 0,02, saa der er ikke noget at hente ved flere.
+   *
+   * Bemaerk: summen af afrundede decimaler er ikke altid den afrundede sum
+   * (3 x 3h 20m = 3,33 + 3,33 + 3,33 = 9,99 mod 10). MINUTTERNE bagved er
+   * eksakte, og totalerne regnes paa dem - ikke paa de viste tal.
+   */
+  function formatDecimal(minutter) {
+    const m = Math.round(Number(minutter) || 0);
+    const timer = Math.round((m / 60) * 100) / 100;
+    return String(timer).replace('.', ',');
+  }
+
+  /**
    * Sekunder -> et UR: 0:07 · 12:34 · 1:02:03.
    *
    * formatVarighed skriver "1h 30m", som er rigtigt i en liste og forkert paa
@@ -494,6 +511,31 @@
       const liste = [...raekker.values()].sort((a, b) => String(a.case).localeCompare(String(b.case))
         || String(a.project).localeCompare(String(b.project))
         || b.total - a.total);
+
+      /*
+       * SAMME seddel, rullet op paa SAG.
+       *
+       * Det er den, timerne skrives af fra: i det andet system registreres
+       * der pr. dag pr. sagsnummer, ikke pr. opgave. En total for hele ugen
+       * kan ikke bruges til det - man skal vide, hvad der gik paa sagen om
+       * mandagen.
+       */
+      const perSag = new Map();
+      for (const raekke of liste) {
+        const sag = raekke.case || '';
+        if (!perSag.has(sag)) perSag.set(sag, { case: sag, dage: {}, total: 0, tasks: [] });
+        const g = perSag.get(sag);
+        g.tasks.push(raekke.title);
+        g.total += raekke.total;
+        for (const [iso, m] of Object.entries(raekke.dage)) g.dage[iso] = (g.dage[iso] || 0) + m;
+      }
+      const sagsliste = [...perSag.values()].sort((a, b) => {
+        // Det uden sagsnummer staar NEDERST: det er ikke noget, der skal
+        // registreres et andet sted - men det skal med, ellers stemmer
+        // totalen ikke.
+        if (!a.case !== !b.case) return a.case ? -1 : 1;
+        return String(a.case).localeCompare(String(b.case));
+      });
       // Kolonnesummerne skal kunne laegges sammen til totalen - ellers kan en
       // timeseddel ikke afstemmes med sig selv.
       const prDag = {};
@@ -501,6 +543,7 @@
       return {
         dage,
         rows: liste,
+        caseRows: sagsliste,
         perDay: prDag,
         total: liste.reduce((n, x) => n + x.total, 0),
       };
@@ -526,7 +569,7 @@
   }
 
   return {
-    parseVarighed, formatVarighed, formatUr, parseTidsrum, placerVarighed,
+    parseVarighed, formatVarighed, formatDecimal, formatUr, parseTidsrum, placerVarighed,
     tidspunkt, afrund, opret,
   };
 }));
@@ -1636,6 +1679,186 @@
   return { laesToggl, parseCsv, togglKolonner, togglVarighed, TOGGL };
 }));
 
+/* ---- shared/xlsx.js ---- */
+/* tovo - skriver en .xlsx uden en eneste pakke.
+ *
+ * Planner-importen LAESER et zip-arkiv med XML (§6c). Det her er den anden
+ * vej: en regnearksfil er de samme fem XML-filer i en zip, og en zip kan
+ * skrives uden komprimering (metode 0, "stored"). Saa skal der kun bruges
+ * CRC32 - og det er en tabel og tolv linjer.
+ *
+ * Tallene skrives som TAL, ikke som tekst. Det er hele pointen med at lave en
+ * rigtig regnearksfil frem for en CSV: 3,5 skal kunne laegges sammen i Excel,
+ * uanset om maskinen staar paa dansk eller engelsk komma.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.tovoXlsx = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  const TABEL = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c >>> 0;
+    }
+    return t;
+  })();
+
+  function crc32(bytes) {
+    let c = 0xFFFFFFFF;
+    for (let i = 0; i < bytes.length; i++) c = TABEL[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  const tekst = (s) => new TextEncoder().encode(s);
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      // Kontroltegn er ikke gyldige i XML 1.0 og faar Excel til at afvise
+      // HELE filen med "uleseligt indhold" - uden at sige hvor.
+      .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+  }
+
+  /** "A1", "AB12" - kolonnebogstaverne er base-26 uden nul. */
+  function celleRef(kolonne, raekke) {
+    let n = kolonne + 1;
+    let s = '';
+    while (n > 0) {
+      const rest = (n - 1) % 26;
+      s = String.fromCharCode(65 + rest) + s;
+      n = Math.floor((n - 1) / 26);
+    }
+    return `${s}${raekke + 1}`;
+  }
+
+  function arkXml(raekker) {
+    const ud = raekker.map((raekke, r) => {
+      const celler = (raekke || []).map((v, c) => {
+        const ref = celleRef(c, r);
+        if (v === null || v === undefined || v === '') return '';
+        if (typeof v === 'number' && isFinite(v)) {
+          return `<c r="${ref}"><v>${v}</v></c>`;
+        }
+        // inlineStr: ingen sharedStrings-fil at holde i trit med.
+        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+      }).join('');
+      return `<row r="${r + 1}">${celler}</row>`;
+    }).join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+      + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+      + `<sheetData>${ud}</sheetData></worksheet>`;
+  }
+
+  /* Arknavne: Excel afviser filen, hvis de indeholder : \ / ? * [ ] eller er
+     over 31 tegn. Fejlen kommer foerst, naar brugeren aabner filen. */
+  const arknavn = (n, i) => (String(n || `Sheet${i + 1}`)
+    .replace(/[:\\/?*[\]]/g, ' ').trim().slice(0, 31) || `Sheet${i + 1}`);
+
+  /**
+   * @param {array} ark  [{navn, rows: [[celle, ...], ...]}]
+   * @returns {Uint8Array} en .xlsx
+   */
+  function byg(ark) {
+    const dele = ark.length ? ark : [{ navn: 'Sheet1', rows: [] }];
+    const filer = [
+      ['[Content_Types].xml',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        + '<Default Extension="xml" ContentType="application/xml"/>'
+        + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        + dele.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" `
+          + 'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')
+        + '</Types>'],
+      ['_rels/.rels',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+        + '</Relationships>'],
+      ['xl/workbook.xml',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        + 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+        + dele.map((a, i) => `<sheet name="${esc(arknavn(a.navn, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')
+        + '</sheets></workbook>'],
+      ['xl/_rels/workbook.xml.rels',
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        + dele.map((_, i) => `<Relationship Id="rId${i + 1}" `
+          + 'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+          + `Target="worksheets/sheet${i + 1}.xml"/>`).join('')
+        + '</Relationships>'],
+      ...dele.map((a, i) => [`xl/worksheets/sheet${i + 1}.xml`, arkXml(a.rows || [])]),
+    ];
+
+    /* Zip'en skrives UDEN komprimering (metode 0). En regnearksfil paa nogle
+       kilobyte har intet at hente ved deflate, og saa slipper vi for at gaa
+       gennem CompressionStream - som er asynkron og ikke findes alle steder. */
+    const lokale = [];
+    const centrale = [];
+    let offset = 0;
+
+    for (const [navn, indhold] of filer) {
+      const navnBytes = tekst(navn);
+      const data = tekst(indhold);
+      const crc = crc32(data);
+
+      const lokal = new Uint8Array(30 + navnBytes.length + data.length);
+      const lv = new DataView(lokal.buffer);
+      lv.setUint32(0, 0x04034b50, true);
+      lv.setUint16(4, 20, true);              // version
+      lv.setUint16(6, 0x0800, true);          // flag: navnet er UTF-8
+      lv.setUint16(8, 0, true);               // metode 0 = stored
+      lv.setUint32(14, crc, true);
+      lv.setUint32(18, data.length, true);
+      lv.setUint32(22, data.length, true);
+      lv.setUint16(26, navnBytes.length, true);
+      lokal.set(navnBytes, 30);
+      lokal.set(data, 30 + navnBytes.length);
+      lokale.push(lokal);
+
+      const central = new Uint8Array(46 + navnBytes.length);
+      const cv = new DataView(central.buffer);
+      cv.setUint32(0, 0x02014b50, true);
+      cv.setUint16(4, 20, true);
+      cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true);
+      cv.setUint16(10, 0, true);
+      cv.setUint32(16, crc, true);
+      cv.setUint32(20, data.length, true);
+      cv.setUint32(24, data.length, true);
+      cv.setUint16(28, navnBytes.length, true);
+      cv.setUint32(42, offset, true);
+      central.set(navnBytes, 46);
+      centrale.push(central);
+
+      offset += lokal.length;
+    }
+
+    const centralStart = offset;
+    const centralLaengde = centrale.reduce((n, c) => n + c.length, 0);
+    const slut = new Uint8Array(22);
+    const sv = new DataView(slut.buffer);
+    sv.setUint32(0, 0x06054b50, true);
+    sv.setUint16(8, filer.length, true);
+    sv.setUint16(10, filer.length, true);
+    sv.setUint32(12, centralLaengde, true);
+    sv.setUint32(16, centralStart, true);
+
+    const samlet = new Uint8Array(centralStart + centralLaengde + 22);
+    let p = 0;
+    for (const del of lokale.concat(centrale, [slut])) { samlet.set(del, p); p += del.length; }
+    return samlet;
+  }
+
+  return { byg, crc32, celleRef };
+}));
+
 /* ---- p1_core.js ---- */
 'use strict';
 /* tovo - kerne: opstart, tema, login, app-skal.
@@ -1644,7 +1867,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 6;
+const APP_VERSION = 7;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -3786,7 +4009,9 @@ async function tegnProjekt(id) {
         <button class="linkbtn" id="tvKolonner">Edit columns</button>
         <span class="meta">Drag a card between columns — or use the arrow on the card.</span>
       </div>
-      ${tavleHtml(p, d.tasks, d.spent)}`
+      ${tavleHtml(p, d.tasks, d.spent)}
+      <p class="hintline meta">Arrow keys move into the board · ← → change column
+        · Enter opens · ⌘↵ starts the timer · Space completes · Esc leaves</p>`
     : `<div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
@@ -3919,7 +4144,8 @@ async function aabnOpgave(id) {
       <div class="detail-head">
         <button class="tick big${it.status === 'done' ? ' on' : ''}" id="dTick"
           aria-label="${it.status === 'done' ? 'Reopen' : 'Complete'}"></button>
-        <input class="detail-title input" id="dTitle" value="${esc(it.title)}">
+        <input class="detail-title input" id="dTitle" value="${esc(it.title)}"
+          title="You can write #tag, @project, :case, ~estimate and !date here too">
       </div>
 
       <label class="field"><span>Notes</span>
@@ -4058,6 +4284,34 @@ function bindDetalje(host, it, startLink) {
       f.recurrenceRule = regel;
     } else f.recurrenceRule = null;
     try {
+      /*
+       * Staar der SYNTAKS i titlen, skal den virke - ogsaa naar man retter.
+       * Serveren tolker den med den samme parser som fangsten og opretter
+       * det, der mangler, saa "#Ai" i en titel bliver et maerkat og ikke
+       * bare tekst.
+       */
+      const harSyntaks = typeof tovoParse !== 'undefined'
+        && new RegExp(`(^|\\s)[${tovoParse.MARKOERER}]`).test(f.title);
+      if (harSyntaks) {
+        /*
+         * Ruden FOERST, syntaksen bagefter.
+         *
+         * Den omvendte raekkefoelge var en fejl: `:SAG-77` i titlen satte
+         * sagsnummeret, og den efterfoelgende gemning af rudens felter
+         * skrev det tomme sagsfelt hen over igen. Det, man lige har skrevet,
+         * er det mest specifikke - saa det skal have det sidste ord.
+         */
+        await api('PATCH', `/api/v1/items/${it.id}`, f);
+        const d = await api('POST', `/api/v1/tasks/${it.id}/syntax`, { text: f.title });
+        luk();
+        await genindlaes();
+        const dele = [];
+        if (d.nye.length) dele.push(`created ${d.nye.map((n) => `${n.kind === 'tag' ? '#' : '@'}${n.name}`).join(', ')}`);
+        if (d.ignored.length) dele.push('% only works when you create a task');
+        if (d.warnings.length) dele.push(d.warnings[0]);
+        toast(dele.length ? `Saved — ${dele.join(' · ')}` : 'Saved.');
+        return;
+      }
       await api('PATCH', `/api/v1/items/${it.id}`, f);
       luk();
       await genindlaes();
@@ -4600,7 +4854,8 @@ async function visKundevisning(projektId) {
   host.innerHTML = `<div class="modal-card kundekort" role="dialog" aria-label="Customer view">
       <div class="kundeark">${ark}</div>
       <div class="modal-foot">
-        <button class="btn primary" id="kPrint">Print / save as PDF</button>
+        <button class="btn primary" id="kExcel">Excel</button>
+        <button class="btn" id="kPrint">Print / save as PDF</button>
         <button class="btn" id="kClose">Close</button>
       </div>
     </div>`;
@@ -4611,6 +4866,24 @@ async function visKundevisning(projektId) {
   document.getElementById('kClose').addEventListener('click', luk);
   document.getElementById('kPrint').addEventListener('click', () => {
     printArk(ark, `tovo-${d.project.name}-${state.today}`);
+  });
+  document.getElementById('kExcel').addEventListener('click', () => {
+    const t = (m) => excelTimer(m);
+    hentExcel([{
+      navn: d.project.name,
+      rows: [
+        [d.project.name, d.project.customer || '', d.project.caseNumber || ''],
+        [],
+        ['Task', 'Status', 'Estimated (hours)', 'Spent (hours)'],
+        ...d.tasks.slice().sort((a, b) => (a.position || 0) - (b.position || 0))
+          .map((x) => [x.title, x.status === 'done' ? 'Done' : 'In progress',
+            t(x.estimateMinutes), t(d.spent[x.id] || 0)]),
+        ['Total', '', t(d.rollup.estimat), t(d.rollup.forbrugt)],
+        ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
+          ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
+      ],
+    }], `tovo-${d.project.name.replace(/[^\w-]+/g, '-')}-${state.today}.xlsx`);
+    toast('Excel file downloaded.');
   });
 }
 
@@ -4955,6 +5228,12 @@ async function udfoerImport() {
 
 const rapportState = { fra: null, til: null, data: null };
 
+/* Decimaltimer er standard: rapporten er et overfoerselsbilag, ikke en
+   laeseoplevelse. Den, der vil se 3h 30m, kan skifte. */
+function rapportDecimal() {
+  try { return localStorage.getItem('tovo_rapport_decimal') !== '0'; } catch { return true; }
+}
+
 function ugeMandag(iso) {
   const [aa, mm, dd] = iso.split('-').map(Number);
   const d = new Date(aa, mm - 1, dd);
@@ -4984,7 +5263,15 @@ async function tegnRapport() {
   } catch (ex) { toast(ex.message); return; }
   rapportState.data = d;
 
-  const f = tovoBeregn.formatVarighed;
+  /*
+   * Rapporten har ÉT talformat, og det kan skiftes.
+   *
+   * Decimaltimer (3,5) er den form, timerne overfoeres i til et andet
+   * system; timer og minutter (3h 30m) er den, man laeser. Valget huskes -
+   * man skifter ikke frem og tilbage.
+   */
+  const decimal = rapportDecimal();
+  const f = (m) => (decimal ? tovoBeregn.formatDecimal(m) : tovoBeregn.formatVarighed(m));
   const r = d.report;
   const ts = d.timesheet;
   const forrige = d.previous;
@@ -5001,6 +5288,9 @@ async function tegnRapport() {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Report</h1>
       <span class="row" style="gap:8px">
+        <button class="btn${decimal ? ' primary' : ''}" id="rFormat"
+          title="Decimal hours are what you type into the other system">${decimal ? '3,5' : '3h 30m'}</button>
+        <button class="btn" id="rExcel">Excel</button>
         <button class="btn" id="rMarkdown">Copy as markdown</button>
         <button class="btn" id="rPrint">Print / PDF</button>
       </span>
@@ -5037,17 +5327,29 @@ async function tegnRapport() {
     r.days.filter((x) => x.tynd || x.tom).map((x) => dagsnavn[x.weekday]).join(', ')
   } look thin — that is usually forgotten registration, not a quiet day.</p>` : ''}
 
-    ${r.cases.length ? `<h2 class="group">Per case number<span class="group-count">${r.cases.length}</span></h2>
-      <table class="data rapporttabel">
-        <tr><th>Case</th><th class="num">Hours</th><th>Tasks</th></tr>
-        ${r.cases.map((c) => `<tr>
-          <td>${c.case === '(no case number)' ? '<span class="meta">(no case number)</span>' : sagHtml(c.case)}</td>
-          <td class="num">${esc(f(c.minutter))}</td>
-          <td class="meta">${esc(c.tasks.map((t) => t.title).join(', ').slice(0, 90))}</td>
+    ${ts.caseRows.length ? `<h2 class="group">Per case number, per day<span class="group-count">${ts.caseRows.length}</span></h2>
+      <div class="tabelrul">
+      <table class="data rapporttabel timeseddel">
+        <tr><th>Case</th>
+          ${ts.dage.map((iso) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return `<th class="num">${dagsnavn[d.getDay()]}<span class="meta">${iso.slice(8)}</span></th>`;
+  }).join('')}
+          <th class="num">Total</th></tr>
+        ${ts.caseRows.map((c) => `<tr>
+          <td>${c.case ? sagHtml(c.case) : '<span class="meta">(no case number)</span>'}</td>
+          ${ts.dage.map((iso) => `<td class="num">${c.dage[iso] ? esc(f(c.dage[iso])) : ''}</td>`).join('')}
+          <td class="num"><strong>${esc(f(c.total))}</strong></td>
         </tr>`).join('')}
+        <tr><td><strong>Total</strong></td>
+          ${ts.dage.map((iso) => `<td class="num"><strong>${ts.perDay[iso] ? esc(f(ts.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(ts.total))}</strong></td></tr>
       </table>
-      <p class="meta">This is the list to reconcile against — the hours you register elsewhere,
-        per case number.</p>` : ''}
+      </div>
+      <p class="meta">This is what you type into the other system: one number per case,
+        per day.${decimal ? ' Hours as decimals — 3,5 is three and a half. They are rounded to two '
+    + 'places for display; the minutes behind them are exact, and the totals are added up from those.'
+    : ''}</p>` : ''}
 
     ${ts.rows.length ? `<h2 class="group">Per day, per task<span class="group-count">${ts.rows.length}</span></h2>
       <div class="tabelrul">
@@ -5098,6 +5400,10 @@ async function tegnRapport() {
       tegnRapport();
     });
   }
+  document.getElementById('rFormat').addEventListener('click', () => {
+    try { localStorage.setItem('tovo_rapport_decimal', decimal ? '0' : '1'); } catch { /* privat */ }
+    tegnRapport();
+  });
   document.getElementById('rMarkdown').addEventListener('click', async () => {
     const md = rapportMarkdown(d);
     const ok = await kopier(md);
@@ -5105,6 +5411,40 @@ async function tegnRapport() {
   });
   document.getElementById('rPrint').addEventListener('click', () => {
     printArk(rapportArkHtml(d), `tovo-report-${d.from}`);
+  });
+  document.getElementById('rExcel').addEventListener('click', () => {
+    // Tre ark: det man skal REGISTRERE efter, det man skal kunne forklare
+    // det ud fra, og de raa poster til den, der vil regne selv.
+    const dagsHoved = ts.dage.map((iso) => iso.slice(5));
+    hentExcel([
+      {
+        navn: 'Per case per day',
+        rows: [
+          ['Case', ...dagsHoved, 'Total (hours)'],
+          ...ts.caseRows.map((c) => [c.case || '(no case number)',
+            ...ts.dage.map((iso) => excelTimer(c.dage[iso])), excelTimer(c.total)]),
+          ['Total', ...ts.dage.map((iso) => excelTimer(ts.perDay[iso])), excelTimer(ts.total)],
+        ],
+      },
+      {
+        navn: 'Per task per day',
+        rows: [
+          ['Case', 'Project', 'Task', ...dagsHoved, 'Total (hours)'],
+          ...ts.rows.map((x) => [x.case || '', x.project || '', x.title,
+            ...ts.dage.map((iso) => excelTimer(x.dage[iso])), excelTimer(x.total)]),
+        ],
+      },
+      {
+        navn: 'Per project',
+        rows: [
+          ['Project', 'Task', 'Estimated (hours)', 'Spent (hours)', 'Status'],
+          ...r.projects.flatMap((p) => p.tasks.map((t) => [p.name, t.title,
+            excelTimer(t.estimateMinutes), excelTimer(t.minutter),
+            t.completedIPerioden ? 'Completed' : 'Still open'])),
+        ],
+      },
+    ], `tovo-${d.from}_${d.to}.xlsx`);
+    toast('Excel file downloaded.');
   });
 }
 
@@ -5119,18 +5459,25 @@ function skiftPeriode(n) {
  * det, en maskine skal parse.
  */
 function rapportMarkdown(d) {
-  const f = tovoBeregn.formatVarighed;
+  const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
   const r = d.report;
   const linjer = [`# ${d.from} – ${d.to}`, ''];
   linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`);
   if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
   linjer.push('');
-  if (r.cases.length) {
-    linjer.push('## Per case number', '');
-    for (const c of r.cases) linjer.push(`- **${c.case}**: ${f(c.minutter)}`);
+  const ts = d.timesheet;
+  if (ts && ts.caseRows.length) {
+    // Sagen pr. dag foerst: det er den, der skal skrives af.
+    linjer.push('## Per case number, per day', '');
+    linjer.push(`| Case | ${ts.dage.map((iso) => iso.slice(5)).join(' | ')} | Total |`);
+    linjer.push(`|---|${ts.dage.map(() => '--:').join('|')}|--:|`);
+    for (const c of ts.caseRows) {
+      linjer.push(`| ${c.case || '(no case number)'} | `
+        + `${ts.dage.map((iso) => (c.dage[iso] ? f(c.dage[iso]) : '')).join(' | ')} | ${f(c.total)} |`);
+    }
+    linjer.push(`| **Total** | ${ts.dage.map((iso) => (ts.perDay[iso] ? f(ts.perDay[iso]) : '')).join(' | ')} | **${f(ts.total)}** |`);
     linjer.push('');
   }
-  const ts = d.timesheet;
   if (ts && ts.rows.length) {
     // En markdown-tabel: den kan klistres i OneNote og laeses som den er.
     linjer.push('## Per day, per task', '');
@@ -5156,12 +5503,21 @@ function rapportMarkdown(d) {
 
 /** Samme tal, samme raekkefoelge - bare til papir. */
 function rapportArkHtml(d) {
-  const f = tovoBeregn.formatVarighed;
+  const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
   const r = d.report;
   return `
     <h1>${esc(d.from)} – ${esc(d.to)}</h1>
     <p class="pkunde">${esc(f(r.total))} in total · ${esc(f(r.onProjects))} on projects
       · ${esc(f(r.adhoc))} ad hoc${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
+    ${d.timesheet && d.timesheet.caseRows.length ? `<table>
+        <thead><tr><th>Case</th>
+          ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
+          <th class="num">Total</th></tr></thead>
+        <tbody>${d.timesheet.caseRows.map((c) => `<tr>
+          <td>${esc(c.case || '(no case number)')}</td>
+          ${d.timesheet.dage.map((iso) => `<td class="num">${c.dage[iso] ? esc(f(c.dage[iso])) : ''}</td>`).join('')}
+          <td class="num">${esc(f(c.total))}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
     ${d.timesheet && d.timesheet.rows.length ? `<table>
         <thead><tr><th>Case</th><th>Task</th>
           ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
@@ -5588,6 +5944,39 @@ function visGenveje() {
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
 }
 
+
+/* ------------------------------------------------------ excel-download */
+
+/**
+ * Henter en .xlsx ned.
+ *
+ * Blob + object-URL og et <a download>. URL'en frigives bagefter - ellers
+ * ligger filen i hukommelsen, saa laenge fanen er aaben.
+ */
+function hentExcel(ark, filnavn) {
+  const data = tovoXlsx.byg(ark);
+  const blob = new Blob([data], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filnavn;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Timer som TAL, ikke tekst.
+ *
+ * Det er hele grunden til at lave en rigtig regnearksfil frem for en CSV:
+ * 3,5 skal kunne laegges sammen i Excel, uanset om maskinen staar paa dansk
+ * eller engelsk komma. Excel viser det med maskinens eget komma af sig selv.
+ */
+const excelTimer = (minutter) => (minutter ? Math.round((minutter / 60) * 100) / 100 : null);
+
 /* ---- pa_tavle.js ---- */
 'use strict';
 /* tovo - kanban-tavlen paa et projekt.
@@ -5635,7 +6024,10 @@ function tavleHtml(p, opgaver, forbrug) {
       <p>Add the phases this project runs through — they belong to this project alone.</p>
       <div class="row" style="justify-content:center"><button class="btn" id="tvKolonner">Add columns</button></div></div>`;
   }
-  return `<div class="tavle" id="tavle">
+  // data-keynav: den globale piletast-handler leder efter [data-keynav]
+  // [data-row]. Uden den kunne man ikke komme ned i tavlen med tastaturet -
+  // listen kunne, og forskellen var usynlig, indtil man proevede.
+  return `<div class="tavle" id="tavle" data-keynav>
     ${kolonner.map((k) => {
     const dens = iKolonne(opgaver, k.id);
     const minutter = dens.reduce((n, t) => n + (forbrug[t.id] || 0), 0);
@@ -5666,7 +6058,8 @@ function kortHtml(t, forbrug) {
     const forsinket = t.status !== 'done' && t.dueDate < state.today;
     dele.push(`<span class="${forsinket ? 'overdue' : ''}">${esc(visDato(t.dueDate))}</span>`);
   }
-  return `<div class="kort${t.status === 'done' ? ' dim' : ''}" data-kort="${esc(t.id)}" tabindex="0">
+  return `<div class="kort${t.status === 'done' ? ' dim' : ''}" data-kort="${esc(t.id)}"
+    data-row tabindex="0">
     <div class="kort-titel">${esc(t.title)}</div>
     ${dele.length ? `<div class="kort-meta meta">${dele.join(' · ')}</div>` : ''}
     <div class="kort-knapper">
@@ -5701,8 +6094,41 @@ function bindTavle(host, p, opgaver, forbrug) {
 
   host.querySelectorAll('[data-kort]').forEach((el) => {
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); aabnOpgave(el.dataset.kort); }
-      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.kort); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // Samme genvej som i listerne: ⌘↵ starter uret paa den markerede.
+        if (e.metaKey || e.ctrlKey) {
+          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.kort;
+          if (koerer) stopTimer();
+          else startTimerPaa(el.dataset.kort);
+          return;
+        }
+        aabnOpgave(el.dataset.kort);
+        return;
+      }
+      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.kort); return; }
+
+      /*
+       * Venstre og hoejre skifter KOLONNE.
+       *
+       * Op og ned haandteres af den globale handler, som gaar gennem alle
+       * kort i dokumentets raekkefoelge - altsaa kolonne for kolonne. Uden
+       * venstre/hoejre skulle man taste sig igennem en hel kolonne for at
+       * naa nabokolonnen, og paa en tavle er det den forkerte vej.
+       */
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const kolonne = el.closest('.kolonne');
+      const alle = [...host.querySelectorAll('.kolonne')];
+      const i = alle.indexOf(kolonne);
+      const naeste = alle[i + (e.key === 'ArrowRight' ? 1 : -1)];
+      if (!naeste) return;
+      const her = [...kolonne.querySelectorAll('[data-kort]')].indexOf(el);
+      const derovre = [...naeste.querySelectorAll('[data-kort]')];
+      if (!derovre.length) return;
+      // Er nabokolonnen kortere, lander man paa dens sidste kort - ikke paa
+      // ingenting.
+      (derovre[Math.min(her, derovre.length - 1)]).focus();
     });
     el.addEventListener('pointerdown', (e) => startTraek(e, el, p, opgaver, forbrug));
   });
