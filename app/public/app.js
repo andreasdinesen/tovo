@@ -1867,7 +1867,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2049,6 +2049,26 @@ async function kopier(tekst) {
   } catch {
     return false;
   }
+}
+
+/**
+ * ⌘↵ (Ctrl+↵) gemmer en rude.
+ *
+ * Ligger ét sted, saa alle ruder svarer ens - en genvej, der virker i den
+ * ene og ikke i den anden, er vaerre end ingen genvej.
+ *
+ * Den lyttes paa RUDEN og ikke paa dokumentet: saa gaelder den kun, mens
+ * ruden er aaben, og den kan ikke komme til at gemme noget i baggrunden.
+ * `capture: true`, saa den naar frem, ogsaa naar et felt selv har en
+ * Enter-handler (fx kommentarfeltet).
+ */
+function bindGemGenvej(host, gem) {
+  host.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    gem();
+  }, true);
 }
 
 function toast(besked, handling) {
@@ -4075,7 +4095,7 @@ function aabnProjektRuden(p) {
         budget, you have found more work than was sold.</p>
       ${p.plannerPlanName ? `<p class="meta">Linked to the Planner plan “${esc(p.plannerPlanName)}”.</p>` : ''}
       <div class="modal-foot">
-        <button class="btn primary" id="pjSave">Save</button>
+        <button class="btn primary" id="pjSave" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="pjClose">Cancel</button>
         <span style="flex:1"></span>
         <button class="btn" id="pjArkiv">${p.archivedAt ? 'Unarchive' : 'Archive'}</button>
@@ -4087,7 +4107,7 @@ function aabnProjektRuden(p) {
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('pjClose').addEventListener('click', luk);
 
-  document.getElementById('pjSave').addEventListener('click', async () => {
+  const gemProjektet = async () => {
     const raa = document.getElementById('pjRamme').value.trim().replace(',', '.');
     if (raa && !(Number(raa) >= 0)) { toast(`"${raa}" is not a number of hours.`); return; }
     try {
@@ -4101,7 +4121,9 @@ function aabnProjektRuden(p) {
       await genindlaes();
       toast('Saved.');
     } catch (ex) { toast(ex.message); }
-  });
+  };
+  document.getElementById('pjSave').addEventListener('click', gemProjektet);
+  bindGemGenvej(host, gemProjektet);
 
   document.getElementById('pjArkiv').addEventListener('click', async () => {
     try {
@@ -4147,6 +4169,8 @@ async function aabnOpgave(id) {
         <input class="detail-title input" id="dTitle" value="${esc(it.title)}"
           title="You can write #tag, @project, :case, ~estimate and !date here too">
       </div>
+
+      <div class="tagrow" id="dTags"></div>
 
       <label class="field"><span>Notes</span>
         <textarea class="input" id="dNote">${esc(it.note || '')}</textarea></label>
@@ -4215,7 +4239,7 @@ async function aabnOpgave(id) {
       </div>
 
       <div class="modal-foot">
-        <button class="btn primary" id="dSave">Save</button>
+        <button class="btn primary" id="dSave" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="dStart">${icon('play', 15)} Start timer</button>
         <button class="btn" id="dLog">Log time</button>
         <button class="btn" id="dClose">Close</button>
@@ -4237,12 +4261,47 @@ function linkHtml(l) {
 
 function bindDetalje(host, it, startLink) {
   const luk = () => { host.remove(); detailState.id = null; };
+
+  /*
+   * Maerkaterne paa opgaven.
+   *
+   * De var USYNLIGE i ruden foer: at skrive #Ai i titlen satte faktisk
+   * maerkatet, men intet sted i ruden viste det, saa funktionen lignede en,
+   * der ikke virkede - og blev meldt som en mangel. Raekken siger nu baade
+   * hvad opgaven HAR, og hvordan man tilfoejer mere.
+   *
+   * Listen holdes LOKALT, indtil der gemmes - samme moenster som
+   * kolonneruden. Saa kan flere fjernes i én omgang, og Cancel fortryder
+   * dem alle i stedet for at have skrevet undervejs.
+   */
+  let valgteTags = (it.tagIds || []).slice();
+  const tegnTags = () => {
+    const raekke = host.querySelector('#dTags');
+    if (!raekke) return;
+    const chips = valgteTags.map((id) => {
+      const tag = (state.tags || []).find((t) => t.id === id);
+      if (!tag) return '';
+      return `<span class="chip neutral">#${esc(tag.name)}<button class="tagx" data-fjerntag="${esc(id)}"
+        aria-label="Take #${esc(tag.name)} off this task" title="Take it off">×</button></span>`;
+    }).join('');
+    raekke.innerHTML = `${chips}<span class="meta">Write <code>#name</code> in the title to add one.</span>`;
+    raekke.querySelectorAll('[data-fjerntag]').forEach((el) => el.addEventListener('click', () => {
+      valgteTags = valgteTags.filter((x) => x !== el.dataset.fjerntag);
+      tegnTags();
+    }));
+  };
+  tegnTags();
+
   const felter = () => ({
     title: document.getElementById('dTitle').value,
     note: document.getElementById('dNote').value,
     dueDate: document.getElementById('dDue').value || null,
     priority: document.getElementById('dPrio').value || null,
     caseNumber: document.getElementById('dSag').value.trim(),
+    // Syntaksen i titlen LAEGGER TIL oven paa det her (serveren forener de
+    // to), saa et fjernet maerkat forbliver fjernet, medmindre man selv
+    // skriver det igen.
+    tagIds: valgteTags,
   });
 
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
@@ -4261,7 +4320,7 @@ function bindDetalje(host, it, startLink) {
     });
   }
 
-  document.getElementById('dSave').addEventListener('click', async () => {
+  const gemOpgaven = async () => {
     const f = felter();
     const raa = document.getElementById('dEst').value.trim();
     // Varigheden tolkes af beregn.js - samme funktion som `~` i paletten og
@@ -4317,7 +4376,9 @@ function bindDetalje(host, it, startLink) {
       await genindlaes();
       toast('Saved.');
     } catch (ex) { toast(ex.message); }
-  });
+  };
+  document.getElementById('dSave').addEventListener('click', gemOpgaven);
+  bindGemGenvej(host, gemOpgaven);
 
   const ics = document.getElementById('dIcs');
   if (ics) {
@@ -4614,7 +4675,8 @@ function aabnManuel(forvalgtOpgave, opt) {
       <label class="field"><span>Note (optional)</span>
         <input class="input" id="mNote" placeholder="What was it?" value="${esc(post ? post.note : '')}"></label>
       <div class="modal-foot">
-        <button class="btn primary" id="mSave">${post ? 'Save' : 'Log it'}</button>
+        <button class="btn primary" id="mSave" title="⌘↵ / Ctrl+↵">${post ? 'Save' : 'Log it'}
+          <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="mClose">Cancel</button>
         ${post ? '<span style="flex:1"></span><button class="btn danger" id="mDelete">Delete</button>' : ''}
       </div>
@@ -4685,6 +4747,7 @@ function aabnManuel(forvalgtOpgave, opt) {
     });
   }
   document.getElementById('mSave').addEventListener('click', gem);
+  bindGemGenvej(host, gem);
   document.getElementById('mText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); gem(); }
   });
@@ -5918,7 +5981,8 @@ const GENVEJE = [
   ['+ text', 'Create a task — @project #tag :case !date ~estimate'],
   ['%', 'Anywhere in the line: create it and start the timer at once'],
   ['Enter', 'Create, or open the selected row'],
-  ['⌘↵', 'Start the timer on the selected task'],
+  ['⌘↵', 'In a list: start the timer on the selected task'],
+  ['⌘↵', 'In a dialog: save and close it'],
   ['↑ ↓', 'Move into the list and around in it'],
   ['Space', 'Complete the task the cursor is on'],
   ['Esc', 'Leave the list, or close what is open'],
@@ -6311,7 +6375,7 @@ function aabnKolonneRuden(p) {
       </div>
       <p class="meta">Removing a column leaves its tasks in the project, without a column.</p>
       <div class="modal-foot">
-        <button class="btn primary" id="kolonneGem">Save</button>
+        <button class="btn primary" id="kolonneGem" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="kolonneLuk">Cancel</button>
       </div>
     </div>`;
@@ -6376,7 +6440,7 @@ function aabnKolonneRuden(p) {
     document.getElementById('nyKolonne').focus();
   });
 
-  document.getElementById('kolonneGem').addEventListener('click', async () => {
+  const gemKolonner = async () => {
     laesNavne();
     try {
       await api('PATCH', `/api/v1/items/${p.id}`, {
@@ -6386,7 +6450,9 @@ function aabnKolonneRuden(p) {
       await genindlaes();
       toast('Columns saved.');
     } catch (ex) { toast(ex.message); }
-  });
+  };
+  document.getElementById('kolonneGem').addEventListener('click', gemKolonner);
+  bindGemGenvej(host, gemKolonner);
 }
 
 /* ---- pb_tags.js ---- */
@@ -6468,7 +6534,7 @@ function omdoebTag(tag) {
       <label class="field"><span>Name</span>
         <input class="input" id="tgNavn" value="${esc(tag.name)}"></label>
       <div class="modal-foot">
-        <button class="btn primary" id="tgGem">Save</button>
+        <button class="btn primary" id="tgGem" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="tgLuk">Cancel</button>
       </div>
     </div>`;
@@ -6477,7 +6543,7 @@ function omdoebTag(tag) {
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('tgLuk').addEventListener('click', luk);
-  document.getElementById('tgGem').addEventListener('click', async () => {
+  const gemNavnet = async () => {
     const navn = document.getElementById('tgNavn').value.trim();
     if (!navn) { toast('A tag needs a name.'); return; }
     try {
@@ -6486,7 +6552,9 @@ function omdoebTag(tag) {
       await genindlaes();
       toast('Renamed.');
     } catch (ex) { toast(ex.message); }
-  });
+  };
+  document.getElementById('tgGem').addEventListener('click', gemNavnet);
+  bindGemGenvej(host, gemNavnet);
   document.getElementById('tgNavn').focus();
 }
 

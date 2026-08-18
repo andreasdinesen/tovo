@@ -192,7 +192,8 @@ function aabnManuel(forvalgtOpgave, opt) {
       <label class="field"><span>Note (optional)</span>
         <input class="input" id="mNote" placeholder="What was it?" value="${esc(post ? post.note : '')}"></label>
       <div class="modal-foot">
-        <button class="btn primary" id="mSave">${post ? 'Save' : 'Log it'}</button>
+        <button class="btn primary" id="mSave" title="⌘↵ / Ctrl+↵">${post ? 'Save' : 'Log it'}
+          <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="mClose">Cancel</button>
         ${post ? '<span style="flex:1"></span><button class="btn danger" id="mDelete">Delete</button>' : ''}
       </div>
@@ -263,6 +264,7 @@ function aabnManuel(forvalgtOpgave, opt) {
     });
   }
   document.getElementById('mSave').addEventListener('click', gem);
+  bindGemGenvej(host, gem);
   document.getElementById('mText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); gem(); }
   });

@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 7;
+const APP_VERSION = 8;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -187,6 +187,26 @@ async function kopier(tekst) {
   } catch {
     return false;
   }
+}
+
+/**
+ * ⌘↵ (Ctrl+↵) gemmer en rude.
+ *
+ * Ligger ét sted, saa alle ruder svarer ens - en genvej, der virker i den
+ * ene og ikke i den anden, er vaerre end ingen genvej.
+ *
+ * Den lyttes paa RUDEN og ikke paa dokumentet: saa gaelder den kun, mens
+ * ruden er aaben, og den kan ikke komme til at gemme noget i baggrunden.
+ * `capture: true`, saa den naar frem, ogsaa naar et felt selv har en
+ * Enter-handler (fx kommentarfeltet).
+ */
+function bindGemGenvej(host, gem) {
+  host.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    gem();
+  }, true);
 }
 
 function toast(besked, handling) {

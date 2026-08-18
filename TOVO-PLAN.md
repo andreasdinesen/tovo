@@ -627,6 +627,22 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
 
 ---
 
+## Efter v7 · Fund fra brug (2026-08-18)
+
+- [x] **⌘↵ gemmer i alle ruder**, ikke kun i paletten. Genvejen er bundet på hver rudes
+      egen gemme-funktion — ikke på »den primære knap i det åbne vindue«, som ikke kan se
+      forskel på at gemme og at svare på et spørgsmål (doda v31). Den står **på knappen**
+      i alle fem ruder.
+- [x] **Mærkaterne var usynlige i opgaveruden.** Andreas bad om at kunne skrive `#Ai` i en
+      åben opgave — funktionen har været der siden v7 og virker: den opretter mærkatet,
+      hænger det på opgaven og fjerner teksten fra titlen. Men ruden viste ikke mærkaterne
+      med ét ord, så der var intet bevis for, at det var sket, og funktionen blev meldt som
+      manglende. Opgavens mærkater står nu som chips under titlen med et kryds hver, og en
+      linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
+      fortryder en fjernelse.
+
+---
+
 ## Fase 8 · MCP
 
 §9a følges ordret. Værktøjerne kalder `beregn.js` og `parse.js` — **der må ikke findes en

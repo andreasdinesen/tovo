@@ -331,7 +331,7 @@ function aabnKolonneRuden(p) {
       </div>
       <p class="meta">Removing a column leaves its tasks in the project, without a column.</p>
       <div class="modal-foot">
-        <button class="btn primary" id="kolonneGem">Save</button>
+        <button class="btn primary" id="kolonneGem" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="kolonneLuk">Cancel</button>
       </div>
     </div>`;
@@ -396,7 +396,7 @@ function aabnKolonneRuden(p) {
     document.getElementById('nyKolonne').focus();
   });
 
-  document.getElementById('kolonneGem').addEventListener('click', async () => {
+  const gemKolonner = async () => {
     laesNavne();
     try {
       await api('PATCH', `/api/v1/items/${p.id}`, {
@@ -406,5 +406,7 @@ function aabnKolonneRuden(p) {
       await genindlaes();
       toast('Columns saved.');
     } catch (ex) { toast(ex.message); }
-  });
+  };
+  document.getElementById('kolonneGem').addEventListener('click', gemKolonner);
+  bindGemGenvej(host, gemKolonner);
 }

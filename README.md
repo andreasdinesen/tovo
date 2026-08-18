@@ -54,7 +54,49 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
-### v5 — Claude, huller og historik (ikke udgivet endnu)
+### v8 — ⌘↵ i alle ruder, og mærkaterne kan ses
+
+- **⌘↵ (Ctrl+↵) gemmer i alle ruder:** opgave, projekt, Log time, kolonner og omdøb-mærkat.
+  Genvejen står nu **på Gem-knappen** i alle fem — en genvej, ingen kan se, findes ikke.
+  Den er bundet på hver rudes egen gemme-funktion og ikke på »den primære knap i det åbne
+  vindue«, så et spørgsmål aldrig kan besvares ved et uheld.
+- **Mærkaterne vises i opgaveruden.** `#Ai` i en titel har sat mærkatet siden v7, men intet
+  sted i ruden viste det — så funktionen lignede en, der ikke virkede. Opgavens mærkater
+  står nu som chips under titlen, hvert med et kryds, og en linje siger, hvordan man
+  tilføjer flere. Fjernede mærkater gemmes først ved Save, så Cancel fortryder dem.
+
+### v7 — Excel-eksport, decimaltimer og syntaks i en titel man retter
+
+- **Excel:** rapporten og kundevisningen kan hentes som `.xlsx`, skrevet uden en eneste
+  pakke. Tallene skrives som **tal**, ikke tekst, så de kan lægges sammen i Excel uanset
+  om maskinen står på dansk eller engelsk komma. Rapporten får tre ark: pr. sag pr. dag,
+  pr. opgave pr. dag, pr. projekt.
+- **Decimaltimer:** `3h 30m` skrives `3,5`. Totalerne regnes på minutterne og formateres
+  til sidst, så en uge ikke kan mangle et minut, fordi decimaler blev lagt sammen.
+- **Per sagsnummer pr. dag** som en matrix med én kolonne pr. dag — den opgørelse, timerne
+  skrives af fra. Rækker og kolonner summerer begge til totalen.
+- **Syntaks i en titel man retter:** `#Ai` i en eksisterende titel bliver et mærkat. Hele
+  syntaksen virker (`#tag @projekt :sag ~estimat !dato`); mærkater lægges til. `%` er den
+  ene uden en modtager ved redigering og bliver stående i titlen.
+- Tavlen fik tastaturnavigation; venstre/højre skifter kolonne.
+
+### v6 — kanban, sagsnumre, tags og % til at starte uret
+
+- **Kanban-tavle** på projektet. Kolonnerne er projektets sektioner, så to projekter kan
+  have hver sine faser, og en Planner-import skriver bucket'erne direkte ind. Træk og slip
+  med pointer-events, og hvert kort har en menu til at flytte uden at trække.
+- **Sagsnummer** på opgaver og projekter (`:SAG-1234`). Opgaven arver projektets, medmindre
+  den har sit eget — arven læses ved opslaget, så en rettelse gælder hele historikken.
+  Et link-mønster med `{case}` gør hvert nummer til et link ind i fx ServiceNow.
+- **Timeseddel** i rapporten: timer pr. dag pr. opgave med sagsnummer, hvor rækker og
+  kolonner begge summerer til totalen.
+- **Tags** som eget punkt i menuen med antal pr. mærkat, opgaverne bag tallet, omdøb og
+  slet (som også fjerner mærkatet fra opgaverne, med fortryd).
+- Gentagelser kan rettes og stoppes i opgaveruden. Parseren lærte `every 2 weeks on friday`.
+- Projekter kan vises som liste i stedet for kort.
+- **`%`** hvor som helst i fangst-linjen opretter opgaven **og** starter uret.
+
+### v5 — Claude, huller og historik
 
 **Fase 9:**
 

@@ -76,7 +76,7 @@ function omdoebTag(tag) {
       <label class="field"><span>Name</span>
         <input class="input" id="tgNavn" value="${esc(tag.name)}"></label>
       <div class="modal-foot">
-        <button class="btn primary" id="tgGem">Save</button>
+        <button class="btn primary" id="tgGem" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="tgLuk">Cancel</button>
       </div>
     </div>`;
@@ -85,7 +85,7 @@ function omdoebTag(tag) {
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('tgLuk').addEventListener('click', luk);
-  document.getElementById('tgGem').addEventListener('click', async () => {
+  const gemNavnet = async () => {
     const navn = document.getElementById('tgNavn').value.trim();
     if (!navn) { toast('A tag needs a name.'); return; }
     try {
@@ -94,7 +94,9 @@ function omdoebTag(tag) {
       await genindlaes();
       toast('Renamed.');
     } catch (ex) { toast(ex.message); }
-  });
+  };
+  document.getElementById('tgGem').addEventListener('click', gemNavnet);
+  bindGemGenvej(host, gemNavnet);
   document.getElementById('tgNavn').focus();
 }
 

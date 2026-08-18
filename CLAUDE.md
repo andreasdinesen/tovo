@@ -3,6 +3,12 @@
 Tidsregistrering på opgaver og projekter. Yggdrasil-rune. Tvilling til doda, men
 **ingen kobling til den**: separate apps, separate data, ingen synkronisering.
 
+## Ny samtale? Læs HANDOVER.md først
+
+`HANDOVER.md` er den korte vej ind: hvad tovo er, hvor tingene står, arkitekturens
+ufravigelige regler, hvad der ikke er verificeret, og hvor pladsen i install-scriptet er.
+Denne fil er reglerne; handover'en er tilstanden.
+
 ## Før du gør noget
 
 Læs `~/ClaudeMacBook/RUNE-ERFARINGER.md` — hele filen. Læs den igen **efter** et større
