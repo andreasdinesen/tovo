@@ -200,7 +200,12 @@ async function forhaandsvis(fil) {
     const d = await api('GET', `/api/v1/projects/${projekt.id}`);
     findes = d.tasks;
   }
-  const sam = tovoPlanner.sammenlign(eksport.tasks, findes, { sections: projekt ? (projekt.sections || []) : [] });
+  // `buckets` er HELE listen fra planen - ogsaa de tomme. Uden den bliver
+  // kun de buckets, der har en opgave i sig, til kolonner.
+  const sam = tovoPlanner.sammenlign(eksport.tasks, findes, {
+    sections: projekt ? (projekt.sections || []) : [],
+    buckets: eksport.buckets || [],
+  });
   const noter = tovoPlanner.noterLignerEstimater(eksport.tasks);
   importState.data = { eksport, sam, projekt, noter, findes };
 

@@ -564,11 +564,7 @@ async function aabnOpgave(id) {
         <label class="field" style="flex:1"><span>Case number</span>
           <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
             value="${esc(it.caseNumber || '')}"></label>
-        <label class="field" style="flex:1"><span>Priority</span>
-          <select class="input" id="dPrio">
-            <option value="">—</option>
-            ${['low', 'medium', 'high'].map((x) => `<option value="${x}"${it.priority === x ? ' selected' : ''}>${x}</option>`).join('')}
-          </select></label>
+        ${kolonneFeltHtml(projekt, it)}
       </div>
 
       <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
@@ -622,6 +618,7 @@ async function aabnOpgave(id) {
         <button class="btn primary" id="dSave" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="dStart">${icon('play', 15)} Start timer</button>
         <button class="btn" id="dLog">Log time</button>
+        <button class="btn" id="dDuplicate">Duplicate</button>
         <button class="btn" id="dClose">Close</button>
         <span style="flex:1"></span>
         <button class="btn danger" id="dDelete">Delete</button>
@@ -629,6 +626,29 @@ async function aabnOpgave(id) {
     </div>`;
   document.body.appendChild(host);
   bindDetalje(host, it, startLink);
+}
+
+/**
+ * Kolonnen (= projektets sektion) som dropdown i opgaveruden.
+ *
+ * Den stod foer som "Priority", et felt der blev importeret fra Planner og
+ * vist INGEN steder - hverken i listerne eller paa tavlen. Kolonnen er
+ * derimod det, tavlen faktisk er bygget af, og kunne kun saettes ved at
+ * traekke et kort. Prioriteten bliver stadig gemt og importeret; den er
+ * bare ikke laengere det, pladsen bruges paa.
+ *
+ * Har projektet ingen kolonner, er der intet at vaelge imellem, og feltet
+ * udelades helt frem for at staa som en tom dropdown.
+ */
+function kolonneFeltHtml(projekt, it) {
+  const sektioner = ((projekt && projekt.sections) || []).slice()
+    .sort((a, b) => a.position - b.position);
+  if (!sektioner.length) return '';
+  return `<label class="field" style="flex:1"><span>Column</span>
+    <select class="input" id="dSektion">
+      <option value="">—</option>
+      ${sektioner.map((s) => `<option value="${esc(s.id)}"${it.sectionId === s.id ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}
+    </select></label>`;
 }
 
 /* Et link tegnes af den HVIDLISTEDE vej - ikke af linkify, som kun tillader
@@ -676,8 +696,20 @@ function bindDetalje(host, it, startLink) {
     title: document.getElementById('dTitle').value,
     note: document.getElementById('dNote').value,
     dueDate: document.getElementById('dDue').value || null,
-    priority: document.getElementById('dPrio').value || null,
     caseNumber: document.getElementById('dSag').value.trim(),
+    /*
+     * Kolonnen findes kun, hvis projektet HAR kolonner. Er feltet der ikke,
+     * skal `sectionId` udelades helt og ikke sendes som null: PATCH fletter
+     * ind over det gemte (Object.assign), saa et udeladt felt bevares, mens
+     * et null ville rydde en sektion, ruden aldrig har vist.
+     *
+     * `priority` staar her IKKE laengere - af samme grund. Feltet er vaek fra
+     * ruden, men Planner importerer stadig prioriteten, og den skal overleve
+     * enhver gemning herfra.
+     */
+    ...(document.getElementById('dSektion')
+      ? { sectionId: document.getElementById('dSektion').value || null }
+      : {}),
     // Syntaksen i titlen LAEGGER TIL oven paa det her (serveren forener de
     // to), saa et fjernet maerkat forbliver fjernet, medmindre man selv
     // skriver det igen.
@@ -802,6 +834,22 @@ function bindDetalje(host, it, startLink) {
     await startTimerPaa(it.id);
   });
   document.getElementById('dLog').addEventListener('click', () => { luk(); aabnManuel(it.id); });
+
+  /*
+   * Kopien laves paa SERVEREN, saa webappen og MCP tager den samme med.
+   * Den nye opgave AABNES bagefter: en kopi laves for at rette i den, og
+   * uden at aabne den ville man staa med to ens raekker og skulle finde
+   * den rigtige.
+   */
+  document.getElementById('dDuplicate').addEventListener('click', async () => {
+    try {
+      const d = await api('POST', `/api/v1/tasks/${it.id}/duplicate`, {});
+      luk();
+      await genindlaes();
+      await aabnOpgave(d.item.id);
+      toast('Copied — time, comments and the start link stayed on the original.');
+    } catch (ex) { toast(ex.message); }
+  });
 
   document.getElementById('dTick').addEventListener('click', async () => {
     luk();

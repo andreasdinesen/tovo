@@ -71,8 +71,12 @@ async function tegnRapport() {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Report</h1>
       <span class="row" style="gap:8px">
+        <!-- Etiketten er ikke pynt: et bart "3,5" siger hverken, at knappen
+             ER en omskifter, eller hvad den skifter. Den viser det format,
+             rapporten staar i NU - som resten af rapportens knapper. -->
         <button class="btn${decimal ? ' primary' : ''}" id="rFormat"
-          title="Decimal hours are what you type into the other system">${decimal ? '3,5' : '3h 30m'}</button>
+          title="Switch between decimal hours (3,5) and hours and minutes (3h 30m). Decimal hours are what you type into the other system."
+          >Format: ${decimal ? '3,5' : '3h 30m'}</button>
         <button class="btn" id="rExcel">Excel</button>
         <button class="btn" id="rMarkdown">Copy as markdown</button>
         <button class="btn" id="rPrint">Print / PDF</button>

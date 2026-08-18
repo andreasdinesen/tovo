@@ -641,6 +641,29 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v8 · Fund fra brug (2026-08-18)
+
+- [x] **Kopiér en opgave.** `POST /api/v1/tasks/:id/duplicate` + knap i ruden + MCP-værktøj.
+      Hvad der følger med står som en **hvidliste** i `dupliker()` på serveren — ét sted, så
+      webappen og MCP kopierer det samme. Historikken (tid, kommentarer, start-link) og alt,
+      der ville gøre to opgaver til den samme (`plannerTaskId`, gentagelsesreglen), bliver på
+      originalen.
+- [x] **`Column` erstatter `Priority` i opgaveruden.** Prioriteten blev importeret fra
+      Planner og vist **ingen** steder — hverken i listerne eller på tavlen — mens kolonnen,
+      som tavlen er bygget af, kun kunne sættes ved at trække et kort. Feltet udelades helt,
+      når projektet ingen kolonner har, og `sectionId` sendes så slet ikke: PATCH fletter ind
+      over det gemte, så et udeladt felt bevares, mens et `null` ville rydde noget, ruden
+      aldrig har vist. Samme grund til at `priority` ikke længere sendes med.
+- [x] **Planner: alle buckets bliver kolonner.** Andreas meldte, at importen ikke lavede
+      kolonner. Den gjorde — men kun for de buckets, opgaverne **pegede på**: hans plan havde
+      alt i »Backlog«, så de tomme faser blev aldrig kolonner. `Buckets`-arket læses nu
+      **altid** (også når opgaverne kommer fra det konsoliderede ark, hvor arket før blev
+      sprunget over), og hele listen sås ind i `sammenlign()` før opgaverne. Det giver også
+      planens egen rækkefølge i stedet for »den, opgaverne tilfældigvis blev læst i«.
+      En test låser den gamle, forkerte opførsel fast som bevis for, hvad rettelsen gør.
+- [x] **Format-knappen i rapporten fik en etiket.** `Format: 3,5` — et bart `3,5` siger
+      hverken, at knappen er en omskifter, eller hvad den skifter til.
+
 ---
 
 ## Fase 8 · MCP

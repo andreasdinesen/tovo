@@ -136,14 +136,32 @@
     }
     if (kort.title === undefined) throw new Error('The export has no "Opgavenavn" column.');
 
-    // Bucket-id -> navn, hvis vi laeser Opgaver-arket frem for det
-    // konsoliderede. Uden opslaget ville sektionen hedde et raat id.
+    /*
+     * Buckets-arket laeses ALTID, ogsaa naar opgaverne kommer fra det
+     * konsoliderede ark.
+     *
+     * To ting kommer ud af det, og kun den foerste var her foer:
+     *  1. bucket-id -> navn, saa sektionen ikke hedder et raat id, naar
+     *     opgaverne laeses fra Opgaver-arket.
+     *  2. HELE listen af buckets i planens egen raekkefoelge. Uden den
+     *     kan kolonnerne kun udledes af de buckets, der TILFAELDIGVIS har
+     *     en opgave i sig - saa en tom bucket i Planner bliver aldrig en
+     *     kolonne i tovo, og raekkefoelgen bliver "den, opgaverne stod i".
+     *     Det var praecis fejlen: en plan med alt i "Backlog" gav én kolonne.
+     */
+    const bucketArk = navne.find((n) => norm(n).includes('bucket'));
     let buckets = null;
-    if (valg.buckets && ark[valg.buckets] && ark[valg.buckets].length > 1) {
-      const b = ark[valg.buckets];
+    let bucketNavne = [];
+    if (bucketArk && ark[bucketArk] && ark[bucketArk].length > 1) {
+      const b = ark[bucketArk];
       const bk = b[0].map(norm);
       const iId = bk.findIndex((n) => n.startsWith('bucket-id'));
       const iNavn = bk.findIndex((n) => n.startsWith('bucket-navn'));
+      if (iNavn >= 0) {
+        bucketNavne = b.slice(1)
+          .map((r) => String(r[iNavn] || '').trim())
+          .filter((n, i, alle) => n && alle.indexOf(n) === i);
+      }
       if (iId >= 0 && iNavn >= 0) {
         buckets = new Map(b.slice(1).map((r) => [String(r[iId] || '').trim(), String(r[iNavn] || '').trim()]));
       }
@@ -201,7 +219,7 @@
       };
     }
 
-    return { plan, tasks, warnings };
+    return { plan, tasks, warnings, buckets: bucketNavne };
   }
 
   /**
@@ -240,6 +258,20 @@
       sektioner.push(ny);
       return ny.id;
     };
+
+    /*
+     * ALLE planens buckets bliver kolonner - ogsaa de tomme, og i planens
+     * egen raekkefoelge.
+     *
+     * Ellers kan kolonnerne kun udledes af de buckets, der tilfaeldigvis har
+     * en opgave i sig: en plan, hvor alt ligger i "Backlog", giver ÉN kolonne,
+     * og de faser, man har lavet for at kunne flytte noget derhen, findes
+     * ikke. Det er ogsaa det, der giver den rigtige raekkefoelge - ellers
+     * staar kolonnerne i den orden, opgaverne tilfaeldigvis blev laest i.
+     *
+     * Kaldes FOER opgaverne, saa navnene allerede er kendte, naar de slaas op.
+     */
+    for (const navn of (o.buckets || [])) sektionId(navn);
 
     const nye = [];
     const opdaterede = [];

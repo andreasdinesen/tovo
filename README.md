@@ -54,6 +54,26 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v9 — kopiér en opgave, kolonne i ruden, og alle buckets bliver kolonner
+
+- **Kopiér en opgave.** Knappen `Duplicate` i opgaveruden — og `duplicate_task` i MCP, så
+  Claude kan det samme. Kopien bærer det, der beskriver **arbejdet**: noter, projekt,
+  kolonne, estimat, forfaldsdato, sagsnummer, mærkater og links, og den begynder som åben.
+  Tidsposter, kommentarer, start-linket og en gentagelsesregel bliver på originalen —
+  historik hører til det arbejde, der *er* udført, og to opgaver med samme start-link ville
+  dele ur.
+- **`Column` i stedet for `Priority`** i opgaveruden: en dropdown med projektets egne
+  kolonner, så en opgave kan flyttes uden at trække et kort. Har projektet ingen kolonner,
+  er feltet der ikke. Prioriteten importeres stadig fra Planner og overlever enhver
+  gemning — den var bare vist ingen steder.
+- **Planner-import laver nu ALLE planens buckets til kolonner** — også de tomme, og i
+  planens egen rækkefølge. Før blev kolonnerne udledt af de buckets, opgaverne *pegede på*,
+  så en plan med alt i »Backlog« gav én kolonne, og præcis de faser, man havde lavet for at
+  kunne flytte noget derhen, fandtes ikke. En genimport føjer nye buckets til uden at røre
+  de kolonner, der er i forvejen — heller ikke dem, du selv har lavet.
+- **Format-knappen i rapporten hedder nu `Format: 3,5`** i stedet for bare `3,5`. Et bart
+  tal siger hverken, at knappen er en omskifter, eller hvad den skifter.
+
 ### v8 — ⌘↵ i alle ruder, og mærkaterne kan ses
 
 - **⌘↵ (Ctrl+↵) gemmer i alle ruder:** opgave, projekt, Log time, kolonner og omdøb-mærkat.

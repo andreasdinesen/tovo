@@ -311,3 +311,82 @@ test('syntaksen har det sidste ord over rudens tomme felter', async () => {
   assert.equal(r.data.item.caseNumber, 'SAG-77');
   assert.equal(r.data.item.estimateMinutes, 45);
 });
+
+/* ------------------------------------------------------- kopi af en opgave */
+
+test('en kopi baerer det, der beskriver ARBEJDET - og intet af historikken', async () => {
+  const p = (await k.kald('POST', '/api/v1/items', { kind: 'project', name: 'Kopiprojekt' })).data.item;
+  const tag = (await k.kald('POST', '/api/v1/items', { kind: 'tag', name: 'drift' })).data.item;
+  const org = (await k.kald('POST', '/api/v1/items', {
+    kind: 'task',
+    title: 'Opsaetning af server',
+    note: 'husk at spoerge til overvaagningen',
+    projectId: p.id,
+    sectionId: 'sek-0-backlog',
+    estimateMinutes: 240,
+    priority: 'high',
+    dueDate: '2026-09-01',
+    dueTime: '09:00',
+    caseNumber: 'SAG-77',
+    tagIds: [tag.id],
+    links: [{ url: 'onenote:https://d.docs.live.net/x/Noter.one#Ops', label: 'OneNote' }],
+    plannerTaskId: 'p1',
+    recurrenceRule: { type: 'weekly', weekday: 1, mode: 'plan' },
+  })).data.item;
+
+  // Historik paa originalen: tid, kommentar, start-link - og den er afsluttet.
+  await k.kald('POST', '/api/v1/entries', { taskId: org.id, date: '2026-08-17', text: '2,5t' });
+  await k.kald('POST', `/api/v1/tasks/${org.id}/comments`, { text: 'aftalt med kunden' });
+  const orgLink = (await k.kald('POST', `/api/v1/tasks/${org.id}/link`, {})).data.link.token;
+  await k.kald('POST', `/api/v1/tasks/${org.id}/complete`, {});
+
+  const kopi = (await k.kald('POST', `/api/v1/tasks/${org.id}/duplicate`, {})).data.item;
+
+  // MED: alt der beskriver selve arbejdet.
+  assert.equal(kopi.title, 'Opsaetning af server (copy)');
+  assert.equal(kopi.note, 'husk at spoerge til overvaagningen');
+  assert.equal(kopi.projectId, p.id);
+  assert.equal(kopi.sectionId, 'sek-0-backlog', 'kopien lander i samme kolonne');
+  assert.equal(kopi.estimateMinutes, 240);
+  assert.equal(kopi.priority, 'high');
+  assert.equal(kopi.dueDate, '2026-09-01');
+  assert.equal(kopi.dueTime, '09:00');
+  assert.equal(kopi.caseNumber, 'SAG-77');
+  assert.deepEqual(kopi.tagIds, [tag.id]);
+  assert.equal(kopi.links.length, 1);
+
+  // UDEN: historikken, og alt der ville goere to opgaver til den samme.
+  assert.notEqual(kopi.id, org.id);
+  assert.equal(kopi.status, 'open', 'kopien er aaben, ogsaa selv om originalen er afsluttet');
+  assert.ok(!kopi.completedAt, 'kopien har ikke arvet et fuldfoerelses-stempel');
+  assert.ok(!kopi.recurrenceRule, 'to opgaver, der begge formerer sig, opdages foerst en uge senere');
+  assert.ok(!kopi.plannerTaskId, 'ellers er en genimport tvetydig, og den ene ser forsvundet ud');
+
+  const poster = (await k.kald('GET', '/api/v1/entries?from=2020-01-01&to=2030-01-01')).data.entries;
+  assert.equal(poster.filter((e) => e.taskId === kopi.id).length, 0, 'kopien har ingen tid paa sig');
+  assert.equal(poster.filter((e) => e.taskId === org.id).length, 1, 'originalens tid staar uroert');
+
+  const kom = (await k.kald('GET', `/api/v1/tasks/${kopi.id}/comments`)).data.comments;
+  assert.equal(kom.length, 0, 'kommentarer er historik om det, der ER sket');
+
+  const nytLink = (await k.kald('POST', `/api/v1/tasks/${kopi.id}/link`, {})).data.link.token;
+  assert.notEqual(nytLink, orgLink, 'to opgaver med samme token ville dele ur');
+
+  // Originalen maa ikke vaere roert af at blive kopieret.
+  const orgNu = (await k.kald('GET', `/api/v1/items/${org.id}`)).data.item;
+  assert.equal(orgNu.status, 'done');
+  assert.equal(orgNu.plannerTaskId, 'p1');
+  assert.ok(orgNu.recurrenceRule);
+});
+
+test('kopien kan faa sin egen titel med det samme', async () => {
+  const org = (await k.kald('POST', '/api/v1/items', { kind: 'task', title: 'Grundopsaetning' })).data.item;
+  const kopi = (await k.kald('POST', `/api/v1/tasks/${org.id}/duplicate`,
+    { title: 'Grundopsaetning - kunde 2' })).data.item;
+  assert.equal(kopi.title, 'Grundopsaetning - kunde 2');
+});
+
+test('duplicate paa noget, der ikke er en opgave, giver 404', async () => {
+  const p = (await k.kald('POST', '/api/v1/items', { kind: 'project', name: 'Ikke en opgave' })).data.item;
+  assert.equal((await k.kald('POST', `/api/v1/tasks/${p.id}/duplicate`, {})).status, 404);
+});

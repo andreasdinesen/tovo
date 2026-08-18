@@ -204,6 +204,28 @@ test('set_estimate, update_task og complete_task', async () => {
   assert.match(tekst(await kald('complete_task', { id: gid })), /Already done/);
 });
 
+test('duplicate_task gaar gennem SAMME funktion som webappens knap', async () => {
+  const org = (await a.klient.kald('POST', '/api/v1/items', {
+    kind: 'task', title: 'Kopi via MCP', estimateMinutes: 90, caseNumber: 'SAG-9',
+  })).data.item;
+  await a.klient.kald('POST', '/api/v1/entries', { taskId: org.id, date: '2026-08-17', text: '1t' });
+
+  const svar = await kald('duplicate_task', { id: org.id });
+  assert.match(tekst(svar), /Copied: Kopi via MCP \(copy\)/);
+  const kopi = svar.data.result.structuredContent
+    ? svar.data.result.structuredContent.item
+    : JSON.parse(svar.data.result.content.find((c) => c.type === 'text' && c.text.startsWith('{')).text).item;
+  assert.equal(kopi.estimateMinutes, 90);
+  assert.equal(kopi.caseNumber, 'SAG-9');
+  assert.equal(kopi.status, 'open');
+
+  // Den vigtigste: MCP maa ikke tage tidsposterne med, naar webappen ikke goer.
+  const poster = (await a.klient.kald('GET', '/api/v1/entries?from=2020-01-01&to=2030-01-01')).data.entries;
+  assert.equal(poster.filter((e) => e.taskId === kopi.id).length, 0);
+
+  assert.match(tekst(await kald('duplicate_task', { id: 'findesikke000000' })), /No task with id/);
+});
+
 test('scopes: en laesenoegle kan hverken se eller kalde skrive-vaerktoejer', async () => {
   const liste = await rpc('tools/list', {}, { noegle: laesenoegle });
   const navne = liste.data.result.tools.map((t) => t.name);
@@ -217,7 +239,8 @@ test('scopes: en laesenoegle kan hverken se eller kalde skrive-vaerktoejer', asy
   assert.match(forsoeg.data.result.content[0].text, /cannot write/);
 
   const alle = await rpc('tools/list', {});
-  assert.equal(alle.data.result.tools.length, 12);
+  assert.equal(alle.data.result.tools.length, 13);
+  assert.ok(!navne.includes('duplicate_task'), 'en kopi er en skrivning');
 });
 
 test('en noegle naar kun SIN egen brugers data', async () => {

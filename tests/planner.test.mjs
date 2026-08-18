@@ -36,7 +36,10 @@ function eksport(opgaver, opt = {}) {
     Plan: [['Abonnement-id', 'Navn på plan ', 'Dato for eksport '],
       [opt.planId || 'pln1', opt.planNavn || 'Nordvind - TRIO 11', '2026-08-18']],
     'Konsoliderede data': [HOVED, ...raekker],
-    Buckets: [['Bucket-id', 'Bucket-navn '], ['b1', 'Backlog']],
+    // Planens buckets. Default er den ene, opgaverne ligger i; `opt.buckets`
+    // lader en test give planen flere - ogsaa TOMME, som er hele pointen.
+    Buckets: [['Bucket-id', 'Bucket-navn '],
+      ...(opt.buckets || [['b1', 'Backlog']])],
   };
 }
 
@@ -254,4 +257,69 @@ test('hvidlisten er hvidliste - et nyt felt kan ikke smutte med', () => {
   assert.equal(flettet.estimateMinutes, 60);
   assert.equal(flettet.tagIds[0], 't1');
   assert.equal(flettet.nytFeltFraFremtiden, 'bevares');
+});
+
+/*
+ * Buckets -> kolonner.
+ *
+ * Fejlen, der udloeste den: en plan hvor alle opgaver laa i "Backlog" gav
+ * ÉN kolonne i tovo. Sektionerne blev udledt af de buckets, opgaverne
+ * PEGEDE paa, saa en tom bucket i Planner - altsaa praecis de faser, man har
+ * lavet for at kunne flytte noget derhen - blev aldrig en kolonne.
+ */
+test('ALLE planens buckets bliver kolonner - ogsaa de tomme, og i planens raekkefoelge', () => {
+  const e = planner.laesEksport(eksport(
+    [{ id: 'p1', navn: 'Opsaetning', bucket: 'Backlog' },
+      { id: 'p2', navn: 'Migrering', bucket: 'Backlog' }],
+    { buckets: [['b1', 'Backlog'], ['b2', 'Up next'], ['b3', 'Doing'], ['b4', 'Done']] },
+  ));
+
+  assert.deepEqual(e.buckets, ['Backlog', 'Up next', 'Doing', 'Done'],
+    'hele listen laeses fra Buckets-arket, ogsaa naar opgaverne kommer fra det konsoliderede');
+
+  const sam = planner.sammenlign(e.tasks, [], { sections: [], buckets: e.buckets });
+  assert.deepEqual(sam.sektioner.map((s) => s.name), ['Backlog', 'Up next', 'Doing', 'Done'],
+    'de tre tomme buckets er kolonner, og raekkefoelgen er planens - ikke opgavernes');
+
+  // Og opgaverne peger paa den rigtige af dem.
+  const backlog = sam.sektioner.find((s) => s.name === 'Backlog');
+  assert.equal(sam.nye.length, 2);
+  for (const n of sam.nye) assert.equal(n.felter.sectionId, backlog.id);
+});
+
+test('uden bucket-listen bliver kun de buckets, der HAR en opgave, til kolonner', () => {
+  // Beviset for at det er `buckets` der goer arbejdet: samme eksport uden
+  // listen giver den gamle - forkerte - opfoersel.
+  const e = planner.laesEksport(eksport(
+    [{ id: 'p1', navn: 'Opsaetning', bucket: 'Backlog' }],
+    { buckets: [['b1', 'Backlog'], ['b2', 'Up next']] },
+  ));
+  const uden = planner.sammenlign(e.tasks, [], { sections: [] });
+  assert.deepEqual(uden.sektioner.map((s) => s.name), ['Backlog']);
+});
+
+test('genimport tilfoejer en NY bucket uden at roere de kolonner, der er i forvejen', () => {
+  const foerste = planner.laesEksport(eksport(
+    [{ id: 'p1', navn: 'Opsaetning', bucket: 'Backlog' }],
+    { buckets: [['b1', 'Backlog'], ['b2', 'Up next']] },
+  ));
+  const sam1 = planner.sammenlign(foerste.tasks, [], { sections: [], buckets: foerste.buckets });
+  const gemte = sam1.sektioner.map((s, i) => ({ id: s.id, name: s.name, position: i }));
+
+  // Brugeren har selv lagt en kolonne til, som Planner ikke kender.
+  gemte.push({ id: 'egen-1', name: 'Venter paa kunden', position: gemte.length });
+
+  const anden = planner.laesEksport(eksport(
+    [{ id: 'p1', navn: 'Opsaetning', bucket: 'Backlog' }],
+    { buckets: [['b1', 'Backlog'], ['b2', 'Up next'], ['b3', 'Review']] },
+  ));
+  const sam2 = planner.sammenlign(anden.tasks, [], { sections: gemte, buckets: anden.buckets });
+
+  assert.deepEqual(sam2.sektioner.map((s) => s.name),
+    ['Backlog', 'Up next', 'Venter paa kunden', 'Review'],
+    'de gamle beholder deres plads, brugerens egen overlever, og kun den nye kommer til');
+  // Id'erne paa de eksisterende maa ikke skifte - ellers mister hver opgave
+  // sin kolonne ved hver genimport.
+  assert.equal(sam2.sektioner[0].id, gemte[0].id);
+  assert.equal(sam2.sektioner[1].id, gemte[1].id);
 });

@@ -1542,6 +1542,39 @@ function naesteForekomst(userId, item) {
  * Ligger HER og ikke i ruten, fordi MCP goer det samme. To veje til den
  * samme handling skal give det samme resultat - ogsaa gentagelsen.
  */
+/*
+ * En kopi af en opgave.
+ *
+ * Hvad der foelger med, staar som en HVIDLISTE - samme regel som Planner-
+ * fletningen: et nyt felt paa opgaven skal aktivt tages med, aldrig foelge
+ * med i tavshed. Funktionen bor HER og ikke i ruten, saa webappen og MCP
+ * kopierer det samme; en klient, der selv samlede kopien, ville uvaegerligt
+ * komme til at tage noget med, som ikke maa foelge med.
+ */
+const KOPIER_FELTER = ['note', 'projectId', 'sectionId', 'parentTaskId', 'estimateMinutes',
+  'priority', 'dueDate', 'dueTime', 'links', 'tagIds', 'caseNumber'];
+
+function dupliker(userId, item, titel) {
+  const kopi = { kind: 'task', title: String(titel || `${item.title} (copy)`).slice(0, 500) };
+  for (const felt of KOPIER_FELTER) if (item[felt] !== undefined) kopi[felt] = item[felt];
+
+  /*
+   * Det, der med VILJE ikke kopieres, og hvorfor:
+   * - tidsposter og kommentarer: historik om det arbejde, der ER udfoert.
+   *   En kopi har ikke udfoert noget.
+   * - start-linket: to opgaver med samme token ville dele ur.
+   * - status/completedAt: kopien begynder AABEN, ogsaa hvis originalen er
+   *   afsluttet - det er som regel hele grunden til at kopiere den.
+   * - recurrenceRule: ellers har man to opgaver, der begge formerer sig,
+   *   og det opdager man foerst en uge senere.
+   * - plannerTaskId: noeglen til genimport. To opgaver med samme id ville
+   *   goere fletningen tvetydig, og den ene ville se ud som forsvundet fra
+   *   Planner ved naeste import.
+   */
+  kopi.status = 'open';
+  return gemItem(userId, kopi);
+}
+
 function fuldfoer(userId, item, luk = true) {
   const opdateret = gemItem(userId, Object.assign({}, item, {
     status: luk ? 'done' : 'open',
@@ -1971,7 +2004,7 @@ const mcp = require('./mcp.js').opret({
     + `resource_metadata="${oauth.base(req)}/.well-known/oauth-protected-resource/mcp"`,
   // Vaerktoejerne faar PRAECIS de funktioner, webappen selv bruger.
   fangst, soeg, hentItem, hentItems, gemItem, hentPoster, gemPost,
-  startTimer, stopTimer, timerStatus, beregnFor, fuldfoer,
+  startTimer, stopTimer, timerStatus, beregnFor, fuldfoer, dupliker,
   iDag, dagStart, ugeStart, ugeSlut,
 });
 
@@ -2698,6 +2731,27 @@ const MOENSTRE = [
       const item = hentItem(auth.user.id, ctx.params[0]);
       if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
       sendJson(res, 200, fuldfoer(auth.user.id, item, body.done !== false));
+    },
+  },
+  {
+    /*
+     * En kopi af en opgave. Ligger paa SERVEREN, saa webappen og MCP kopierer
+     * det samme - en klient, der selv samlede kopien, ville uvaegerligt komme
+     * til at tage noget med, som ikke maa foelge med.
+     *
+     * Hvad der foelger med, staar som en HVIDLISTE (samme regel som Planner-
+     * fletningen): et nyt felt paa opgaven skal aktivt tages med, aldrig
+     * foelge med i tavshed.
+     */
+    metode: 'POST', re: /^\/api\/v1\/tasks\/([0-9a-f-]{8,64})\/duplicate$/,
+    kald: async (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const body = await readJsonBody(req, auth.viaToken);
+      const item = hentItem(auth.user.id, ctx.params[0]);
+      if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
+
+      sendJson(res, 200, { item: dupliker(auth.user.id, item, body.title) });
     },
   },
   {

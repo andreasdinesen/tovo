@@ -1395,14 +1395,32 @@
     }
     if (kort.title === undefined) throw new Error('The export has no "Opgavenavn" column.');
 
-    // Bucket-id -> navn, hvis vi laeser Opgaver-arket frem for det
-    // konsoliderede. Uden opslaget ville sektionen hedde et raat id.
+    /*
+     * Buckets-arket laeses ALTID, ogsaa naar opgaverne kommer fra det
+     * konsoliderede ark.
+     *
+     * To ting kommer ud af det, og kun den foerste var her foer:
+     *  1. bucket-id -> navn, saa sektionen ikke hedder et raat id, naar
+     *     opgaverne laeses fra Opgaver-arket.
+     *  2. HELE listen af buckets i planens egen raekkefoelge. Uden den
+     *     kan kolonnerne kun udledes af de buckets, der TILFAELDIGVIS har
+     *     en opgave i sig - saa en tom bucket i Planner bliver aldrig en
+     *     kolonne i tovo, og raekkefoelgen bliver "den, opgaverne stod i".
+     *     Det var praecis fejlen: en plan med alt i "Backlog" gav én kolonne.
+     */
+    const bucketArk = navne.find((n) => norm(n).includes('bucket'));
     let buckets = null;
-    if (valg.buckets && ark[valg.buckets] && ark[valg.buckets].length > 1) {
-      const b = ark[valg.buckets];
+    let bucketNavne = [];
+    if (bucketArk && ark[bucketArk] && ark[bucketArk].length > 1) {
+      const b = ark[bucketArk];
       const bk = b[0].map(norm);
       const iId = bk.findIndex((n) => n.startsWith('bucket-id'));
       const iNavn = bk.findIndex((n) => n.startsWith('bucket-navn'));
+      if (iNavn >= 0) {
+        bucketNavne = b.slice(1)
+          .map((r) => String(r[iNavn] || '').trim())
+          .filter((n, i, alle) => n && alle.indexOf(n) === i);
+      }
       if (iId >= 0 && iNavn >= 0) {
         buckets = new Map(b.slice(1).map((r) => [String(r[iId] || '').trim(), String(r[iNavn] || '').trim()]));
       }
@@ -1460,7 +1478,7 @@
       };
     }
 
-    return { plan, tasks, warnings };
+    return { plan, tasks, warnings, buckets: bucketNavne };
   }
 
   /**
@@ -1499,6 +1517,20 @@
       sektioner.push(ny);
       return ny.id;
     };
+
+    /*
+     * ALLE planens buckets bliver kolonner - ogsaa de tomme, og i planens
+     * egen raekkefoelge.
+     *
+     * Ellers kan kolonnerne kun udledes af de buckets, der tilfaeldigvis har
+     * en opgave i sig: en plan, hvor alt ligger i "Backlog", giver ÉN kolonne,
+     * og de faser, man har lavet for at kunne flytte noget derhen, findes
+     * ikke. Det er ogsaa det, der giver den rigtige raekkefoelge - ellers
+     * staar kolonnerne i den orden, opgaverne tilfaeldigvis blev laest i.
+     *
+     * Kaldes FOER opgaverne, saa navnene allerede er kendte, naar de slaas op.
+     */
+    for (const navn of (o.buckets || [])) sektionId(navn);
 
     const nye = [];
     const opdaterede = [];
@@ -1867,7 +1899,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 8;
+const APP_VERSION = 9;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -4184,11 +4216,7 @@ async function aabnOpgave(id) {
         <label class="field" style="flex:1"><span>Case number</span>
           <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
             value="${esc(it.caseNumber || '')}"></label>
-        <label class="field" style="flex:1"><span>Priority</span>
-          <select class="input" id="dPrio">
-            <option value="">—</option>
-            ${['low', 'medium', 'high'].map((x) => `<option value="${x}"${it.priority === x ? ' selected' : ''}>${x}</option>`).join('')}
-          </select></label>
+        ${kolonneFeltHtml(projekt, it)}
       </div>
 
       <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
@@ -4242,6 +4270,7 @@ async function aabnOpgave(id) {
         <button class="btn primary" id="dSave" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
         <button class="btn" id="dStart">${icon('play', 15)} Start timer</button>
         <button class="btn" id="dLog">Log time</button>
+        <button class="btn" id="dDuplicate">Duplicate</button>
         <button class="btn" id="dClose">Close</button>
         <span style="flex:1"></span>
         <button class="btn danger" id="dDelete">Delete</button>
@@ -4249,6 +4278,29 @@ async function aabnOpgave(id) {
     </div>`;
   document.body.appendChild(host);
   bindDetalje(host, it, startLink);
+}
+
+/**
+ * Kolonnen (= projektets sektion) som dropdown i opgaveruden.
+ *
+ * Den stod foer som "Priority", et felt der blev importeret fra Planner og
+ * vist INGEN steder - hverken i listerne eller paa tavlen. Kolonnen er
+ * derimod det, tavlen faktisk er bygget af, og kunne kun saettes ved at
+ * traekke et kort. Prioriteten bliver stadig gemt og importeret; den er
+ * bare ikke laengere det, pladsen bruges paa.
+ *
+ * Har projektet ingen kolonner, er der intet at vaelge imellem, og feltet
+ * udelades helt frem for at staa som en tom dropdown.
+ */
+function kolonneFeltHtml(projekt, it) {
+  const sektioner = ((projekt && projekt.sections) || []).slice()
+    .sort((a, b) => a.position - b.position);
+  if (!sektioner.length) return '';
+  return `<label class="field" style="flex:1"><span>Column</span>
+    <select class="input" id="dSektion">
+      <option value="">—</option>
+      ${sektioner.map((s) => `<option value="${esc(s.id)}"${it.sectionId === s.id ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}
+    </select></label>`;
 }
 
 /* Et link tegnes af den HVIDLISTEDE vej - ikke af linkify, som kun tillader
@@ -4296,8 +4348,20 @@ function bindDetalje(host, it, startLink) {
     title: document.getElementById('dTitle').value,
     note: document.getElementById('dNote').value,
     dueDate: document.getElementById('dDue').value || null,
-    priority: document.getElementById('dPrio').value || null,
     caseNumber: document.getElementById('dSag').value.trim(),
+    /*
+     * Kolonnen findes kun, hvis projektet HAR kolonner. Er feltet der ikke,
+     * skal `sectionId` udelades helt og ikke sendes som null: PATCH fletter
+     * ind over det gemte (Object.assign), saa et udeladt felt bevares, mens
+     * et null ville rydde en sektion, ruden aldrig har vist.
+     *
+     * `priority` staar her IKKE laengere - af samme grund. Feltet er vaek fra
+     * ruden, men Planner importerer stadig prioriteten, og den skal overleve
+     * enhver gemning herfra.
+     */
+    ...(document.getElementById('dSektion')
+      ? { sectionId: document.getElementById('dSektion').value || null }
+      : {}),
     // Syntaksen i titlen LAEGGER TIL oven paa det her (serveren forener de
     // to), saa et fjernet maerkat forbliver fjernet, medmindre man selv
     // skriver det igen.
@@ -4422,6 +4486,22 @@ function bindDetalje(host, it, startLink) {
     await startTimerPaa(it.id);
   });
   document.getElementById('dLog').addEventListener('click', () => { luk(); aabnManuel(it.id); });
+
+  /*
+   * Kopien laves paa SERVEREN, saa webappen og MCP tager den samme med.
+   * Den nye opgave AABNES bagefter: en kopi laves for at rette i den, og
+   * uden at aabne den ville man staa med to ens raekker og skulle finde
+   * den rigtige.
+   */
+  document.getElementById('dDuplicate').addEventListener('click', async () => {
+    try {
+      const d = await api('POST', `/api/v1/tasks/${it.id}/duplicate`, {});
+      luk();
+      await genindlaes();
+      await aabnOpgave(d.item.id);
+      toast('Copied — time, comments and the start link stayed on the original.');
+    } catch (ex) { toast(ex.message); }
+  });
 
   document.getElementById('dTick').addEventListener('click', async () => {
     luk();
@@ -5182,7 +5262,12 @@ async function forhaandsvis(fil) {
     const d = await api('GET', `/api/v1/projects/${projekt.id}`);
     findes = d.tasks;
   }
-  const sam = tovoPlanner.sammenlign(eksport.tasks, findes, { sections: projekt ? (projekt.sections || []) : [] });
+  // `buckets` er HELE listen fra planen - ogsaa de tomme. Uden den bliver
+  // kun de buckets, der har en opgave i sig, til kolonner.
+  const sam = tovoPlanner.sammenlign(eksport.tasks, findes, {
+    sections: projekt ? (projekt.sections || []) : [],
+    buckets: eksport.buckets || [],
+  });
   const noter = tovoPlanner.noterLignerEstimater(eksport.tasks);
   importState.data = { eksport, sam, projekt, noter, findes };
 
@@ -5351,8 +5436,12 @@ async function tegnRapport() {
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Report</h1>
       <span class="row" style="gap:8px">
+        <!-- Etiketten er ikke pynt: et bart "3,5" siger hverken, at knappen
+             ER en omskifter, eller hvad den skifter. Den viser det format,
+             rapporten staar i NU - som resten af rapportens knapper. -->
         <button class="btn${decimal ? ' primary' : ''}" id="rFormat"
-          title="Decimal hours are what you type into the other system">${decimal ? '3,5' : '3h 30m'}</button>
+          title="Switch between decimal hours (3,5) and hours and minutes (3h 30m). Decimal hours are what you type into the other system."
+          >Format: ${decimal ? '3,5' : '3h 30m'}</button>
         <button class="btn" id="rExcel">Excel</button>
         <button class="btn" id="rMarkdown">Copy as markdown</button>
         <button class="btn" id="rPrint">Print / PDF</button>

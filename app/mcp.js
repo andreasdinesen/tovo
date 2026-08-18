@@ -297,6 +297,30 @@ function opret(srv) {
     },
 
     {
+      name: 'duplicate_task',
+      scope: 'write',
+      description: 'Make a copy of a task. The copy keeps the notes, project, column, '
+        + 'estimate, due date, case number, tags and links, and starts as open. Logged '
+        + 'time, comments, the start link and any repeat rule stay on the original only.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          title: { type: 'string', description: 'Title for the copy. Defaults to "<original> (copy)".' },
+        },
+        required: ['id'],
+      },
+      kald(a, auth) {
+        const opgave = srv.hentItem(auth.user.id, String(a.id || ''));
+        if (!opgave || opgave.kind !== 'task') return { fejl: `No task with id ${a.id}.` };
+        // Samme funktion som webappens knap. Der maa ikke findes en saerlig
+        // MCP-vej ind i dataene.
+        const kopi = srv.dupliker(auth.user.id, opgave, a.title);
+        return { tekst: `Copied: ${kopi.title}  [id: ${kopi.id}]`, data: { item: kopi } };
+      },
+    },
+
+    {
       name: 'update_task',
       scope: 'write',
       description: 'Change a task: title, due date, priority or project.',
