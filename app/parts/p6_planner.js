@@ -209,6 +209,14 @@ async function forhaandsvis(fil) {
   const noter = tovoPlanner.noterLignerEstimater(eksport.tasks);
   importState.data = { eksport, sam, projekt, noter, findes };
 
+  // En sektion, `sammenlign` har fundet paa, baerer `ny: true`. Resten stod
+  // paa projektet i forvejen - ogsaa dem brugeren selv har lavet.
+  //
+  // Kolonnelisten faar klassen `navne`: den faelles .meta versaliserer, og
+  // det maa brugerens EGNE navne ikke - saa kan de ikke genkendes fra
+  // Planner.
+  const nyeKolonner = sam.sektioner.filter((s) => s.ny).length;
+
   krop.innerHTML = `
     <div class="card">
       <h2>${esc(eksport.plan.name || fil.name)}</h2>
@@ -218,7 +226,13 @@ async function forhaandsvis(fil) {
         <li><span class="post-sum">${sam.nye.length}</span><span class="post-main">new tasks</span></li>
         <li><span class="post-sum">${sam.opdaterede.length}</span><span class="post-main">to update</span></li>
         <li><span class="post-sum">${sam.forsvundne.length}</span><span class="post-main">gone from Planner</span></li>
+        <!-- Kolonnerne kom stiltiende ind: importen skrev dem, men
+             forhaandsvisningen naevnte dem ikke, saa man kunne ikke se, om
+             planens buckets var laest rigtigt foer BAGEFTER. -->
+        <li><span class="post-sum">${nyeKolonner}</span><span class="post-main">new columns${
+  sam.sektioner.length > nyeKolonner ? ` (${sam.sektioner.length} in total)` : ''}</span></li>
       </ul>
+      ${sam.sektioner.length ? `<p class="meta navne">Columns: ${sam.sektioner.map((s) => esc(s.name)).join(' · ')}</p>` : ''}
     </div>
 
     ${noter.ligner ? `<label class="check"><input type="checkbox" id="plEstimat" checked>
@@ -235,8 +249,26 @@ async function forhaandsvis(fil) {
     ${eksport.warnings.length ? `<p class="meta">${eksport.warnings.map(esc).join('<br>')}</p>` : ''}
     <p class="meta">Estimates, logged time, comments, links and the budget are never touched by an import.</p>`;
 
+  /*
+   * Knappen skal love det, der FAKTISK sker.
+   *
+   * Den sagde "Update 9 tasks" - eksportens antal - ogsaa naar
+   * forhaandsvisningen lige ovenover sagde 0 nye, 0 opdaterede, 0 forsvundne.
+   * To tal om samme handling, hvor det ene er forkert.
+   */
+  const antalOpgaver = sam.nye.length + sam.opdaterede.length;
+  let etiket;
+  if (!projekt) {
+    etiket = `Import ${eksport.tasks.length} task${eksport.tasks.length === 1 ? '' : 's'}`;
+  } else {
+    const dele = [];
+    if (antalOpgaver) dele.push(`${antalOpgaver} task${antalOpgaver === 1 ? '' : 's'}`);
+    if (nyeKolonner) dele.push(`${nyeKolonner} column${nyeKolonner === 1 ? '' : 's'}`);
+    etiket = dele.length ? `Update ${dele.join(' and ')}` : 'Nothing to change';
+  }
+
   document.getElementById('plFod').innerHTML = `
-    <button class="btn primary" id="plGo">${projekt ? 'Update' : 'Import'} ${eksport.tasks.length} tasks</button>
+    <button class="btn primary" id="plGo">${esc(etiket)}</button>
     <button class="btn" id="plClose2">Cancel</button>`;
   document.getElementById('plClose2').addEventListener('click', () => document.getElementById('plannerModal').remove());
   document.getElementById('plGo').addEventListener('click', udfoerImport);

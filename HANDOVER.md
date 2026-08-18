@@ -1,6 +1,6 @@
 # tovo — overdragelse
 
-Skrevet 2026-08-18, efter v9. Denne fil er til den næste Claude-samtale: hvad tovo er,
+Skrevet 2026-08-19, efter v10. Denne fil er til den næste Claude-samtale: hvad tovo er,
 hvor tingene står, og hvad man skal vide, før man rører noget.
 
 **Læs i denne rækkefølge:** `~/ClaudeMacBook/RUNE-ERFARINGER.md` (hele filen — den er fælles
@@ -20,7 +20,7 @@ Planner, timerne skal afstemmes pr. **sagsnummer** i et andet system (ServiceNow
 start-links klikkes fra OneNote.
 
 - Repo: `andreasdinesen/tovo` (privat) · lokalt i `~/ClaudeMacBook/tovo/`
-- Kører hos Andreas på Hjorten via Yggdrasil Panel. **v9 er udgivet.** Om den er
+- Kører hos Andreas på Hjorten via Yggdrasil Panel. **v10 er udgivet.** Om den er
   *installeret*, kan kun Andreas se: panelets opdatering er todelt, og v7 stod pushet i
   et døgn, mens serveren kørte v6. Versionen i appens nederste venstre hjørne er facit.
 - Tvilling til `andreasdinesen/doda` — samme stak og udseende, men **ingen kobling**.
@@ -29,16 +29,16 @@ start-links klikkes fra OneNote.
 
 | | |
 |---|---|
-| Version | **v9** (`APP_VERSION` i `app/parts/p1_core.js`) |
-| Tests | **164**, alle grønne — `node --test tests/*.test.mjs` |
-| Install-script | **112.505 / 120.000 tegn (93 %)** ← se »Pladsen« nedenfor |
+| Version | **v10** (`APP_VERSION` i `app/parts/p1_core.js`) |
+| Tests | **166**, alle grønne — `node --test tests/*.test.mjs` |
+| Install-script | **113.359 / 120.000 tegn (94 %)** ← se »Pladsen« nedenfor |
 | Plan | **Alle ni faser færdige.** `TOVO-PLAN.md` har ingen ukrydsede punkter |
 
 ## Sådan kører du den
 
 ```sh
 cd ~/ClaudeMacBook/tovo
-node --test tests/*.test.mjs      # 164 tests, ~4 sek.
+node --test tests/*.test.mjs      # 166 tests, ~4 sek.
 python3 build_rune.py             # -> runes/tovo.yaml, rapporterer payload-størrelsen
 ```
 
@@ -121,7 +121,7 @@ oprettelsen og derfor bliver stående.
 
 ## Pladsen — det vigtigste åbne punkt
 
-Install-scriptet er på **93 % af de 120.000 tegn**. Loftet er Linux' `MAX_ARG_STRLEN`
+Install-scriptet er på **94 % af de 120.000 tegn**. Loftet er Linux' `MAX_ARG_STRLEN`
 (131.072 b), fordi scriptet køres som ét `sh -c`-argument. Næste større funktion kræver,
 at noget ryger ud.
 

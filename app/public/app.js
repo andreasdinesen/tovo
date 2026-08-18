@@ -1493,9 +1493,12 @@
   function noterLignerEstimater(tasks) {
     const medNoter = tasks.filter((t) => t.note);
     if (!medNoter.length) return { ligner: false, antal: 0, af: 0 };
-    const tal = medNoter.filter((t) => /^\d+([.,]\d+)?$/.test(t.note.trim()));
+    const tal = medNoter.filter((t) => erRentTal(t.note));
     return { ligner: tal.length >= Math.ceil(medNoter.length / 2), antal: tal.length, af: medNoter.length };
   }
+
+  /** Et rent tal (dansk eller engelsk decimaltegn) - altsaa timer, ikke prosa. */
+  const erRentTal = (s) => /^\d+([.,]\d+)?$/.test(String(s == null ? '' : s).trim());
 
   /**
    * Sammenligner eksporten med det, der allerede er i tovo.
@@ -1548,10 +1551,33 @@
         nye.push({ planner: p, felter });
         continue;
       }
+
+      /*
+       * Et RENT TAL i Noter er timer, ikke en beskrivelse.
+       *
+       * Blev det brugt som estimat ved importen, blev det med vilje ikke
+       * gemt som beskrivelse - og saa staar opgaven her med note "" mod
+       * eksportens "6,1". Uden denne linje er hver eneste genimport
+       * "4 opgaver skal opdateres", og et tryk paa knappen skriver tallet
+       * ind i beskrivelsen og omgoer reglen TAVST.
+       *
+       * Feltet udelades helt frem for at blive sammenlignet: `flet` skriver
+       * kun det, der staar i `felter`, saa tovos egen beskrivelse - hvis
+       * brugeren selv har skrevet en - bliver ogsaa staaende.
+       */
+      if (erRentTal(p.note)) delete felter.note;
       // KUN hvidlistens felter sammenlignes og skrives. Estimat, tidsposter,
       // kommentarer, links, projektramme og prioritet sat i tovo er tovos.
       const aendringer = {};
       for (const felt of FLETTEFELTER) {
+        /*
+         * Et felt, der IKKE staar i `felter`, er bevidst udeladt (se
+         * tal-i-Noter ovenfor) og maa ikke laeses som "sat til ingenting".
+         * Uden dette tjek bliver en udeladelse til en aendring, der
+         * SLETTER - og det er den farligste slags, fordi den ser ud som
+         * en almindelig opdatering i forhaandsvisningen.
+         */
+        if (!Object.prototype.hasOwnProperty.call(felter, felt)) continue;
         const nu = eksisterende[felt] === undefined ? null : eksisterende[felt];
         const ny = felter[felt] === undefined ? null : felter[felt];
         if ((nu || null) !== (ny || null)) aendringer[felt] = { fra: nu, til: ny };
@@ -1899,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 9;
+const APP_VERSION = 10;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -4017,7 +4043,8 @@ async function tegnProjekt(id) {
   const sektioner = (p.sections || []).slice().sort((a, b) => a.position - b.position);
   const iSektion = (sid) => aabne.filter((t) => (t.sectionId || null) === sid);
 
-  host.innerHTML = `<div class="page">
+  // Tavlen har brug for mere end en laesebredde - se `.page.bred` i CSS'en.
+  host.innerHTML = `<div class="page${paaTavle ? ' bred' : ''}">
     <button class="linkbtn" id="tilbage">← Projects</button>
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>
@@ -5271,6 +5298,14 @@ async function forhaandsvis(fil) {
   const noter = tovoPlanner.noterLignerEstimater(eksport.tasks);
   importState.data = { eksport, sam, projekt, noter, findes };
 
+  // En sektion, `sammenlign` har fundet paa, baerer `ny: true`. Resten stod
+  // paa projektet i forvejen - ogsaa dem brugeren selv har lavet.
+  //
+  // Kolonnelisten faar klassen `navne`: den faelles .meta versaliserer, og
+  // det maa brugerens EGNE navne ikke - saa kan de ikke genkendes fra
+  // Planner.
+  const nyeKolonner = sam.sektioner.filter((s) => s.ny).length;
+
   krop.innerHTML = `
     <div class="card">
       <h2>${esc(eksport.plan.name || fil.name)}</h2>
@@ -5280,7 +5315,13 @@ async function forhaandsvis(fil) {
         <li><span class="post-sum">${sam.nye.length}</span><span class="post-main">new tasks</span></li>
         <li><span class="post-sum">${sam.opdaterede.length}</span><span class="post-main">to update</span></li>
         <li><span class="post-sum">${sam.forsvundne.length}</span><span class="post-main">gone from Planner</span></li>
+        <!-- Kolonnerne kom stiltiende ind: importen skrev dem, men
+             forhaandsvisningen naevnte dem ikke, saa man kunne ikke se, om
+             planens buckets var laest rigtigt foer BAGEFTER. -->
+        <li><span class="post-sum">${nyeKolonner}</span><span class="post-main">new columns${
+  sam.sektioner.length > nyeKolonner ? ` (${sam.sektioner.length} in total)` : ''}</span></li>
       </ul>
+      ${sam.sektioner.length ? `<p class="meta navne">Columns: ${sam.sektioner.map((s) => esc(s.name)).join(' · ')}</p>` : ''}
     </div>
 
     ${noter.ligner ? `<label class="check"><input type="checkbox" id="plEstimat" checked>
@@ -5297,8 +5338,26 @@ async function forhaandsvis(fil) {
     ${eksport.warnings.length ? `<p class="meta">${eksport.warnings.map(esc).join('<br>')}</p>` : ''}
     <p class="meta">Estimates, logged time, comments, links and the budget are never touched by an import.</p>`;
 
+  /*
+   * Knappen skal love det, der FAKTISK sker.
+   *
+   * Den sagde "Update 9 tasks" - eksportens antal - ogsaa naar
+   * forhaandsvisningen lige ovenover sagde 0 nye, 0 opdaterede, 0 forsvundne.
+   * To tal om samme handling, hvor det ene er forkert.
+   */
+  const antalOpgaver = sam.nye.length + sam.opdaterede.length;
+  let etiket;
+  if (!projekt) {
+    etiket = `Import ${eksport.tasks.length} task${eksport.tasks.length === 1 ? '' : 's'}`;
+  } else {
+    const dele = [];
+    if (antalOpgaver) dele.push(`${antalOpgaver} task${antalOpgaver === 1 ? '' : 's'}`);
+    if (nyeKolonner) dele.push(`${nyeKolonner} column${nyeKolonner === 1 ? '' : 's'}`);
+    etiket = dele.length ? `Update ${dele.join(' and ')}` : 'Nothing to change';
+  }
+
   document.getElementById('plFod').innerHTML = `
-    <button class="btn primary" id="plGo">${projekt ? 'Update' : 'Import'} ${eksport.tasks.length} tasks</button>
+    <button class="btn primary" id="plGo">${esc(etiket)}</button>
     <button class="btn" id="plClose2">Cancel</button>`;
   document.getElementById('plClose2').addEventListener('click', () => document.getElementById('plannerModal').remove());
   document.getElementById('plGo').addEventListener('click', udfoerImport);

@@ -234,9 +234,12 @@
   function noterLignerEstimater(tasks) {
     const medNoter = tasks.filter((t) => t.note);
     if (!medNoter.length) return { ligner: false, antal: 0, af: 0 };
-    const tal = medNoter.filter((t) => /^\d+([.,]\d+)?$/.test(t.note.trim()));
+    const tal = medNoter.filter((t) => erRentTal(t.note));
     return { ligner: tal.length >= Math.ceil(medNoter.length / 2), antal: tal.length, af: medNoter.length };
   }
+
+  /** Et rent tal (dansk eller engelsk decimaltegn) - altsaa timer, ikke prosa. */
+  const erRentTal = (s) => /^\d+([.,]\d+)?$/.test(String(s == null ? '' : s).trim());
 
   /**
    * Sammenligner eksporten med det, der allerede er i tovo.
@@ -289,10 +292,33 @@
         nye.push({ planner: p, felter });
         continue;
       }
+
+      /*
+       * Et RENT TAL i Noter er timer, ikke en beskrivelse.
+       *
+       * Blev det brugt som estimat ved importen, blev det med vilje ikke
+       * gemt som beskrivelse - og saa staar opgaven her med note "" mod
+       * eksportens "6,1". Uden denne linje er hver eneste genimport
+       * "4 opgaver skal opdateres", og et tryk paa knappen skriver tallet
+       * ind i beskrivelsen og omgoer reglen TAVST.
+       *
+       * Feltet udelades helt frem for at blive sammenlignet: `flet` skriver
+       * kun det, der staar i `felter`, saa tovos egen beskrivelse - hvis
+       * brugeren selv har skrevet en - bliver ogsaa staaende.
+       */
+      if (erRentTal(p.note)) delete felter.note;
       // KUN hvidlistens felter sammenlignes og skrives. Estimat, tidsposter,
       // kommentarer, links, projektramme og prioritet sat i tovo er tovos.
       const aendringer = {};
       for (const felt of FLETTEFELTER) {
+        /*
+         * Et felt, der IKKE staar i `felter`, er bevidst udeladt (se
+         * tal-i-Noter ovenfor) og maa ikke laeses som "sat til ingenting".
+         * Uden dette tjek bliver en udeladelse til en aendring, der
+         * SLETTER - og det er den farligste slags, fordi den ser ud som
+         * en almindelig opdatering i forhaandsvisningen.
+         */
+        if (!Object.prototype.hasOwnProperty.call(felter, felt)) continue;
         const nu = eksisterende[felt] === undefined ? null : eksisterende[felt];
         const ny = felter[felt] === undefined ? null : felter[felt];
         if ((nu || null) !== (ny || null)) aendringer[felt] = { fra: nu, til: ny };

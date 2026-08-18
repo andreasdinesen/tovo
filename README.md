@@ -54,6 +54,26 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v10 — tavlen fylder skærmen, og importen fortæller om kolonnerne
+
+- **Tavlen får sin egen bredde.** `.page` er 760 px — en læsebredde, rigtig til tekst og
+  forkert til fem kolonner à 260 px. Tavlen lå og scrollede vandret i en spalte, der var
+  smallere end tre kolonner. Projektsiden er nu bred, når den viser tavlen, og kolonnerne
+  klemmes ned til 210 px, før tavlen begynder at rulle. Fem kolonner er synlige på én gang
+  fra ~1.250 px og opefter.
+- **Importen siger, hvor mange kolonner den henter ind** — og hvilke. Før skrev den dem
+  stiltiende, så man først kunne se bagefter, om planens buckets var læst rigtigt.
+- **Knappen lover det, der faktisk sker.** Den sagde »Update 9 tasks« — eksportens antal —
+  også når forhåndsvisningen lige ovenover sagde 0 nye og 0 opdaterede. Nu:
+  »Update 3 tasks and 2 columns«, eller »Nothing to change«.
+- **Rettet: et rent tal i `Noter` gjorde hver genimport til en falsk ændring.** Blev
+  `Noter` brugt som estimater ved importen, blev tallet med vilje ikke gemt som
+  beskrivelse — men genimporten sammenlignede tovos tomme beskrivelse med eksportens
+  `6,1` og meldte opgaven som »skal opdateres« for evigt. Et tryk på knappen ville have
+  skrevet tallet ind i beskrivelsen og omgjort reglen tavst. Et tal er ikke en
+  beskrivelse, heller ikke ved en genimport — og en beskrivelse, du selv har skrevet i
+  tovo, overlever nu en genimport.
+
 ### v9 — kopiér en opgave, kolonne i ruden, og alle buckets bliver kolonner
 
 - **Kopiér en opgave.** Knappen `Duplicate` i opgaveruden — og `duplicate_task` i MCP, så

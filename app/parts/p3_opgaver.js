@@ -365,7 +365,8 @@ async function tegnProjekt(id) {
   const sektioner = (p.sections || []).slice().sort((a, b) => a.position - b.position);
   const iSektion = (sid) => aabne.filter((t) => (t.sectionId || null) === sid);
 
-  host.innerHTML = `<div class="page">
+  // Tavlen har brug for mere end en laesebredde - se `.page.bred` i CSS'en.
+  host.innerHTML = `<div class="page${paaTavle ? ' bred' : ''}">
     <button class="linkbtn" id="tilbage">← Projects</button>
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>${esc(p.name)}</h1>

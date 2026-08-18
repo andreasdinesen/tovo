@@ -323,3 +323,50 @@ test('genimport tilfoejer en NY bucket uden at roere de kolonner, der er i forve
   assert.equal(sam2.sektioner[0].id, gemte[0].id);
   assert.equal(sam2.sektioner[1].id, gemte[1].id);
 });
+
+/*
+ * Noter-som-estimater og genimport.
+ *
+ * Fundet ved at koere HELE flowet i browseren, ikke af en enhedstest:
+ * blev Noter brugt som estimat ved importen, blev tallet med vilje ikke
+ * gemt som beskrivelse - og saa stod opgaven for evigt som "skal
+ * opdateres", fordi genimporten sammenlignede tovos tomme note med
+ * eksportens "6,1". Et tryk paa Update ville have skrevet tallet ind i
+ * beskrivelsen og omgjort reglen tavst.
+ */
+test('et rent tal i Noter goer ALDRIG en genimport til en aendring', () => {
+  const e = planner.laesEksport(eksport([
+    { id: 'p1', navn: 'Forberedelse', bucket: 'Backlog', noter: '6,1' },
+    { id: 'p2', navn: 'Migrering', bucket: 'Backlog', noter: '19,6' },
+    { id: 'p3', navn: 'Opfoelgning', bucket: 'Backlog', noter: 'Husk at spoerge til deres setup' },
+  ]));
+  const sam1 = planner.sammenlign(e.tasks, [], { sections: [], buckets: e.buckets });
+
+  // Importér, som UI'et goer: tallene bliver estimater, ikke beskrivelser.
+  const gemte = sam1.nye.map((n) => planner.flet(n.planner, n.felter, null, {
+    noterSomEstimat: true,
+    estimatMinutter: beregn.parseVarighed(n.planner.note),
+  }));
+  const tal = gemte.find((t) => t.plannerTaskId === 'p1');
+  assert.equal(tal.estimateMinutes, 366, '6,1 timer blev et estimat');
+  assert.ok(!tal.note, 'et tal er ikke en beskrivelse');
+  const prosa = gemte.find((t) => t.plannerTaskId === 'p3');
+  assert.equal(prosa.note, 'Husk at spoerge til deres setup', 'prosa ER en beskrivelse');
+
+  // Genimportér den SAMME fil: intet maa vaere aendret.
+  const sam2 = planner.sammenlign(e.tasks, gemte, { sections: sam1.sektioner, buckets: e.buckets });
+  assert.equal(sam2.opdaterede.length, 0,
+    'en uaendret eksport maa ikke rapportere aendringer, fordi Noter blev estimater');
+  assert.equal(sam2.nye.length, 0);
+});
+
+test('en beskrivelse skrevet i tovo overlever en genimport, hvor Noter er et tal', () => {
+  const e = planner.laesEksport(eksport([{ id: 'p1', navn: 'Forberedelse', bucket: 'Backlog', noter: '6,1' }]));
+  const egen = [{
+    id: 'x1', kind: 'task', plannerTaskId: 'p1', title: 'Forberedelse',
+    sectionId: 'sek-0-backlog', status: 'open', dueDate: null,
+    note: 'Aftalt med Jens at vi tager det efter ferien', estimateMinutes: 366,
+  }];
+  const sam = planner.sammenlign(e.tasks, egen, { sections: [{ id: 'sek-0-backlog', name: 'Backlog', position: 0 }], buckets: e.buckets });
+  assert.equal(sam.opdaterede.length, 0, 'tovos egen beskrivelse er ikke en aendring');
+});

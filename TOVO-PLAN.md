@@ -641,6 +641,32 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v9 · Fund fra brug (2026-08-19)
+
+- [x] **Tavlen fik sin egen sidebredde** (`.page.bred`, 1500 px). `.page`'s 760 px er en
+      læsebredde; fem kolonner à 260 px er 1.348. Kolonnerne klemmes til `min-width: 210px`
+      før `overflow-x` overtager, så man ser alle fem i stedet for tre og en rullebjælke.
+      Målt ved 1600/1280/1024/375 px: siden scroller aldrig vandret, og mobil har 0 px
+      overløb.
+- [x] **Importen fortæller om kolonnerne** — antal nye, totalen og navnene. De blev skrevet
+      stiltiende før, så man kunne først bagefter se, om planens buckets var læst rigtigt.
+      Navnene får `.meta.navne`, fordi den fælles `.meta` versaliserer, og brugerens egne
+      navne skal kunne genkendes fra Planner.
+- [x] **Import-knappen lover det, der faktisk sker.** Den talte eksportens opgaver
+      (»Update 9 tasks«) også når forhåndsvisningen sagde 0 nye og 0 opdaterede — to tal om
+      samme handling, hvor det ene var forkert.
+- [x] **Rettet: et rent tal i `Noter` gjorde hver genimport til en falsk ændring.**
+      Fundet ved at køre HELE flowet i browseren, ikke af en enhedstest. Blev `Noter` brugt
+      som estimat, blev tallet ikke gemt som beskrivelse — men `sammenlign` holdt tovos
+      tomme note op mod eksportens `6,1` og meldte »skal opdateres« for evigt; et tryk på
+      knappen ville have skrevet tallet ind i beskrivelsen og omgjort reglen tavst.
+      To ting skulle rettes: feltet udelades nu for rene tal, **og** sammenlignings-løkken
+      springer felter over, der ikke står i `felter` — en udeladelse blev ellers læst som
+      `null` og dermed til en ændring, der **sletter**. Begge tests er set fejle på den
+      gamle kode.
+
+---
+
 ## Efter v8 · Fund fra brug (2026-08-18)
 
 - [x] **Kopiér en opgave.** `POST /api/v1/tasks/:id/duplicate` + knap i ruden + MCP-værktøj.
