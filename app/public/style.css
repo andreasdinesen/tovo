@@ -110,7 +110,13 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0 0 8px;
   gap: 4px;
   position: sticky;
   top: 0;
+  /* `dvh` i en EGEN erklaering, saa en browser uden den beholder vh. Paa
+     iPhone er 100vh hoejere end det synlige felt, og saa ryger foden - med
+     brugerknap, version og tema - ned under skaermkanten (doda v39). */
   height: 100vh;
+  height: 100dvh;
+  /* Er der flere punkter end der er plads til, skal man kunne rulle til dem. */
+  overflow-y: auto;
 }
 
 .brand {
@@ -156,7 +162,8 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 0 0 8px;
 .nav-item[aria-current="page"] svg { opacity: 1; }
 .nav-count { margin-left: auto; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.sidebar-foot { margin-top: auto; padding-top: 16px; }
+/* Home-indicator paa iPhone ligger oven i de nederste punkter uden dette. */
+.sidebar-foot { margin-top: auto; padding-top: 16px; padding-bottom: env(safe-area-inset-bottom, 0px); }
 
 /* Versionen staar altid nederst i sidebaren. Samme tal som runens
    version: i panelet - build stempler dem samtidig. */

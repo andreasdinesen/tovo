@@ -54,6 +54,17 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v12 — web app'en på telefonen opdaterer sig selv
+
+- **Den henter ny kode af sig selv.** En web app på hjemmeskærmen bliver stort set
+  aldrig genindlæst — den lukkes ikke, den skjules. Derfor opdagede den aldrig, at
+  der lå en ny udgave, og kunne køre videre på måneder gammel kode. Nu tjekker den,
+  hver gang du åbner den, og genindlæser når den nye udgave er hentet.
+- **Versionsnummeret er synligt på telefonen igen.** Sidebarens fod — brugerknap,
+  version og tema — lå under skærmkanten på iPhone, fordi `100vh` dér er højere end
+  det, du faktisk kan se. Netop den knap henter en ny udgave, så den var usynlig
+  præcis hvor der var brug for den.
+
 ### v11 — dagens registreringer kan foldes sammen
 
 - **»1h 30m today« på Today kan foldes sammen.** Kortet er dagens vigtigste tal og dagens

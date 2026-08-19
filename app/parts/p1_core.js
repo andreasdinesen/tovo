@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 11;
+const APP_VERSION = 12;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1176,9 +1176,40 @@ function visNoegle(noegle) {
  * helt noegen server. Det er panelet, ikke koden (doda F6). Fejler den, sker
  * der ingenting synligt, og appen virker uaendret.
  */
-function registrerSW() {
+async function registrerSW() {
   if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
-  navigator.serviceWorker.register('sw.js').catch(() => { /* uden SW virker alt stadig */ });
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js');
+
+    /*
+     * En web app paa hjemmeskaermen bliver stort set ALDRIG genindlaest: den
+     * lukkes ikke, den skjules. Registreringen ovenfor tjekker kun ved
+     * sideindlaesning, saa uden det her opdager telefonen aldrig, at der ligger
+     * en ny sw.js - og serverer sin egen cache videre i maanedsvis.
+     *
+     * doda stod paa v33 paa Andreas' telefon, mens serveren koerte v38, og
+     * fejl, der var rettet for laengst, blev ved med at vise sig
+     * (RUNE-ERFARINGER, 19-08-2026). tovo havde praecis samme mangel.
+     */
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) reg.update().catch(() => { /* offline er fint */ });
+    });
+
+    /*
+     * Naar en ny service worker tager over, koerer den GAMLE kode stadig i
+     * siden - skipWaiting() skifter arbejderen ud, ikke det, brugeren ser.
+     * Kun hvis der var en controller i forvejen: ved allerfoerste registrering
+     * fyrer controllerchange ogsaa (clients.claim), og saa ville hver ny
+     * installation genindlaese sig selv uden grund.
+     */
+    const havdeStyring = !!navigator.serviceWorker.controller;
+    let genindlaeser = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!havdeStyring || genindlaeser) return;
+      genindlaeser = true;
+      window.location.reload();
+    });
+  } catch { /* uden SW virker alt stadig */ }
 }
 
 /* --------------------------------------------------------------- start */
