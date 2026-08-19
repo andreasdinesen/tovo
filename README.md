@@ -54,6 +54,28 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v13 — appen passer på en telefon
+
+Meldt fra en iPhone 17 Pro: opgaveruden var bredere end skærmen, og på Projects blev
+»Spent« klippet af. To fejl af samme slags, og begge er lukket strukturelt.
+
+- **Ruderne kan ikke længere blive bredere end skærmen.** Modalens grid-spor voksede til
+  indholdets min-bredde, så knaprækken i opgaveruden — syv knapper, der ikke måtte
+  ombrydes — gjorde kortet 614 px bredt på en 402 px telefon, og alt til højre blev
+  klippet. Sporet er nu `minmax(0, 1fr)`, så et kort **aldrig** kan blive bredere end
+  skærmen, uanset hvad nogen lægger i det senere. Knaprækken ombryder, og den blev i
+  øvrigt også klippet på desktop.
+- **Felterne i opgaveruden får en bund-bredde på mobil.** Estimate, Due og Case number
+  delte 326 px, så sagsnummeret blev 75 px og klippede sin egen pladsholder — et felt, man
+  ikke kan læse `SAG-RITM…` i, er ikke et felt. Nu to felter på første linje og
+  sagsnummeret i fuld bredde nedenunder.
+- **Projektlisten scroller nu selv i stedet for at blive klippet.** Fem kolonner passer
+  ikke på en telefon, og mobilnettet (`overflow-x: hidden`) skjulte overløbet, så »Spent«
+  hverken kunne ses eller rulles frem. Tabellen ligger i en `overflow-x`-ramme, og
+  **projektnavnet bliver stående**, når du ruller — ellers ser man timer uden at vide,
+  hvis de er.
+
+
 ### v12 — web app'en på telefonen opdaterer sig selv
 
 - **Den henter ny kode af sig selv.** En web app på hjemmeskærmen bliver stort set

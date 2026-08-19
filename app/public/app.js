@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 12;
+const APP_VERSION = 13;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -4042,7 +4042,7 @@ async function tegnProjekter() {
     </div>
     <p class="lead">${esc(BESKRIVELSER.projects)}</p>
     ${state.projects.length ? (somListe
-    ? `<table class="data projektliste">
+    ? `<div class="tabelrul"><table class="data projektliste">
         <tr><th>Project</th><th>Customer</th><th>Case</th><th class="num">Open</th><th class="num">Spent</th></tr>
         ${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
@@ -4062,7 +4062,7 @@ async function tegnProjekter() {
             <td class="num">${uden.filter((t) => t.status !== 'done').length}</td>
             <td class="num">${esc(tovoBeregn.formatVarighed(forbrugPrProjekt.__uden || 0))}</td></tr>`;
     })()}
-      </table>`
+      </table></div>`
     : `<div class="cards">${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
       const aabne = opgaver.filter((t) => t.status !== 'done').length;

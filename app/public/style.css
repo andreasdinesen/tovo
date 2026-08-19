@@ -698,6 +698,17 @@ a:hover { text-decoration-thickness: 2px; }
   inset: 0;
   z-index: 70;
   display: grid;
+  /*
+   * `minmax(0, 1fr)` og ikke det underforstaaede `auto`.
+   *
+   * Med `auto` vokser SPORET til indholdets min-bredde, og saa er kortets
+   * `width: 100%` ligegyldigt: en knappraekke, der ikke maa ombrydes, gjorde
+   * opgaveruden 614 px bred paa en 402 px telefon, og alt til hoejre blev
+   * klippet af (meldt fra en iPhone 17 Pro). `minmax(0, …)` lader sporet
+   * blive smallere end sit indhold, saa kortet ALDRIG kan blive bredere end
+   * skaermen - uanset hvad nogen laegger ind i det senere.
+   */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 20px;
   background: rgba(20, 15, 8, .38);
@@ -713,7 +724,19 @@ a:hover { text-decoration-thickness: 2px; }
   box-shadow: var(--shadow-lift);
 }
 
-.modal-foot { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+/* Knapraekken SKAL kunne ombrydes. Opgaveruden har syv knapper, og uden
+   wrap er raekkens min-bredde summen af dem alle (578 px) - altsaa bredere
+   end en telefon. */
+/* Knapraekken SKAL kunne ombrydes. Opgaveruden har syv knapper, og uden
+   wrap er raekkens min-bredde summen af dem alle (578 px) - altsaa bredere
+   end en telefon, og den blev klippet af selv paa desktop. */
+.modal-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 20px; }
+/* Ruderne skiller de sidste knapper fra med et <span style="flex:1">. Med
+   ombrydning laegger den beslag paa en HEL linje, saa Delete havnede paa en
+   tredje. Skjul mellemrummet, og skub i stedet det, der kommer efter det,
+   ud til hoejre - saa virker adskillelsen paa én linje som paa tre. */
+.modal-foot > span[style] { display: none; }
+.modal-foot > span[style] + * { margin-left: auto; }
 textarea.input { resize: vertical; min-height: 90px; font-family: inherit; }
 
 .note-preview {
@@ -1398,6 +1421,18 @@ button.chip:not(.flat):hover { text-decoration: line-through; }
 @media (max-width: 900px) {
   .modal-card.detail { padding: 18px; }
   .detail-title { font-size: 22px; }
+  /*
+   * Felterne i opgaveruden staar side om side med et inline `flex: 1`. Paa en
+   * telefon delte tre af dem 326 px, saa sagsnummeret blev 75 px bredt og
+   * klippede sin egen pladsholder - et felt, man ikke kan laese "SAG-RITM…"
+   * i, er ikke et felt.
+   *
+   * `min-width` og ikke `flex: … !important`: bredden er ikke sat inline, saa
+   * en media query kan styre den uden at kaempe med specificiteten. Raekken
+   * ombryder i forvejen, saa felterne fordeler sig paa to linjer i stedet for
+   * at blive klemt.
+   */
+  .detail .row > .field { min-width: 140px; }
   .detail-note, .detail .note-preview, .chiprow, .detail-help, .detail .filedrop {
     margin-left: 0;
     width: 100%;
@@ -2124,8 +2159,25 @@ li .kolonne-input { flex: 1; }
 a.saglink { text-decoration: none; }
 a.saglink:hover { border-color: var(--accent); background: var(--accent-soft); }
 
-/* Projektlisten: kompakt, naar kortene fylder for meget. */
-table.projektliste { width: 100%; border-collapse: collapse; }
+/* Projektlisten: kompakt, naar kortene fylder for meget.
+ *
+ * Fem kolonner passer ikke paa en telefon. `width: 100%` alene klemmer dem
+ * bare, indtil "Spent" ryger ud over kanten - og mobilnettet
+ * (`html, body { overflow-x: hidden }`) SKJULER den, saa kolonnen hverken
+ * kan ses eller rulles frem. Derfor `min-width: max-content` inde i
+ * `.tabelrul`: saa scroller TABELLEN, ikke siden, og alle kolonner kan naas.
+ * Én lang projekttitel maa ikke traekke tabellen i det uendelige.
+ */
+table.projektliste { width: 100%; min-width: max-content; border-collapse: collapse; }
+table.projektliste td:first-child { max-width: 18rem; }
+/* Navnet bliver STAAENDE, naar tabellen rulles. Uden det ser man "3h 5m" uden
+   at vide hvis timer det er - og saa er den kolonne, man rullede hen til,
+   ubrugelig. Baggrunden skal vaere ugennemsigtig, ellers skinner raekken
+   igennem under den. */
+table.projektliste th:first-child, table.projektliste td:first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--bg);
+}
+.projektraekke:hover td:first-child { background: var(--card); }
 table.projektliste th, table.projektliste td {
   text-align: left; padding: 9px 8px; border-bottom: 1px solid var(--border-soft);
 }

@@ -292,7 +292,7 @@ async function tegnProjekter() {
     </div>
     <p class="lead">${esc(BESKRIVELSER.projects)}</p>
     ${state.projects.length ? (somListe
-    ? `<table class="data projektliste">
+    ? `<div class="tabelrul"><table class="data projektliste">
         <tr><th>Project</th><th>Customer</th><th>Case</th><th class="num">Open</th><th class="num">Spent</th></tr>
         ${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
@@ -312,7 +312,7 @@ async function tegnProjekter() {
             <td class="num">${uden.filter((t) => t.status !== 'done').length}</td>
             <td class="num">${esc(tovoBeregn.formatVarighed(forbrugPrProjekt.__uden || 0))}</td></tr>`;
     })()}
-      </table>`
+      </table></div>`
     : `<div class="cards">${state.projects.map((p) => {
       const opgaver = d.items.filter((t) => t.projectId === p.id);
       const aabne = opgaver.filter((t) => t.status !== 'done').length;

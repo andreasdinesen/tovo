@@ -641,6 +641,30 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v12 · Fund fra brug (2026-08-19)
+
+- [x] **Ruderne passede ikke på en telefon** (meldt fra en iPhone 17 Pro, 402 px).
+      `.modal` er et grid, og den underforståede `auto`-kolonne voksede til indholdets
+      **min-bredde**: knaprækken i opgaveruden har syv knapper og måtte ikke ombrydes, så
+      dens min-bredde var 578 px og trak kortet ud i 614 px. Kortets `width: 100%` var
+      magtesløst. To rettelser, hvor den første er den strukturelle:
+      `grid-template-columns: minmax(0, 1fr)` (et kort kan aldrig blive bredere end
+      skærmen igen, uanset indhold) og `flex-wrap` på `.modal-foot`. Rækken blev i øvrigt
+      også klippet på desktop — 578 mod 568 px indre bredde.
+- [x] **Felterne i opgaveruden fik `min-width: 140px` på mobil.** Tre felter delte 326 px,
+      så sagsnummeret blev 75 px og klippede sin egen pladsholder. `min-width` og ikke
+      `flex: … !important`: bredden er ikke sat inline, så en media query kan styre den
+      uden at slås med specificiteten.
+- [x] **Projektlisten pakket i `.tabelrul` med `min-width: max-content`** — samme greb som
+      timesedlen. Fem kolonner passer ikke på en telefon, og mobilnettet
+      (`html, body { overflow-x: hidden }`) **skjulte** overløbet, så »Spent« hverken
+      kunne ses eller rulles frem. Første kolonne er `position: sticky`, så projektnavnet
+      bliver stående — ellers ser man timer uden at vide, hvis de er.
+      Målt ved 402 og 375 px: ingen af de fem sider scroller vandret, og intet ligger uden
+      for skærmen.
+
+---
+
 ## Efter v10 · Fund fra brug (2026-08-19)
 
 - [x] **Dagens registreringer på Today kan foldes sammen.** Kortet er dagens vigtigste tal
