@@ -1998,6 +1998,13 @@ table.rapporttabel th.num, table.rapporttabel td.num { text-align: right; font-v
 .gruppefold.on svg { transform: rotate(90deg); }
 .gruppefold:hover svg { color: var(--text); }
 
+/* Dagskortets overskrift: totalen til venstre, og - naar der er foldet
+   sammen - hvad der gemmer sig til hoejre. En foldning uden et spor af
+   indholdet er blind. Kortets h2 har ingen bundmargen, naar der er foldet,
+   ellers staar der en tom stribe tilbage. */
+.dagfold-hoved { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.card > .dagfold-hoved:last-child { margin-bottom: 0; }
+
 /* Et tal uden en forklaring er en gaade. Linjen under staar smaat, saa den
    kan laeses én gang og derefter overses. */
 .talforklaring { text-transform: none; letter-spacing: 0; font-size: 11.5px; margin-top: 2px; }

@@ -15,12 +15,16 @@
 const UDEN_SEKTION = '__uden';
 const traekState = { aktiv: null };
 
+/* Tavle eller liste PR. PROJEKT - en brugerpraeference, ikke en browser-ting.
+   Egen noegle pr. projekt frem for ét JSON-kort: settings-vaerdier er
+   afkortet til 2000 tegn, og et kort med mange projekt-id'er ville tavst
+   miste de sidste. Noeglen er 43 tegn af de 64, der er plads til. */
 function tavleTilstand(projektId) {
-  try { return localStorage.getItem(`tovo_tavle_${projektId}`) === '1'; } catch { return false; }
+  return brugerFlag(`board_${projektId}`, false, `tovo_tavle_${projektId}`);
 }
 
 function saetTavleTilstand(projektId, paa) {
-  try { localStorage.setItem(`tovo_tavle_${projektId}`, paa ? '1' : '0'); } catch { /* privat */ }
+  saetBrugerFlag(`board_${projektId}`, paa);
 }
 
 /** Kolonnerne: projektets sektioner, plus en til det, der ikke har nogen. */

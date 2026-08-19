@@ -641,6 +641,32 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v10 · Fund fra brug (2026-08-19)
+
+- [x] **Dagens registreringer på Today kan foldes sammen.** Kortet er dagens vigtigste tal
+      og dagens længste liste i ét, så totalen bliver stående, mens posterne og hullerne
+      foldes væk (334 px → 69 px). Overskriften siger sammenfoldet, hvad der gemmer sig
+      (»3 entries · 1 gap«) — en foldning uden et spor af indholdet er blind. Genbruger
+      `data-fold`-mekanikken fra de foldbare opgaveafsnit, så der ikke opstår to måder at
+      folde på i samme app.
+- [x] **Visningsvalgene flyttet fra `localStorage` til brugerens settings.**
+      Samlet i ÉN mekanik (`brugerFlag` / `saetBrugerFlag` i `p1_core.js`) frem for tre
+      steder der gjorde det samme: liste/kort på Projects, tavle/liste pr. projekt og de
+      foldbare afsnit. Egen settings-nøgle pr. projekt frem for ét JSON-kort — værdier
+      afkortes til 2000 tegn, og et kort med mange id'er ville tavst miste de sidste.
+      `tovo_theme` og `tovo_nav_skjult` bliver med vilje lokale: temaet skal læses før
+      første paint, og begge hører til skærmen frem for til brugeren.
+      Beviset er at rydde HELE `localStorage` og genindlæse — det er den eneste måde at
+      efterligne »en anden enhed« uden en anden enhed. Alle tre valg overlevede.
+      Andreas meldte, at valget ikke blev husket. Det blev det — men kun i den browser, det
+      blev sat i, og han bruger appen på flere enheder. Det er doda F8's lærdom igen
+      (»i localStorage virker det kun på samme enhed«), og den koster ingen ny rute:
+      `state.settings` hentes allerede ved opstart. Den gamle `localStorage`-værdi læses
+      stadig som reserve, så et valg fra før v11 ikke kastes væk. Klikket tegner **først**
+      og gemmer bagefter, så knappen ikke venter på en rundtur (doda v27).
+
+---
+
 ## Efter v9 · Fund fra brug (2026-08-19)
 
 - [x] **Tavlen fik sin egen sidebredde** (`.page.bred`, 1500 px). `.page`'s 760 px er en

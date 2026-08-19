@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2127,6 +2127,47 @@ function bindGemGenvej(host, gem) {
     e.stopPropagation();
     gem();
   }, true);
+}
+
+/**
+ * En ja/nej-praeference, der hoerer til BRUGEREN - ikke til browseren.
+ *
+ * localStorage betyder "husket her". tovo bruges paa baade telefon og
+ * desktop, saa en visningsindstilling, der kun gaelder én browser, ligner
+ * en indstilling, der ikke virker (meldt af Andreas om liste/kort).
+ * `state.settings` hentes allerede ved opstart, saa serveren koster ingen
+ * ny rute og intet ekstra kald ved indlaesning - kun ét, naar valget skifter.
+ *
+ * `gammelLokal` er den localStorage-noegle, vaerdien laa i FOER flytningen.
+ * Den laeses som reserve, saa et valg, brugeren tog i gaar, ikke kastes vaek
+ * praecis i den version, der skulle goere det bedre.
+ */
+function brugerFlag(noegle, standard, gammelLokal) {
+  const v = (state.settings || {})[noegle];
+  if (v === '1') return true;
+  if (v === '0') return false;
+  if (gammelLokal) {
+    try {
+      const g = localStorage.getItem(gammelLokal);
+      if (g === '1') return true;
+      if (g === '0') return false;
+    } catch { /* privat tilstand */ }
+  }
+  return standard;
+}
+
+/*
+ * Sætter flaget. Opdaterer `state.settings` SYNKRONT, saa kaldsstedet kan
+ * tegne om med det samme uden at vente paa en rundtur (~180 ms mod den
+ * udgivne server, doda v27). Fejler gemningen, staar valget stadig rigtigt
+ * paa skaermen; det er kun "husk det til naeste gang", der gaar tabt.
+ */
+async function saetBrugerFlag(noegle, vaerdi) {
+  const v = vaerdi ? '1' : '0';
+  state.settings = Object.assign({}, state.settings, { [noegle]: v });
+  try {
+    await api('POST', '/api/v1/settings', { [noegle]: v });
+  } catch (ex) { toast(`I could not remember that setting: ${ex.message}`); }
 }
 
 function toast(besked, handling) {
@@ -3824,17 +3865,7 @@ async function tegnIDag() {
     <p class="lead">${esc(BESKRIVELSER.today)}</p>
 
     <div class="card">
-      <h2>${esc(tovoBeregn.formatVarighed(state.todayMinutes || 0))} today</h2>
-      ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
-    : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
-      ${(p.gaps || []).length ? `<div class="huller">
-        <div class="meta">Gaps between what you registered — this is where forgotten time hides.</div>
-        ${p.gaps.map((h) => `<button class="hul" data-hul="${esc(h.fra)}-${esc(h.til)}">
-          <span>${esc(h.fra)}–${esc(h.til)}</span>
-          <span class="meta">${esc(tovoBeregn.formatVarighed(h.minutter))} unaccounted</span>
-        </button>`).join('')}
-      </div>` : ''}
-      ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}
+      ${dagskortHtml(p, d)}
     </div>
 
     <div data-keynav>
@@ -3857,6 +3888,50 @@ async function tegnIDag() {
   host.querySelectorAll('[data-hul]').forEach((el) => {
     el.addEventListener('click', () => aabnManuel(null, { date: state.today, text: el.dataset.hul }));
   });
+}
+
+/**
+ * Dagens registreringer paa Today - foldbart.
+ *
+ * Kortet er dagens vigtigste TAL og dagens laengste LISTE i ét. Totalen
+ * bliver derfor staaende, ogsaa naar man folder sammen; det er posterne og
+ * hullerne, der fylder. Sammenfoldet siger overskriften stadig, hvad der
+ * gemmer sig, saa foldningen ikke er blind.
+ *
+ * Genbruger `data-fold`-mekanikken fra de foldbare opgaveafsnit
+ * (`bindOpgaveListe` binder alt med attributten), saa der ikke opstaar to
+ * maader at folde paa i samme app.
+ */
+function dagskortHtml(p, d) {
+  const total = esc(tovoBeregn.formatVarighed(state.todayMinutes || 0));
+  const huller = p.gaps || [];
+  // Standarden foelger LAENGDEN, som de andre foldbare afsnit: en dag med et
+  // par poster er ingen stoej, og saa skal man ikke klikke for at se den.
+  const aabent = afsnitAabent('today-poster', p.entries.length + huller.length <= 6);
+
+  const dele = [];
+  if (p.entries.length) dele.push(`${p.entries.length} ${p.entries.length === 1 ? 'entry' : 'entries'}`);
+  if (huller.length) dele.push(`${huller.length} ${huller.length === 1 ? 'gap' : 'gaps'}`);
+
+  return `<h2 class="dagfold-hoved">
+      <button class="gruppefold${aabent ? ' on' : ''}" data-fold="today-poster"
+        aria-expanded="${aabent ? 'true' : 'false'}"
+        title="${aabent ? 'Fold what you registered away' : 'Show what you registered'}">
+        ${icon('chevron', 13)}<span>${total} today</span>
+      </button>
+      ${!aabent && dele.length ? `<span class="group-count">${esc(dele.join(' · '))}</span>` : ''}
+    </h2>
+    ${!aabent ? '' : `
+      ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
+    : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
+      ${huller.length ? `<div class="huller">
+        <div class="meta">Gaps between what you registered — this is where forgotten time hides.</div>
+        ${huller.map((h) => `<button class="hul" data-hul="${esc(h.fra)}-${esc(h.til)}">
+          <span>${esc(h.fra)}–${esc(h.til)}</span>
+          <span class="meta">${esc(tovoBeregn.formatVarighed(h.minutter))} unaccounted</span>
+        </button>`).join('')}
+      </div>` : ''}
+      ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}`}`;
 }
 
 /**
@@ -3888,23 +3963,20 @@ function afsnit(titel, liste, opt) {
     ${aabent ? liste.map((it) => opgaveRaekke(it, o)).join('') : ''}`;
 }
 
+/* Ogsaa foldningen foelger brugeren: har man foldet dagens registreringer
+   sammen paa desktop, skal telefonen ikke folde dem ud igen. */
 function afsnitAabent(noegle, standard) {
-  try {
-    const gemt = localStorage.getItem(`tovo_fold_${noegle}`);
-    if (gemt === '1') return true;
-    if (gemt === '0') return false;
-  } catch { /* privat tilstand */ }
-  return standard;
+  return brugerFlag(`fold_${noegle}`, standard, `tovo_fold_${noegle}`);
 }
 
 function saetAfsnitAabent(noegle, aabent) {
-  try { localStorage.setItem(`tovo_fold_${noegle}`, aabent ? '1' : '0'); } catch { /* privat */ }
+  saetBrugerFlag(`fold_${noegle}`, aabent);
 }
 
 /* Kort eller liste. Kort er rare, naar der er tre projekter; en liste er
    det, der duer, naar der er tredive. Valget huskes. */
 function projektListeTilstand() {
-  try { return localStorage.getItem('tovo_projekter_liste') === '1'; } catch { return false; }
+  return brugerFlag('view_projects_list', false, 'tovo_projekter_liste');
 }
 
 async function tegnProjekter() {
@@ -3979,7 +4051,9 @@ async function tegnProjekter() {
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
   document.getElementById('projektVis').addEventListener('click', () => {
-    try { localStorage.setItem('tovo_projekter_liste', somListe ? '0' : '1'); } catch { /* privat */ }
+    // saetBrugerFlag opdaterer state SYNKRONT og gemmer i baggrunden, saa
+    // knappen ikke venter paa en rundtur.
+    saetBrugerFlag('view_projects_list', !somListe);
     tegnSide();
   });
   document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
@@ -6207,12 +6281,16 @@ const excelTimer = (minutter) => (minutter ? Math.round((minutter / 60) * 100) /
 const UDEN_SEKTION = '__uden';
 const traekState = { aktiv: null };
 
+/* Tavle eller liste PR. PROJEKT - en brugerpraeference, ikke en browser-ting.
+   Egen noegle pr. projekt frem for ét JSON-kort: settings-vaerdier er
+   afkortet til 2000 tegn, og et kort med mange projekt-id'er ville tavst
+   miste de sidste. Noeglen er 43 tegn af de 64, der er plads til. */
 function tavleTilstand(projektId) {
-  try { return localStorage.getItem(`tovo_tavle_${projektId}`) === '1'; } catch { return false; }
+  return brugerFlag(`board_${projektId}`, false, `tovo_tavle_${projektId}`);
 }
 
 function saetTavleTilstand(projektId, paa) {
-  try { localStorage.setItem(`tovo_tavle_${projektId}`, paa ? '1' : '0'); } catch { /* privat */ }
+  saetBrugerFlag(`board_${projektId}`, paa);
 }
 
 /** Kolonnerne: projektets sektioner, plus en til det, der ikke har nogen. */

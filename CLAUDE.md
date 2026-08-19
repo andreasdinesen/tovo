@@ -53,6 +53,18 @@ Ved projektstart: læs kildekoden i `andreasdinesen/doda`, især `app/shared/par
   intet andet. Uden det rammer den "første bruger i tabellen", som i doda.
 - **`settings` har `(scope, key)`** hvor scope er brugerens id eller `*` for installationen.
   Kun admin må skrive `*`-nøglerne (i dag: `allow_registration`).
+- **En visningspræference, brugeren ville forvente overalt, hører i `settings` — ikke i
+  `localStorage`.** localStorage betyder »husket i DENNE browser«, og tovo bruges på både
+  telefon og desktop. Gå gennem `brugerFlag()` / `saetBrugerFlag()` i `p1_core.js` — de
+  læser `state.settings` (hentet ved opstart, så ingen ny rute og intet ekstra kald),
+  skriver optimistisk og tager den gamle localStorage-nøgle som reserve, så et valg fra
+  før flytningen ikke kastes væk. Nøgler i dag: `view_projects_list`, `fold_<afsnit>`,
+  `board_<projektId>`. **Egen nøgle pr. projekt, aldrig ét JSON-kort** — settings-værdier
+  afkortes til 2000 tegn, og et kort med mange projekt-id'er ville tavst miste de sidste.
+- **To ting bliver med vilje i `localStorage`, fordi de hører til ENHEDEN og ikke til
+  brugeren:** `tovo_theme` (skal læses før første paint, hvor der ikke er noget netværk —
+  og lyst/mørkt er et valg pr. skærm) og `tovo_nav_skjult` (afhænger af skærmbredden).
+  Flyt dem ikke.
 
 ## Payload-budget
 

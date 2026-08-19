@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 10;
+const APP_VERSION = 11;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -207,6 +207,47 @@ function bindGemGenvej(host, gem) {
     e.stopPropagation();
     gem();
   }, true);
+}
+
+/**
+ * En ja/nej-praeference, der hoerer til BRUGEREN - ikke til browseren.
+ *
+ * localStorage betyder "husket her". tovo bruges paa baade telefon og
+ * desktop, saa en visningsindstilling, der kun gaelder én browser, ligner
+ * en indstilling, der ikke virker (meldt af Andreas om liste/kort).
+ * `state.settings` hentes allerede ved opstart, saa serveren koster ingen
+ * ny rute og intet ekstra kald ved indlaesning - kun ét, naar valget skifter.
+ *
+ * `gammelLokal` er den localStorage-noegle, vaerdien laa i FOER flytningen.
+ * Den laeses som reserve, saa et valg, brugeren tog i gaar, ikke kastes vaek
+ * praecis i den version, der skulle goere det bedre.
+ */
+function brugerFlag(noegle, standard, gammelLokal) {
+  const v = (state.settings || {})[noegle];
+  if (v === '1') return true;
+  if (v === '0') return false;
+  if (gammelLokal) {
+    try {
+      const g = localStorage.getItem(gammelLokal);
+      if (g === '1') return true;
+      if (g === '0') return false;
+    } catch { /* privat tilstand */ }
+  }
+  return standard;
+}
+
+/*
+ * Sætter flaget. Opdaterer `state.settings` SYNKRONT, saa kaldsstedet kan
+ * tegne om med det samme uden at vente paa en rundtur (~180 ms mod den
+ * udgivne server, doda v27). Fejler gemningen, staar valget stadig rigtigt
+ * paa skaermen; det er kun "husk det til naeste gang", der gaar tabt.
+ */
+async function saetBrugerFlag(noegle, vaerdi) {
+  const v = vaerdi ? '1' : '0';
+  state.settings = Object.assign({}, state.settings, { [noegle]: v });
+  try {
+    await api('POST', '/api/v1/settings', { [noegle]: v });
+  } catch (ex) { toast(`I could not remember that setting: ${ex.message}`); }
 }
 
 function toast(besked, handling) {

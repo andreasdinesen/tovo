@@ -54,6 +54,23 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v11 — dagens registreringer kan foldes sammen
+
+- **»1h 30m today« på Today kan foldes sammen.** Kortet er dagens vigtigste tal og dagens
+  længste liste i ét. Totalen bliver stående, når du folder sammen — det er posterne og
+  hullerne, der fylder — og overskriften siger, hvad der gemmer sig (»3 entries · 1 gap«),
+  så foldningen ikke er blind. Målt: kortet går fra 334 px til 69 px.
+- Valget huskes. Standarden følger længden som de andre foldbare afsnit: en dag med et par
+  poster begynder åben, for så er der ingen støj at folde væk.
+- **Visningsvalgene følger nu dig, ikke browseren.** De blev husket i forvejen — men i
+  `localStorage`, altså kun i den browser, du satte dem i. Med appen på både telefon og
+  desktop var du tilbage til udgangspunktet, hver gang du skiftede enhed. Nu ligger de som
+  brugerindstillinger på serveren: **liste/kort på Projects**, **tavle/liste pr. projekt**
+  og **de foldede afsnit**, inklusive dagens registreringer. Valg, du har taget før v11,
+  bliver ikke kastet væk.
+- Tema og den sammenfoldede menu bliver med vilje i browseren: temaet skal læses, før
+  siden tegnes første gang, og begge dele hører til skærmen frem for til dig.
+
 ### v10 — tavlen fylder skærmen, og importen fortæller om kolonnerne
 
 - **Tavlen får sin egen bredde.** `.page` er 760 px — en læsebredde, rigtig til tekst og

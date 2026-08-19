@@ -146,17 +146,7 @@ async function tegnIDag() {
     <p class="lead">${esc(BESKRIVELSER.today)}</p>
 
     <div class="card">
-      <h2>${esc(tovoBeregn.formatVarighed(state.todayMinutes || 0))} today</h2>
-      ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
-    : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
-      ${(p.gaps || []).length ? `<div class="huller">
-        <div class="meta">Gaps between what you registered — this is where forgotten time hides.</div>
-        ${p.gaps.map((h) => `<button class="hul" data-hul="${esc(h.fra)}-${esc(h.til)}">
-          <span>${esc(h.fra)}–${esc(h.til)}</span>
-          <span class="meta">${esc(tovoBeregn.formatVarighed(h.minutter))} unaccounted</span>
-        </button>`).join('')}
-      </div>` : ''}
-      ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}
+      ${dagskortHtml(p, d)}
     </div>
 
     <div data-keynav>
@@ -179,6 +169,50 @@ async function tegnIDag() {
   host.querySelectorAll('[data-hul]').forEach((el) => {
     el.addEventListener('click', () => aabnManuel(null, { date: state.today, text: el.dataset.hul }));
   });
+}
+
+/**
+ * Dagens registreringer paa Today - foldbart.
+ *
+ * Kortet er dagens vigtigste TAL og dagens laengste LISTE i ét. Totalen
+ * bliver derfor staaende, ogsaa naar man folder sammen; det er posterne og
+ * hullerne, der fylder. Sammenfoldet siger overskriften stadig, hvad der
+ * gemmer sig, saa foldningen ikke er blind.
+ *
+ * Genbruger `data-fold`-mekanikken fra de foldbare opgaveafsnit
+ * (`bindOpgaveListe` binder alt med attributten), saa der ikke opstaar to
+ * maader at folde paa i samme app.
+ */
+function dagskortHtml(p, d) {
+  const total = esc(tovoBeregn.formatVarighed(state.todayMinutes || 0));
+  const huller = p.gaps || [];
+  // Standarden foelger LAENGDEN, som de andre foldbare afsnit: en dag med et
+  // par poster er ingen stoej, og saa skal man ikke klikke for at se den.
+  const aabent = afsnitAabent('today-poster', p.entries.length + huller.length <= 6);
+
+  const dele = [];
+  if (p.entries.length) dele.push(`${p.entries.length} ${p.entries.length === 1 ? 'entry' : 'entries'}`);
+  if (huller.length) dele.push(`${huller.length} ${huller.length === 1 ? 'gap' : 'gaps'}`);
+
+  return `<h2 class="dagfold-hoved">
+      <button class="gruppefold${aabent ? ' on' : ''}" data-fold="today-poster"
+        aria-expanded="${aabent ? 'true' : 'false'}"
+        title="${aabent ? 'Fold what you registered away' : 'Show what you registered'}">
+        ${icon('chevron', 13)}<span>${total} today</span>
+      </button>
+      ${!aabent && dele.length ? `<span class="group-count">${esc(dele.join(' · '))}</span>` : ''}
+    </h2>
+    ${!aabent ? '' : `
+      ${p.entries.length ? `<ul class="plain posts">${p.entries.map((e) => postRaekke(e, d.items)).join('')}</ul>`
+    : '<p class="meta">Nothing logged yet. Start a timer on a task, or log it by hand.</p>'}
+      ${huller.length ? `<div class="huller">
+        <div class="meta">Gaps between what you registered — this is where forgotten time hides.</div>
+        ${huller.map((h) => `<button class="hul" data-hul="${esc(h.fra)}-${esc(h.til)}">
+          <span>${esc(h.fra)}–${esc(h.til)}</span>
+          <span class="meta">${esc(tovoBeregn.formatVarighed(h.minutter))} unaccounted</span>
+        </button>`).join('')}
+      </div>` : ''}
+      ${p.rounding ? `<p class="meta">Shown rounded to ${p.rounding} minutes — the stored times are exact.</p>` : ''}`}`;
 }
 
 /**
@@ -210,23 +244,20 @@ function afsnit(titel, liste, opt) {
     ${aabent ? liste.map((it) => opgaveRaekke(it, o)).join('') : ''}`;
 }
 
+/* Ogsaa foldningen foelger brugeren: har man foldet dagens registreringer
+   sammen paa desktop, skal telefonen ikke folde dem ud igen. */
 function afsnitAabent(noegle, standard) {
-  try {
-    const gemt = localStorage.getItem(`tovo_fold_${noegle}`);
-    if (gemt === '1') return true;
-    if (gemt === '0') return false;
-  } catch { /* privat tilstand */ }
-  return standard;
+  return brugerFlag(`fold_${noegle}`, standard, `tovo_fold_${noegle}`);
 }
 
 function saetAfsnitAabent(noegle, aabent) {
-  try { localStorage.setItem(`tovo_fold_${noegle}`, aabent ? '1' : '0'); } catch { /* privat */ }
+  saetBrugerFlag(`fold_${noegle}`, aabent);
 }
 
 /* Kort eller liste. Kort er rare, naar der er tre projekter; en liste er
    det, der duer, naar der er tredive. Valget huskes. */
 function projektListeTilstand() {
-  try { return localStorage.getItem('tovo_projekter_liste') === '1'; } catch { return false; }
+  return brugerFlag('view_projects_list', false, 'tovo_projekter_liste');
 }
 
 async function tegnProjekter() {
@@ -301,7 +332,9 @@ async function tegnProjekter() {
       + '<p>Type <code>/</code> in the field above to create one.</p></div>'}
   </div>`;
   document.getElementById('projektVis').addEventListener('click', () => {
-    try { localStorage.setItem('tovo_projekter_liste', somListe ? '0' : '1'); } catch { /* privat */ }
+    // saetBrugerFlag opdaterer state SYNKRONT og gemmer i baggrunden, saa
+    // knappen ikke venter paa en rundtur.
+    saetBrugerFlag('view_projects_list', !somListe);
     tegnSide();
   });
   document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
