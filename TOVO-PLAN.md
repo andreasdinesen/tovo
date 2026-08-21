@@ -641,6 +641,17 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v13 · Fund fra brug (2026-08-19)
+
+- [x] **Brugernavnet vises med stort begyndelsesbogstav** (`#userBtn span`,
+      `.usermenu-name`). Bevidst som `text-transform` i CSS og ikke som en ændring af
+      værdien: brugernavne sammenlignes med `lower()` ved login, registrering og
+      dubletcheck (RUNE-ERFARINGER §3), så en ændring af selve strengen ville ramme tre
+      steder, der intet har med visning at gøre. Kontosiden står i en `.meta`, som
+      versaliserer hele linjen i forvejen — den er uændret.
+
+---
+
 ## Efter v12 · Fund fra brug (2026-08-19)
 
 - [x] **Ruderne passede ikke på en telefon** (meldt fra en iPhone 17 Pro, 402 px).

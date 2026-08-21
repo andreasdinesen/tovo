@@ -65,7 +65,7 @@ test('soegning finder baade opgaver og projekter', async () => {
   assert.equal(r.data.tasks.length, 1);
   assert.equal(r.data.tasks[0].title, 'opsaetning af server');
 
-  const p = await k.kald('GET', '/api/v1/search?q=grund');
+  const p = await k.kald('GET', '/api/v1/search?q=nord');
   assert.equal(p.data.projects.length, 1);
 
   // Staar man i et projekt, soeger feltet KUN der - og saa er projekter ikke

@@ -54,6 +54,13 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v14 — brugernavnet vises med stort begyndelsesbogstav
+
+- Navnet i sidebaren og i brugermenuen vises nu som **Andreas** i stedet for *andreas*.
+  Det er **kun visning**: værdien gemmes og sammenlignes uændret i små bogstaver, så
+  login, registrering og dubletcheck er urørte. Derfor ligger det i CSS og ikke i koden.
+
+
 ### v13 — appen passer på en telefon
 
 Meldt fra en iPhone 17 Pro: opgaveruden var bredere end skærmen, og på Projects blev
