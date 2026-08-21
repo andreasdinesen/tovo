@@ -1,6 +1,6 @@
 # tovo — overdragelse
 
-Skrevet 2026-08-19, efter v11. Denne fil er til den næste Claude-samtale: hvad tovo er,
+Skrevet 2026-08-21, efter v14. Denne fil er til den næste Claude-samtale: hvad tovo er,
 hvor tingene står, og hvad man skal vide, før man rører noget.
 
 **Læs i denne rækkefølge:** `~/ClaudeMacBook/RUNE-ERFARINGER.md` (hele filen — den er fælles
@@ -13,14 +13,14 @@ for alle Andreas' runer og indeholder de fælder, der allerede har kostet tid), 
 
 Tidsregistrering på opgaver og projekter, bygget som **Yggdrasil-rune**: ren Node ≥22
 (`node:http` + `node:sqlite` + `node:crypto`), **nul npm-pakker, nul CDN**. Hele appen
-udgives som én YAML-fil med app-filerne pakket som brotli-komprimeret tar i base85.
+udgives som én YAML-fil, hvis install-script HENTER app-koden fra en GitHub-tag.
 
 Den afløser Toggl + regneark for Andreas' konsulentarbejde: opgaverne kommer fra Microsoft
 Planner, timerne skal afstemmes pr. **sagsnummer** i et andet system (ServiceNow), og
 start-links klikkes fra OneNote.
 
-- Repo: `andreasdinesen/tovo` (privat) · lokalt i `~/ClaudeMacBook/tovo/`
-- Kører hos Andreas på Hjorten via Yggdrasil Panel. **v11 er udgivet.** Om den er
+- Repo: `andreasdinesen/tovo` — **OFFENTLIGT** · lokalt i `~/ClaudeMacBook/tovo/`
+- Kører hos Andreas på Hjorten via Yggdrasil Panel. **v14 er udgivet.** Om den er
   *installeret*, kan kun Andreas se: panelets opdatering er todelt, og v7 stod pushet i
   et døgn, mens serveren kørte v6. Versionen i appens nederste venstre hjørne er facit.
 - Tvilling til `andreasdinesen/doda` — samme stak og udseende, men **ingen kobling**.
@@ -29,9 +29,9 @@ start-links klikkes fra OneNote.
 
 | | |
 |---|---|
-| Version | **v11** (`APP_VERSION` i `app/parts/p1_core.js`) |
+| Version | **v14** (`APP_VERSION` i `app/parts/p1_core.js`) |
 | Tests | **166**, alle grønne — `node --test tests/*.test.mjs` |
-| Install-script | **113.846 / 120.000 tegn (94 %)** ← se »Pladsen« nedenfor |
+| Install-script | **1.615 tegn** — henter koden fra GitHub, se nedenfor |
 | Plan | **Alle ni faser færdige.** `TOVO-PLAN.md` har ingen ukrydsede punkter |
 
 ## Sådan kører du den
@@ -119,17 +119,24 @@ oprettelsen og derfor bliver stående.
 - Panelets opdatering er todelt: **Runes → Browse GitHub → Reload** henter rune-definitionen,
   **Serveren → Settings → Update** installerer appen. `/data` overlever.
 
-## Pladsen — det vigtigste åbne punkt
+## Install-scriptet HENTER koden
 
-Install-scriptet er på **94 % af de 120.000 tegn**. Loftet er Linux' `MAX_ARG_STRLEN`
-(131.072 b), fordi scriptet køres som ét `sh -c`-argument. Næste større funktion kræver,
-at noget ryger ud.
+Scriptet bærer ikke længere appen. Det henter `codeload.github.com/andreasdinesen/tovo/
+tar.gz/refs/tags/vN`, pakker ud i `/tmp`, og bytter `app/` ind. Derfor er scriptet
+**~1,6 K og konstant** — de 120.000 tegn er ikke længere en grænse, man skal arbejde
+udenom, og »pladsen« er ikke et åbent punkt mere.
 
-**Mål før du barberer** (RUNE-ERFARINGER §2): brotli+base85 er allerede i bund, og
-kommentar-strip af den udgivne kopi kører. Den næste målte mulighed er **dodas ubrugte CSS**:
-`app/public/style.css` er kopieret ordret fra doda og bærer klasser, tovo aldrig bruger.
-Lav et leave-one-out (komprimér tar'en uden hver fil på skift) før du beslutter noget —
-rå filstørrelse siger næsten intet.
+To ting følger med:
+
+1. **Repoet skal være offentligt.** codeload spørger ikke om et token, og panelets
+   GitHub-token gælder rune-definitionen, ikke det, der kører inde i containeren.
+   Derfor: aldrig kundedata i koden — se `CLAUDE.md`.
+2. **Hver udgivelse skal tagges:** `git tag vN && git push --tags`. Uden taggen svarer
+   GitHub 404, og runen kan ikke installeres. Build'et minder om det i sidste linje.
+
+Payloaden bygges stadig og rapporteres i build-loggen — rundturs-tjekket er stadig det,
+der beviser, at kilderne kan pakkes og pakkes ud igen. `HENT_FRA_GITHUB = False` i
+`build_rune.py` giver den indlejrede rune tilbage (den eneste vej uden net).
 
 ## Hvad der IKKE er verificeret
 

@@ -33,6 +33,9 @@ Ved projektstart: læs kildekoden i `andreasdinesen/doda`, især `app/shared/par
 
 - **Bump aldrig `APP_VERSION` undervejs.** Kun ved udgivelse, efter Andreas har sagt ja.
   Flere ændringer samles i én version.
+- **Hver udgivelse SKAL tagges:** `git tag vN && git push --tags`. Install-scriptet henter
+  `refs/tags/vN` — glemmer man taggen, svarer GitHub 404, og runen kan ikke installeres.
+  Build'et minder om det i sin sidste linje.
 - **Commit og push kræver et udtrykkeligt ja.** Et push er en udgivelse.
 - Efter hver ændring: byg, test, opsummer — og vent.
 - Ny generel lærdom → loggen i `RUNE-ERFARINGER.md`. Projekt-specifik → denne fil.
@@ -66,14 +69,29 @@ Ved projektstart: læs kildekoden i `andreasdinesen/doda`, især `app/shared/par
   og lyst/mørkt er et valg pr. skærm) og `tovo_nav_skjult` (afhænger af skærmbredden).
   Flyt dem ikke.
 
+## Repoet er OFFENTLIGT
+
+`andreasdinesen/tovo` er offentligt, fordi install-scriptet henter app-koden fra
+codeload.github.com, og det spørger ikke om et token.
+
+- **Aldrig kundedata i koden** — heller ikke som eksempel i en test eller en
+  dok-kommentar. Eksemplerne hedder `Nordvind` (opdigtet kunde) og `SAG-…`
+  (sagsnumre). Historikken blev renset én gang; den øvelse skal ikke gentages.
+- Fixturer skal være syntetiske. `tests/fixtures/planner-eksport.xlsx` bruger »Testkunde«.
+
 ## Payload-budget
 
-Loftet er ~120 K i install-scriptet (`MAX_ARG_STRLEN` er 131.072 b). brotli q11 + base85,
-alfabet uden `{ } \``. **Rapportér den målte størrelse efter hver `build_rune.py`.**
+Install-scriptet **henter** app-koden i stedet for at bære den (`HENT_FRA_GITHUB = True` i
+`build_rune.py`), så det er ~1,6 K og konstant — uanset hvor stor appen bliver. Loftet på
+120 K er dermed ikke længere en begrænsning.
+
+Payloaden bygges **stadig** ved hver kørsel, og det er ikke spild: rundturs-tjekket beviser,
+at kilderne kan pakkes og pakkes ud igen, og tallet står i loggen, så §8's vane holder.
+Sæt `HENT_FRA_GITHUB = False`, og den indlejrede rune er tilbage — det er den eneste vej,
+der virker uden net ved installationen.
 
 De delte moduler (`beregn.js`, `parse.js`) ligger i payloaden **to gange** — inde i `app.js`
-og som selvstændige filer serveren kan `require`. Det alene kostede Beanledger 10 K.
-Bliver det trangt: mål komprimering og kodning før du barberer kildekode.
+og som selvstændige filer serveren kan `require`.
 
 ## Faldgruber der allerede har kostet tid i andre runer
 

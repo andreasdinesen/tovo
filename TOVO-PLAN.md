@@ -641,6 +641,43 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v13 · Pladsen loest, og repoet gjort offentligt (2026-08-21)
+
+- [x] **Install-scriptet HENTER app-koden** i stedet for at bære den — sagus mønster,
+      anden rune, samme resultat: **115.635 → 1.615 tegn (96 % → 1 %)**, og nu konstant
+      uanset appens størrelse. Pladsen har været det vigtigste åbne punkt i ugevis og er
+      ikke længere et problem.
+      Koden hentes fra en **tag** (`refs/tags/vN`), ikke en gren: rune vN installerer vN's
+      kode, også om et år. Mappenavnet i GitHub-arkivet gættes ikke — der `find`es en
+      `app`-mappe, og `server.js` skal ligge i den. Der pakkes ud i `/tmp` og byttes ind,
+      så en halv hentning ikke kan efterlade et halvt `app/`.
+      Build'et fælder, hvis de to scripts henter fra forskellige adresser, hvis `rm -rf app`
+      mangler, eller hvis en payload er blevet hængende.
+      Verificeret ende til ende: fejlstien (404 → exit 1 med en besked, der nævner både
+      manglende tag og manglende adgang), og lykkestien mod det live repo — hentet,
+      udpakket, startet, skema migreret, **HTTP 200**.
+- [x] **Repoet er gjort offentligt**, fordi codeload ikke spørger om et token.
+      Eksempeldata blev renset først: en rigtig kunde og et rigtigt sagssystem stod i en
+      dok-kommentar og ni testfiler. Både træet, hele historikken og commit-beskederne —
+      inklusive den besked, der beskrev rensningen og derfor selv remsede navnene op.
+      Bevist med `git grep` i **alle** commits: 0 træffere i filindhold og 0 i beskeder.
+      Kun forfatter-adressen står tilbage, og den er uundgåelig.
+- [x] **Ny version opdages, mens appen ligger åben** (`tjekVersion`). `state.config` blev
+      kun hentet ved opstart, og en PWA genindlæses stort set aldrig — så »vN · vM
+      available« dukkede aldrig op på telefonen. Hentes nu ved `visibilitychange`,
+      `pageshow` og `focus` med en 3-sekunders spærre (doda v26). **Kun foden tegnes om**:
+      en baggrundshentning må gøre siden nyere, aldrig tommere.
+      v12 gav den stille vej (service workeren opdaterer sig selv); det her er den
+      synlige, og den virker også, når der slet ingen service worker er.
+- [x] **Reload-knappen sender `postMessage('ryd')` til service workeren.** Håndteringen
+      lå i `sw.js` fra starten, men blev aldrig kaldt — en halvt tilsluttet funktion.
+      doda gør begge dele, og grunden står i dens kode: en SW, der stadig styrer siden,
+      kan servere den gamle fil igen lige efter en oprydning fra siden.
+- [x] **Brugernavnet vises med stort begyndelsesbogstav.** Kun visning (CSS): værdien
+      sammenlignes med `lower()` ved login, registrering og dubletcheck.
+
+---
+
 ## Efter v13 · Fund fra brug (2026-08-19)
 
 - [x] **Brugernavnet vises med stort begyndelsesbogstav** (`#userBtn span`,

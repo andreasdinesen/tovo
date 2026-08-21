@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 13;
+const APP_VERSION = 14;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -600,6 +600,64 @@ function opdaterTemaKnap() {
   bindTemaKnap();
 }
 
+/**
+ * "vN - vM available - reload".
+ *
+ * Cachen ryddes BEGGE veje: fra siden OG ved at bede service workeren om det
+ * selv. Handleren har ligget i sw.js hele tiden, men beskeden blev aldrig
+ * sendt - og en SW, der stadig styrer siden, kan servere den gamle fil igen,
+ * lige efter man har ryddet fra siden (doda).
+ */
+function bindVersionKnap() {
+  const el = document.getElementById('versionBtn');
+  if (!el) return;
+  el.addEventListener('click', async () => {
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage('ryd');
+      }
+      if (window.caches) await Promise.all((await caches.keys()).map((n) => caches.delete(n)));
+    } catch { /* uden cache-api er der ikke noget at rydde */ }
+    location.reload();
+  });
+}
+
+/**
+ * Opdager en ny version, MENS appen ligger aaben.
+ *
+ * `state.config` blev kun hentet ÉN gang - ved opstart. En web app paa
+ * hjemmeskaermen genindlaeses stort set aldrig, saa paa telefonen kunne
+ * serveren staa paa vN+1 i dagevis, uden at knappen nogensinde dukkede op.
+ * Service workeren opdaterer sig selv (registrerSW), men det er den STILLE
+ * vej; det her er den, brugeren kan se og selv trykke paa.
+ *
+ * Kun foden tegnes om. En baggrundshentning maa goere siden nyere, aldrig
+ * tommere - og en fejl her skal ikke kunne erstatte noget med en fejlside.
+ */
+const versionTjek = { sidst: 0 };
+
+async function tjekVersion() {
+  if (document.visibilityState !== 'visible') return;
+  /*
+   * Kort spaerre. `focus` fyrer, hver gang man klikker tilbage i vinduet paa
+   * desktop, og et delings-ark eller et tilladelses-pop-up, der blinker forbi
+   * paa telefonen, sender ogsaa en visibilitychange (doda v26). Uden den her
+   * koster hvert eneste skift et kald.
+   */
+  if (Date.now() - versionTjek.sidst < 3000) return;
+  versionTjek.sidst = Date.now();
+  try {
+    const c = await api('GET', '/api/public-config');
+    if (!c || !c.version || c.version === (state.config || {}).version) return;
+    state.config = c;
+    const rad = document.getElementById('footRow');
+    if (!rad) return;
+    rad.innerHTML = versionHtml() + temaKnapHtml();
+    bindVersionKnap();
+    bindTemaKnap();
+  } catch { /* offline: proev igen naar appen kommer frem */ }
+}
+
 function bindTemaKnap() {
   const el = document.getElementById('temaBtn');
   if (!el) return;
@@ -663,15 +721,7 @@ function bindShell() {
     if (skjul) document.body.classList.remove('navopen');
   });
   bindTemaKnap();
-  const vBtn = document.getElementById('versionBtn');
-  if (vBtn) {
-    vBtn.addEventListener('click', async () => {
-      try {
-        if (window.caches) await Promise.all((await caches.keys()).map((n) => caches.delete(n)));
-      } catch { /* uden cache-api er der ikke noget at rydde */ }
-      location.reload();
-    });
-  }
+  bindVersionKnap();
   document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
   document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
   bindOmni();
@@ -1194,6 +1244,10 @@ async function registrerSW() {
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) reg.update().catch(() => { /* offline er fint */ });
     });
+    window.addEventListener('pageshow', () => {
+      // iOS' bfcache: appen "kommer frem" uden en visibilitychange.
+      reg.update().catch(() => { /* offline er fint */ });
+    });
 
     /*
      * Naar en ny service worker tager over, koerer den GAMLE kode stadig i
@@ -1253,4 +1307,17 @@ function fortsaetTilConnector() {
   }
   render();
   registrerSW();
+
+  /*
+   * Den SYNLIGE vej til en ny version. Service workeren opdaterer sig selv
+   * stille; det her er knappen, brugeren kan se og selv trykke paa - og den
+   * virker ogsaa, naar der slet ingen service worker er (http, eller en
+   * registrering der fejlede).
+   *
+   * `focus` er med, fordi en web app paa hjemmeskaermen kan faa fokus uden
+   * en visibilitychange, og `pageshow` daekker iOS' bfcache.
+   */
+  document.addEventListener('visibilitychange', tjekVersion);
+  window.addEventListener('pageshow', tjekVersion);
+  window.addEventListener('focus', tjekVersion);
 }());

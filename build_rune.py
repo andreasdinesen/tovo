@@ -42,6 +42,37 @@ OUT = os.path.join(ROOT, 'runes', 'tovo.yaml')
 MAX_INSTALL = 120_000
 MAX_YAML = 512 * 1024
 
+# Install-scriptet HENTER app-koden i stedet for at baere den.
+#
+# Med payloaden indlejret laa scriptet paa 96 % af de 120.000 tegn, og den
+# naeste funktion af nogen stoerrelse kunne ikke vaere der. Et hentende script
+# er KONSTANT stort, uanset hvor stor appen bliver (sagu, tools v1).
+#
+# Payloaden bygges STADIG ved hver koersel, og det er ikke spild:
+#   - rundturs-tjekket beviser, at kilderne kan pakkes og pakkes ud igen,
+#   - tallet staar i loggen, saa §8's vane (rapportér payloaden) holder,
+#   - og saet HENT_FRA_GITHUB = False, saa er den indlejrede rune tilbage.
+#     Det er den eneste vej, der virker uden net ved installationen.
+#
+# Prisen er, at repoet skal vaere OFFENTLIGT (codeload spoerger ikke om et
+# token), og at hver udgivelse skal tagges: `git tag vN && git push --tags`.
+HENT_FRA_GITHUB = True
+GITHUB_EJER = 'andreasdinesen'
+GITHUB_REPO = 'tovo'
+
+
+def tarball_url(version):
+    """Runens version N hoerer sammen med taggen vN - ikke med en gren.
+
+    Peger scriptet paa `refs/heads/main`, installerer en gammel rune det, main
+    tilfaeldigvis indeholder i dag. Med en tag installerer rune vN praecis vN's
+    kode, ogsaa om et aar. Glemmer man at pushe taggen, siger install-scriptet
+    det HOEJT (404) i stedet for at installere noget andet.
+    """
+    return (f'https://codeload.github.com/{GITHUB_EJER}/{GITHUB_REPO}'
+            f'/tar.gz/refs/tags/v{version}')
+
+
 HEREDOC = 'YGG_PAYLOAD_EOF'
 FORBUDT_MOENSTER = re.compile(r'\{\{[A-Z_]{2,}\}\}')
 
@@ -340,7 +371,77 @@ def verificer(kodet, forventet):
 
 # -------------------------------------------------------------------- 3. yaml
 
+def henter(version):
+    """Node-koden, der henter tarball'en. Staar i en 'single quoted' sh-streng
+    -> den maa IKKE indeholde '.
+
+    Node frem for wget af to grunde: Node ER install-imaget og altsaa
+    garanteret til stede, mens busybox' wget og dens TLS er ubevist - og zlib
+    i Node pakker gzip'en ud, saa `tar` kun skal kunne det, den allerede goer.
+    """
+    url = tarball_url(version)
+    return (
+        'const https=require("https"),zlib=require("zlib");'
+        f'const U="{url}";'
+        'function d(m){console.error("[fejl] "+m);console.error("Adresse: "+U);'
+        'console.error("GitHub svarer 404 BAADE naar adressen ikke findes OG naar '
+        'der ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.");'
+        'process.exit(1);}'
+        'function hent(u,n){https.get(u,{headers:{"user-agent":"tovo-installer"}},(r)=>{'
+        'if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){'
+        'if(n<=0)return d("for mange omdirigeringer");r.resume();'
+        'return hent(new URL(r.headers.location,u).toString(),n-1);}'
+        'if(r.statusCode!==200)return d("GitHub svarede "+r.statusCode);'
+        'const g=zlib.createGunzip();'
+        'g.on("error",(e)=>d("arkivet kunne ikke pakkes ud: "+e.message));'
+        'r.pipe(g).pipe(process.stdout);'
+        '}).on("error",(e)=>d("kunne ikke naa GitHub: "+e.message));}'
+        'hent(U,3);'
+    )
+
+
+def hent_krop(version):
+    """De linjer, install og update har TILFAELLES, naar koden hentes.
+
+    Der pakkes ALTID ud i en frisk mappe, som byttes ind - saa kan en halv
+    hentning aldrig efterlade et halvt app/. `rm -rf app` staar med, fordi tar
+    overskriver, men ikke fjerner filer, der er slettet i en ny version
+    (Beanledger v30). Datamappen roeres ikke: alt midlertidigt ligger i /tmp.
+    """
+    return (
+        'echo "Henter app-koden fra GitHub ..."\n'
+        'rm -rf /tmp/tovo-hent\n'
+        'mkdir -p /tmp/tovo-hent\n'
+        f"node -e '{henter(version)}' > /tmp/tovo-hent/app.tar\n"
+        'tar x -C /tmp/tovo-hent -f /tmp/tovo-hent/app.tar\n'
+        '\n'
+        '# Mappenavnet i et GitHub-arkiv er <repo>-<ref uden v>, og arkivet\n'
+        '# begynder med en pax_global_header-post. Ingen af delene gaettes:\n'
+        '# find den app-mappe, der FINDES.\n'
+        'NY=$(find /tmp/tovo-hent -maxdepth 2 -type d -name app | head -n 1)\n'
+        'if [ -z "$NY" ] || [ ! -f "$NY/server.js" ]; then\n'
+        '  echo "[fejl] arkivet fra GitHub indeholder ingen app/server.js"\n'
+        '  exit 1\n'
+        'fi\n'
+        'rm -rf app\n'
+        'mv "$NY" app\n'
+        'rm -rf /tmp/tovo-hent\n'
+    )
+
+
 def install_script(version, payload):
+    if HENT_FRA_GITHUB:
+        return (
+            'set -eu\n'
+            f'echo "Installerer tovo v{version} ..."\n'
+            'echo "Node: $(node --version)"\n'
+            '\n'
+            + hent_krop(version)
+            + '\n'
+            'echo "Filer udpakket:"\n'
+            'ls -1 app app/public\n'
+            'echo "Klar. Start serveren i panelet."\n'
+        )
     linjer = textwrap.wrap(payload, 100)
     return (
         'set -eu\n'
@@ -364,6 +465,17 @@ def opdater_script(version, payload):
     `rm -rf app` FOERST: tar overskriver, men fjerner ikke filer, der er
     slettet i en ny version - uden det bliver de liggende for evigt
     (Beanledger v30)."""
+    if HENT_FRA_GITHUB:
+        return (
+            'set -eu\n'
+            f'echo "Opdaterer tovo til v{version} ..."\n'
+            'echo "Node: $(node --version)"\n'
+            '\n'
+            + hent_krop(version)
+            + '\n'
+            'echo "App-filerne er skiftet ud. Databasen i /data er uroert."\n'
+            'echo "Skemaet opdateres automatisk, naar serveren starter."\n'
+        )
     linjer = textwrap.wrap(payload, 100)
     return (
         'set -eu\n'
@@ -450,7 +562,27 @@ def byg_yaml(version, payload):
     for blok in ('install', 'update'):
         if genlaest['gameskill'][blok]['script'] != rune['gameskill'][blok]['script']:
             fejl(f'{blok}-scriptet overlevede ikke en YAML-rundtur')
-    if 'rm -rf app' in genlaest['gameskill']['install']['script']:
+    if HENT_FRA_GITHUB:
+        # Henter de to scripts DET SAMME? En update, der henter en anden
+        # version end installationen, opdages ellers foerst, naar en bruger
+        # trykker paa knappen (Kokkeri v26).
+        forventet = tarball_url(version) + '"'
+        for blok in ('install', 'update'):
+            script = genlaest['gameskill'][blok]['script']
+            fund = re.findall(r'https://codeload\.github\.com/\S+?"', script)
+            if len(fund) != 1:
+                fejl(f'{blok}-scriptet henter fra {len(fund)} adresser - der skal vaere praecis én')
+            if fund[0] != forventet:
+                fejl(f'{blok}-scriptet henter ikke fra {tarball_url(version)}')
+            # Her SKAL `rm -rf app` staa i begge: ombytningen af den friske
+            # mappe er det, der goer, at en halv hentning ikke efterlader et
+            # halvt app/.
+            if 'rm -rf app' not in script:
+                fejl(f'{blok}-scriptet mangler `rm -rf app` - slettede filer '
+                     'ville blive liggende')
+            if HEREDOC in script:
+                fejl(f'{blok}-scriptet baerer stadig en payload')
+    elif 'rm -rf app' in genlaest['gameskill']['install']['script']:
         fejl('install-scriptet maa ikke slette app/ - det er update-scriptets opgave')
     if '/data' in genlaest['gameskill']['update']['script'].replace('/data er uroert', ''):
         fejl('update-scriptet maa ikke roere /data')
@@ -490,6 +622,15 @@ def main():
     # hele vejen gennem projektet, ikke maales foerste gang den fejler.
     print(f'  install-script: {len(install):,} / {MAX_INSTALL:,} tegn '
           f'({len(install) * 100 // MAX_INSTALL} %)')
+    if HENT_FRA_GITHUB:
+        # Payloaden er ikke i scriptet laengere, men tallet bliver ved med at
+        # betyde noget: det er maalet paa, hvor stor appen er blevet, og det er
+        # det, §8's vane handler om. Rapportér det, ogsaa naar det ikke laengere
+        # kan faelde build'et.
+        print(f'  app-koden hentes fra: {tarball_url(version)}')
+        print(f'  (indlejret ville payloaden fylde {len(payload):,} tegn '
+              f'= {len(payload) * 100 // MAX_INSTALL} % af loftet)')
+        print(f'  HUSK ved udgivelse: git tag v{version} && git push --tags')
     print(f'\nOK  runes/tovo.yaml  (v{version}, {len(tekst.encode("utf8")):,} b)')
 
 

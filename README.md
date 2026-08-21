@@ -54,11 +54,34 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
-### v14 — brugernavnet vises med stort begyndelsesbogstav
+### v14 — install-scriptet henter koden, og repoet er offentligt
 
-- Navnet i sidebaren og i brugermenuen vises nu som **Andreas** i stedet for *andreas*.
-  Det er **kun visning**: værdien gemmes og sammenlignes uændret i små bogstaver, så
-  login, registrering og dubletcheck er urørte. Derfor ligger det i CSS og ikke i koden.
+- **Install-scriptet bærer ikke længere appen — det henter den.** Scriptet gik fra
+  **115.635 tegn (96 % af loftet) til 1.615 (1 %)**, og det er nu *konstant* stort,
+  uanset hvor stor tovo bliver. Pladsen har været det vigtigste åbne punkt i ugevis;
+  den er væk som problem.
+- Koden hentes fra `codeload.github.com/.../refs/tags/vN` — **en tag, ikke en gren**.
+  Rune v14 installerer præcis v14's kode, også om et år. Derfor skal hver udgivelse
+  tagges; glemmes det, siger installationen det højt med en 404 i stedet for at
+  installere noget andet.
+- **Repoet er gjort offentligt**, fordi codeload ikke spørger om et token. Eksempeldata
+  i tests og kommentarer er renset for kundenavne først — også i historikken.
+- Payloaden bygges stadig ved hver kørsel: rundturs-tjekket beviser, at kilderne kan
+  pakkes og pakkes ud igen, og størrelsen står stadig i build-loggen. `HENT_FRA_GITHUB
+  = False` giver den indlejrede rune tilbage — den eneste vej, der virker uden net.
+- **Ny version opdages nu, mens appen ligger åben på telefonen.** Serverens versionstal
+  blev kun hentet én gang — ved opstart — og en web app på hjemmeskærmen genindlæses
+  stort set aldrig. Så kunne serveren stå på en nyere version i dagevis, uden at knappen
+  »v13 · v14 available — reload« nogensinde dukkede op. Den tjekkes nu, hver gang appen
+  kommer frem (og ved iOS' bfcache og ved fokus), med en spærre på 3 sekunder, så et
+  delings-ark, der blinker forbi, ikke koster et kald.
+- **Reload-knappen beder nu også service workeren rydde sin egen cache.** Håndteringen
+  har ligget i `sw.js` hele tiden, men beskeden blev aldrig sendt — så en service worker,
+  der stadig styrede siden, kunne servere den gamle fil igen lige efter oprydningen.
+  Det er samme opførsel som doda.
+- **Brugernavnet vises med stort begyndelsesbogstav** i sidebaren og brugermenuen. Kun
+  visning: værdien gemmes og sammenlignes uændret i små bogstaver, så login er urørt.
+
 
 
 ### v13 — appen passer på en telefon
