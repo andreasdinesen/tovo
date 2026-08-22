@@ -285,6 +285,22 @@ const PRIORITETER = ['low', 'medium', 'high'];
    admin maa skrive dem; alle andre noegler er brugerens egne. */
 const GLOBALE_SETTINGS = new Set(['allow_registration']);
 
+/*
+ * Indstillinger, der ALDRIG maa forlade serveren.
+ *
+ * Da tovo blev skrevet, laa der ingen hemmeligheder i settings-tabellen, og
+ * `hentSettings()` returnerede derfor hele raekken. Et "hent alt i en tabel"
+ * er en TIDSINDSTILLET laekage: den er rigtig den dag den skrives og forkert
+ * foerste gang nogen laegger noget foelsomt i tabellen (doda v16). Sagu-
+ * noeglen er den foerste.
+ *
+ * Filteret ligger i `hentSettings()` selv - ikke i kaldstederne. Baade
+ * settings-ruten og JSON-eksporten gaar den vej, saa der er ét sted at
+ * huske det. `getSetting()` er uroert: serveren skal kunne laese noeglen for
+ * at kunne bruge den.
+ */
+const HEMMELIGE_SETTINGS = new Set(['sagu_key']);
+
 /* ----------------------------------------------------------------- hjaelpere */
 
 const now = () => Math.floor(Date.now() / 1000);
@@ -320,6 +336,7 @@ function setSetting(scope, key, value) {
 function hentSettings(scope) {
   const ud = {};
   for (const r of db.prepare('SELECT key, value FROM settings WHERE scope = ?').all(scope)) {
+    if (HEMMELIGE_SETTINGS.has(r.key)) continue;
     ud[r.key] = r.value;
   }
   return ud;
@@ -1990,6 +2007,30 @@ function godkendMcp(req) {
   };
 }
 
+/*
+ * Broen til Sagu. Modulet kender hverken databasen eller http-laget; det faar
+ * brugerens adresse og noegle gennem `srv`. Forbindelsen er PERSONLIG - to
+ * brugere deler ikke Sagu.
+ */
+const sagu = require('./sagu.js').opret({
+  hentUrl: (userId) => getSetting(userId, 'sagu_url', ''),
+  hentNoegle: (userId) => getSetting(userId, 'sagu_key', ''),
+});
+const saguModul = require('./sagu.js');
+const saguForbundet = (userId) => !!(getSetting(userId, 'sagu_url', '')
+  && getSetting(userId, 'sagu_key', ''));
+
+/** Notesboegerne caches, saa de kan vaelges uden et kald pr. optegning. */
+function gemNotesboeger(userId, liste) {
+  setSetting(userId, 'sagu_notebooks', JSON.stringify(liste || []));
+  const valgt = getSetting(userId, 'sagu_notebook', '');
+  // Er den valgte bog forsvundet i Sagu, maa valget ikke blive haengende og
+  // pege paa ingenting.
+  if (valgt && !(liste || []).some((b) => b.id === valgt)) {
+    db.prepare("DELETE FROM settings WHERE scope = ? AND key = 'sagu_notebook'").run(userId);
+  }
+}
+
 const mcp = require('./mcp.js').opret({
   version: APP_VERSION_FIL,
   beregn,
@@ -2362,6 +2403,207 @@ const ROUTES = {
    * kalender-token i den ville give adgang til at starte timere og laese
    * deadlines for enhver, der faar filen.
    */
+  /* ------------------------------------------------------------- Sagu */
+
+  'GET /api/v1/sagu': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    // Kun OM der er en noegle, aldrig hvad den er.
+    sendJson(res, 200, {
+      connected: saguForbundet(auth.user.id),
+      url: getSetting(auth.user.id, 'sagu_url', ''),
+      notebooks: JSON.parse(getSetting(auth.user.id, 'sagu_notebooks', '[]') || '[]'),
+      // Hvor en note fra PALETTEN skal ligge. Ruden spoerger hver gang;
+      // paletten er ét tastetryk og kan ikke spoerge om noget.
+      notebook: getSetting(auth.user.id, 'sagu_notebook', ''),
+    });
+  },
+
+  /*
+   * Gem forbindelsen - men proev den FOERST.
+   *
+   * Gem, afproev, rul tilbage. Ellers ligger en forkert noegle og LIGNER en
+   * virkende forbindelse, indtil man proever at bruge den (doda v16).
+   */
+  'POST /api/v1/sagu': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    const body = await readJsonBody(req, auth.viaToken);
+    const raa = String(body.url || '').trim().replace(/\/+$/, '');
+    let url = '';
+    try {
+      const u = new URL(raa);
+      // Kun en OPRINDELSE: en sti ville lande midt i alle adresser, vi danner.
+      if ((u.protocol === 'http:' || u.protocol === 'https:') && u.pathname === '/'
+          && !u.search && !u.hash) url = u.origin;
+    } catch { url = ''; }
+    if (!url) {
+      apiFejl(res, 400, 'bad_url',
+        'The Sagu address must be a plain web address like https://sagu.example.com.');
+      return;
+    }
+    const noegle = str(body.key, 200);
+    const gammelUrl = getSetting(auth.user.id, 'sagu_url', '');
+    const gammelKey = getSetting(auth.user.id, 'sagu_key', '');
+    // Tom noegle = behold den, der staar. Ellers kunne man ikke rette
+    // adressen uden ogsaa at finde noeglen frem igen.
+    if (!noegle && !gammelKey) {
+      apiFejl(res, 400, 'no_key', 'Paste a Sagu API key the first time you connect.');
+      return;
+    }
+    setSetting(auth.user.id, 'sagu_url', url);
+    if (noegle) setSetting(auth.user.id, 'sagu_key', noegle);
+
+    const svar = await sagu.proev(auth.user.id);
+    if (!svar.ok) {
+      setSetting(auth.user.id, 'sagu_url', gammelUrl);
+      if (gammelKey) setSetting(auth.user.id, 'sagu_key', gammelKey);
+      else db.prepare("DELETE FROM settings WHERE scope = ? AND key = 'sagu_key'").run(auth.user.id);
+      apiFejl(res, 400, 'bad_key', svar.fejl);
+      return;
+    }
+    gemNotesboeger(auth.user.id, svar.notebooks);
+    audit('sagu-forbundet', url, clientIp(req));
+    sendJson(res, 200, {
+      connected: true, url, notes: svar.notes, notebooks: svar.notebooks || [],
+    });
+  },
+
+  'POST /api/v1/sagu/disconnect': (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    for (const k of ['sagu_url', 'sagu_key', 'sagu_notebooks', 'sagu_notebook']) {
+      db.prepare('DELETE FROM settings WHERE scope = ? AND key = ?').run(auth.user.id, k);
+    }
+    audit('sagu-frakoblet', '', clientIp(req));
+    sendJson(res, 200, { connected: false });
+  },
+
+  /*
+   * Hent notesboegerne forfra. En cache uden en maade at genopfriske den paa
+   * er en blindgyde: opretter man en notesbog i Sagu bagefter, kunne tovo
+   * ellers aldrig se den uden at koble fra og finde noeglen frem igen.
+   */
+  'POST /api/v1/sagu/refresh': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    if (!saguForbundet(auth.user.id)) {
+      apiFejl(res, 400, 'not_connected', 'Connect Sagu first.');
+      return;
+    }
+    const svar = await sagu.proev(auth.user.id);
+    if (!svar.ok) { apiFejl(res, 400, 'sagu_failed', svar.fejl); return; }
+    gemNotesboeger(auth.user.id, svar.notebooks);
+    sendJson(res, 200, {
+      connected: true,
+      url: getSetting(auth.user.id, 'sagu_url', ''),
+      notebooks: svar.notebooks || [],
+      notebook: getSetting(auth.user.id, 'sagu_notebook', ''),
+    });
+  },
+
+  'POST /api/v1/sagu/notebook': (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    readJsonBody(req, auth.viaToken).then((body) => {
+      const id = str(body.id, 64);
+      const kendte = JSON.parse(getSetting(auth.user.id, 'sagu_notebooks', '[]') || '[]');
+      if (id && !kendte.some((b) => b.id === id)) {
+        apiFejl(res, 400, 'unknown_notebook', 'That notebook is not one of the ones Sagu listed.');
+        return;
+      }
+      if (id) setSetting(auth.user.id, 'sagu_notebook', id);
+      else db.prepare("DELETE FROM settings WHERE scope = ? AND key = 'sagu_notebook'").run(auth.user.id);
+      sendJson(res, 200, { notebook: id });
+    });
+  },
+
+  'GET /api/v1/sagu/search': async (req, res, ctx) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const r = await sagu.soeg(auth.user.id, ctx.query.get('q') || '');
+    if (r.fejl) { apiFejl(res, 400, 'sagu_failed', r.fejl); return; }
+    sendJson(res, 200, r);
+  },
+
+  'POST /api/v1/sagu/note': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    const body = await readJsonBody(req, auth.viaToken);
+    const r = await sagu.opretNote(auth.user.id, body.title, {
+      notebookId: str(body.notebookId, 64),
+      tilbageUrl: str(body.backUrl, 500),
+      tilbageTitel: str(body.backTitle, 200),
+    });
+    if (r.fejl) { apiFejl(res, 400, 'sagu_failed', r.fejl); return; }
+    sendJson(res, 200, r);
+  },
+
+  /*
+   * Notens indhold OG dens kommentarer i ÉT kald.
+   *
+   * Ruden viser dem sammen, og to rundture til Sagu for én rude er den slags,
+   * der maerkes bag en tunnel (doda v27: taeal blokerende rundture).
+   */
+  'GET /api/v1/sagu/note': async (req, res, ctx) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const id = saguModul.idFraUrl(ctx.query.get('url') || '');
+    if (!id) { apiFejl(res, 400, 'bad_url', 'That is not a Sagu note address.'); return; }
+    const [n, k] = await Promise.all([
+      sagu.note(auth.user.id, id),
+      sagu.kommentarer(auth.user.id, id),
+    ]);
+    if (!n) { apiFejl(res, 400, 'sagu_failed', 'Could not read that note from Sagu.'); return; }
+    sendJson(res, 200, { note: n, comments: k.fejl ? [] : k.comments, commentError: k.fejl || null });
+  },
+
+  'POST /api/v1/sagu/comment': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    const body = await readJsonBody(req, auth.viaToken);
+    const id = saguModul.idFraUrl(body.url || '');
+    if (!id) { apiFejl(res, 400, 'bad_url', 'That is not a Sagu note address.'); return; }
+    const r = await sagu.skrivKommentar(auth.user.id, id, body.text);
+    if (r.fejl) { apiFejl(res, 400, 'sagu_failed', r.fejl); return; }
+    // Noeglen faar ikke altid listen med retur - hent den selv, saa ruden
+    // aldrig staar med en kommentar, den ikke kan vise.
+    const liste = r.comments || (await sagu.kommentarer(auth.user.id, id)).comments || [];
+    sendJson(res, 200, { message: r.besked, comments: liste });
+  },
+
+  /*
+   * Hvad har aendret sig siden `since`?
+   *
+   * Sagus bro til en opgaveapp bruger netop dette endepunkt til at vise
+   * status paa de opgaver, en note har skabt - ÉT kald for dem alle i stedet
+   * for ét pr. opgave. Formen er dodas, saa Sagu kan tale med begge apps.
+   *
+   * `user_id`-filteret ligger i forespoergslen selv, som alle andre steder.
+   */
+  'GET /api/v1/changes': (req, res, ctx) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const raa = String(ctx.query.get('since') || '0');
+    const since = /^\d+$/.test(raa) ? Number(raa) : Math.floor(Date.parse(raa) / 1000);
+    if (!Number.isFinite(since)) {
+      apiFejl(res, 400, 'bad_since', 'The "since" value must be a unix timestamp or an ISO date.');
+      return;
+    }
+    const raekker = db.prepare(`
+      SELECT id, kind, data, updated_at FROM items
+       WHERE user_id = ? AND updated_at > ? ORDER BY updated_at LIMIT 1000`)
+      .all(auth.user.id, since);
+    const levende = [];
+    const slettede = [];
+    for (const r of raekker) {
+      const o = Object.assign({ id: r.id, kind: r.kind, updatedAt: r.updated_at }, JSON.parse(r.data));
+      if (o.deletedAt) slettede.push(r.id);
+      else levende.push(o);
+    }
+    sendJson(res, 200, { now: now(), items: levende, deleted: slettede });
+  },
+
   'GET /api/v1/export': (req, res) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;

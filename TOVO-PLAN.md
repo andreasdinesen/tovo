@@ -641,6 +641,31 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v14 · Broen til Sagu, og tre apps der ligner hinanden (2026-08-22)
+
+- [x] **`app/sagu.js` porteret fra doda.** Modulet var afhængigheds-indsprøjtet og kunne
+      flyttes uden ændringer i logikken. Den ene rigtige tilpasning: doda er **én-bruger**
+      og henter url/nøgle uden at spørge hvem — tovo er flerbruger, så `userId` føres
+      gennem hver funktion, som i Sagus egen `doda.js`. Uden det ville den første brugers
+      nøgle gælde alle (samme fejlklasse som adgangsnøgler uden `user_id`, tovo F0).
+- [x] **`sagu_key` er tovos første hemmelighed i settings-tabellen** — og `hentSettings()`
+      returnerede hele rækken til både settings-ruten og JSON-eksporten. Det er doda v16's
+      tidsindstillede lækage. Filteret ligger i `hentSettings()` selv, altså ét sted, og
+      testen er **set fejle** uden det.
+- [x] **Ingen kald til Sagu pr. optegning.** Noten hentes ved åbning af ruden — indhold og
+      kommentarer i ét svar — og søgningen venter 300 ms. Sagus egen bro har samme regel,
+      og grunden er, at en rundtur gennem tunnelen er 140–190 ms (doda v27).
+- [x] **`/api/v1/changes?since=`** i dodas form, så Sagu kan tale med begge apps.
+- [x] **Guide-side** (`pd_guide.js`). Formen er dodas og sagus; hvert punkt er skrevet ud
+      fra tovos egen kode. Genvejene hentes fra `GENVEJE`, så de to lister ikke kan drifte.
+      Verificeret på mobil: 35 af 35 rækker stabler, 0 px overløb.
+- [x] **Settings-indgang** som doda: »What you can set here« + fangst-syntaksen øverst.
+- [x] **Rettet undervejs:** `tests/fangst.test.mjs` havde `!fredag` låst til en fast dato,
+      så den kun var grøn på bestemte ugedage. Det var også den røde test ved v12's commit
+      og forklaringen på, at »167 grønne« i den commit-besked ikke passede.
+
+---
+
 ## Efter v13 · Pladsen loest, og repoet gjort offentligt (2026-08-21)
 
 - [x] **Install-scriptet HENTER app-koden** i stedet for at bære den — sagus mønster,

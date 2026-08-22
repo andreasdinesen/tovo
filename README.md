@@ -54,6 +54,25 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v15 — Sagu, en guide, og en Settings der siger hvad den rummer
+
+- **tovo taler med Sagu.** Forbind under Settings med en `link`-nøgle fra Sagu — den kan
+  søge og oprette, og den kan ikke slette noget. Så kan du:
+  - skrive `*` i søgefeltet og oprette en note i Sagu derfra,
+  - finde en note og hæfte den på en opgave,
+  - læse noten **og svare på dens kommentarer** uden at forlade tovo.
+  Noten bor i opgavens eksisterende `links[]`, så den lever side om side med OneNote-linket
+  i stedet for at konkurrere med det. Forbindelsen er personlig: to brugere deler ikke Sagu.
+  Nøglen forlader aldrig serveren — heller ikke i JSON-eksporten.
+- **`/api/v1/changes?since=`** i dodas form, så Sagu kan vise status på de opgaver, en note
+  har skabt — ét kald for dem alle i stedet for ét pr. opgave.
+- **En guide-side**, som doda og sagu har den: hvordan feltet, timeren, projekterne,
+  rapporten og forbindelserne virker. Genvejslisten hentes fra den samme konstant som
+  genvejsruden, så de to ikke kan komme ud af trit.
+- **Settings siger nu, hvad den rummer**, og har fangst-syntaksen øverst — samme indgang
+  som i doda, så de tre apps' indstillinger læses ens.
+
+
 ### v14 — install-scriptet henter koden, og repoet er offentligt
 
 - **Install-scriptet bærer ikke længere appen — det henter den.** Scriptet gik fra

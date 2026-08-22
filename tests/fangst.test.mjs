@@ -23,7 +23,21 @@ test('+ opretter opgave OG projekt paa én linje', async () => {
   assert.equal(r.status, 200);
   assert.equal(r.data.item.title, 'opsaetning af server');
   assert.equal(r.data.item.estimateMinutes, 150);
-  assert.equal(r.data.item.dueDate, '2026-08-21');
+  /*
+   * Datoen REGNES, den skrives ikke af.
+   *
+   * Testen stod med '2026-08-21' - den dag den blev skrevet var det naeste
+   * fredag. Koert paa en fredag eller senere er det en ANDEN dato, og testen
+   * blev roed uden at noget var i stykker. En test, der kun bestaar bestemte
+   * ugedage, er stoej: naeste gang den lyser roedt, tror man paa den ét
+   * sekund og holder saa op med at tro paa suiten.
+   */
+  const naesteFredag = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7 || 7));
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  assert.equal(r.data.item.dueDate, naesteFredag);
   assert.equal(r.data.item.status, 'open');
   assert.deepEqual(r.data.nye, [{ kind: 'project', name: 'Nordvind' }]);
 

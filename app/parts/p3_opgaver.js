@@ -628,6 +628,8 @@ async function aabnOpgave(id) {
       </div>
       ${startLink ? `<p class="meta startlink-url">${esc(startLink.url)}</p>` : ''}
 
+      <div id="dSagu"></div>
+
       <h2 style="margin-top:18px">Links</h2>
       <ul class="plain" id="dLinks">${(it.links || []).map((l, i) => `
         <li>${linkHtml(l)}<button class="linkbtn" data-fjernlink="${i}">remove</button></li>`).join('')}</ul>
@@ -823,6 +825,9 @@ function bindDetalje(host, it, startLink) {
       toast('Saved.');
     } catch (ex) { toast(ex.message); }
   };
+  // Sagu-afsnittet hentes, naar ruden AABNES - ikke ved hver optegning.
+  tegnSaguIRude(it);
+
   document.getElementById('dSave').addEventListener('click', gemOpgaven);
   bindGemGenvej(host, gemOpgaven);
 

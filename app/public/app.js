@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2247,6 +2247,7 @@ const VIEWS = [
   // brugerknappen, hvor kontoen i forvejen bor - to indgange til det samme
   // sted er én for meget (§9c).
   { id: 'settings', label: 'Settings', icon: 'settings', group: 0 },
+  { id: 'guide', label: 'Guide', icon: 'link', group: 0 },
 ];
 
 const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
@@ -2578,6 +2579,94 @@ async function tjekVersion() {
   } catch { /* offline: proev igen naar appen kommer frem */ }
 }
 
+/**
+ * Sagu-afsnittet under Settings.
+ *
+ * Tegnes for sig og hentes ved AABNING af siden - ikke ved hver optegning.
+ * Et kald til Sagu pr. render er praecis det, Sagus egen bro forbyder
+ * (RUNE-ERFARINGER, doda v27: taeal blokerende rundture, ikke millisekunder).
+ *
+ * Noeglen vises aldrig igen: serveren melder kun OM der er en. Feltet staar
+ * derfor tomt ved en genforbindelse, og en tom noegle betyder "behold den,
+ * der staar" - ellers kunne man ikke rette adressen uden at finde noeglen
+ * frem paa ny.
+ */
+async function tegnSaguKort() {
+  const vaert = document.getElementById('saguKort');
+  if (!vaert) return;
+  let d;
+  try { d = await api('GET', '/api/v1/sagu'); } catch (ex) {
+    vaert.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+    return;
+  }
+  const boeger = d.notebooks || [];
+  vaert.innerHTML = `
+    ${d.connected ? `<p class="meta">Connected to <strong>${esc(d.url)}</strong>.</p>` : ''}
+    <label class="field"><span>Sagu address</span>
+      <input class="input" id="saguUrl" placeholder="https://sagu.example.com"
+        value="${esc(d.url || '')}"></label>
+    <label class="field"><span>API key${d.connected ? ' — leave empty to keep the one you have' : ''}</span>
+      <input class="input" id="saguKey" type="password" autocomplete="off"
+        placeholder="${d.connected ? '••••••••' : 'Paste a "link" key from Sagu'}"></label>
+    <p class="meta">In Sagu: Settings → Access keys → new key with the <code>link</code> scope.
+      It can search and create notes, and it cannot delete anything.</p>
+    ${d.connected && boeger.length ? `<label class="field"><span>Where a note from the search field goes</span>
+      <select class="input" id="saguBog">
+        <option value="">No notebook</option>
+        ${boeger.map((b) => `<option value="${esc(b.id)}"${d.notebook === b.id ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
+      </select></label>` : ''}
+    <div class="row">
+      <button class="btn primary" id="saguGem">${d.connected ? 'Reconnect' : 'Connect'}</button>
+      ${d.connected ? '<button class="btn" id="saguFrisk">Refresh notebooks</button>' : ''}
+      ${d.connected ? '<span style="flex:1"></span><button class="btn danger" id="saguFra">Disconnect</button>' : ''}
+    </div>`;
+
+  document.getElementById('saguGem').addEventListener('click', async () => {
+    const knap = document.getElementById('saguGem');
+    knap.disabled = true;
+    try {
+      const r = await api('POST', '/api/v1/sagu', {
+        url: document.getElementById('saguUrl').value.trim(),
+        key: document.getElementById('saguKey').value.trim(),
+      });
+      toast(`Connected to Sagu — ${r.notes} note${r.notes === 1 ? '' : 's'}.`);
+      await tegnSaguKort();
+    } catch (ex) { toast(ex.message); knap.disabled = false; }
+  });
+
+  const frisk = document.getElementById('saguFrisk');
+  if (frisk) {
+    frisk.addEventListener('click', async () => {
+      try {
+        const r = await api('POST', '/api/v1/sagu/refresh', {});
+        toast(`${(r.notebooks || []).length} notebook${(r.notebooks || []).length === 1 ? '' : 's'}.`);
+        await tegnSaguKort();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+
+  const bog = document.getElementById('saguBog');
+  if (bog) {
+    bog.addEventListener('change', async () => {
+      try {
+        await api('POST', '/api/v1/sagu/notebook', { id: bog.value });
+        toast('Saved.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+
+  const fra = document.getElementById('saguFra');
+  if (fra) {
+    fra.addEventListener('click', async () => {
+      try {
+        await api('POST', '/api/v1/sagu/disconnect', {});
+        toast('Sagu disconnected. The notes are untouched.');
+        await tegnSaguKort();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+}
+
 function bindTemaKnap() {
   const el = document.getElementById('temaBtn');
   if (!el) return;
@@ -2748,6 +2837,7 @@ function visBrugerMenu() {
       <div class="meta">${state.user.isAdmin ? 'Administrator' : 'Signed in'}${state.config.secureContext ? '' : ' · plain http'}</div>
     </div>
     <button class="usermenu-item" data-go="settings">${icon('settings', 17)}<span>Settings</span></button>
+    <button class="usermenu-item" data-go="guide">${icon('link', 17)}<span>Guide</span></button>
     <button class="usermenu-item" data-go="shortcuts">${icon('link', 17)}<span>Keyboard shortcuts</span></button>
     <button class="usermenu-item danger" data-go="logout">${icon('out', 17)}<span>Log out</span></button>`;
 
@@ -2762,6 +2852,7 @@ function visBrugerMenu() {
       const hvad = el.dataset.go;
       luk();
       if (hvad === 'settings') gaaTil('settings');
+      else if (hvad === 'guide') gaaTil('guide');
       else if (hvad === 'shortcuts') visGenveje();
       else {
         await api('POST', '/api/logout', {});
@@ -2799,6 +2890,7 @@ async function tegnSide() {
   if (state.view === 'week') { await tegnKalender(); return; }
   if (state.view === 'tags') { await tegnTags(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
+  if (state.view === 'guide') { host.innerHTML = sideGuide(); bindGuide(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>
     <p class="lead">${esc(BESKRIVELSER[v.id] || '')}</p>
@@ -2823,6 +2915,33 @@ async function settingsHtml() {
   return `
     <h1>Settings</h1>
     <p class="lead">${esc(BESKRIVELSER.settings)}</p>
+
+    <!-- Samme indgang som doda og sagu har: sig hvad siden RUMMER, foer den
+         ruller. Ellers er den en stak kort, man scroller i for at finde ud
+         af, om det man leder efter overhovedet er her. -->
+    <div class="card">
+      <h2>What you can set here</h2>
+      <p class="meta">How tovo looks, who you are, and what it is connected to. The
+        <button class="linkbtn" data-go-guide>Guide</button> explains how the app itself works.</p>
+      <p class="meta">Rounding, the normal week and the timer warning are yours alone —
+        another user on this server has their own.</p>
+    </div>
+
+    <div class="card">
+      <h2>Capture syntax</h2>
+      <p class="meta">What the search field understands. The same list is in the Guide, and
+        it comes from the same place in the code, so the two cannot drift apart.</p>
+      <table class="shortcuts">
+        <tr><td><kbd>+ text</kbd></td><td>Create a task</td></tr>
+        <tr><td><kbd>@name</kbd></td><td>Put it under a project — <code>@"Two words"</code></td></tr>
+        <tr><td><kbd>#name</kbd></td><td>Set a tag</td></tr>
+        <tr><td><kbd>:SAG-1234</kbd></td><td>Case number — inherited from the project</td></tr>
+        <tr><td><kbd>~2,5t</kbd></td><td>Estimate — <code>~90m</code>, <code>~1t30m</code></td></tr>
+        <tr><td><kbd>!friday</kbd></td><td>Due date — <code>!every monday</code> repeats</td></tr>
+        <tr><td><kbd>%</kbd></td><td>Create it and start the timer at once</td></tr>
+        <tr><td><kbd>// text</kbd></td><td>Everything after becomes the description</td></tr>
+      </table>
+    </div>
 
     <div class="card">
       <h2>Appearance</h2>
@@ -2914,6 +3033,13 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Sagu</h2>
+      <p class="meta">Sagu is where the notes live. Connect it, and a task can point at a
+        note — you read it, and answer its comments, without leaving tovo.</p>
+      <div id="saguKort" class="meta">Loading…</div>
+    </div>
+
+    <div class="card">
       <h2>Case numbers</h2>
       <p class="meta">A task can carry the number the hours are booked against in your other
         system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
@@ -2988,6 +3114,11 @@ function bindSettings() {
       } catch (ex) { toast(ex.message); }
     });
   });
+
+  const tilGuide = document.querySelector('[data-go-guide]');
+  if (tilGuide) tilGuide.addEventListener('click', () => gaaTil('guide'));
+
+  tegnSaguKort();
 
   const caseUrl = document.getElementById('setCaseUrl');
   if (caseUrl) {
@@ -3263,10 +3394,28 @@ const MODER = {
   },
   '/': { id: 'project', pil: '/ Projects', ph: 'Find or create a project…', legend: [], enter: 'Open' },
   '#': { id: 'tag', pil: '# Tags', ph: 'Find a tag…', legend: [], enter: 'Open' },
+  '*': {
+    id: 'note', pil: '* New note in Sagu', ph: 'Note title…',
+    legend: [], enter: 'Create in Sagu',
+  },
 };
 
 const STANDARD_LEGEND = ['+ task', '@ project', '# tag', ': case', '! date', '~ estimate',
   '% start now', '⌘↵ start timer'];
+
+/** Legenden, som den ser ud LIGE NU. `*` naevnes kun, naar Sagu svarer. */
+const standardLegend = () => (saguKlar
+  ? STANDARD_LEGEND.concat(['* note in Sagu'])
+  : STANDARD_LEGEND);
+
+/*
+ * Er Sagu forbundet?
+ *
+ * Hentes ÉN gang, naar paletten bindes - ikke pr. tastetryk og ikke pr.
+ * optegning. Svaret bruges kun til at afgoere, om legenden skal NAEVNE `*`:
+ * en palet, der lover noget, appen ikke kan, er vaerre end en, der tier.
+ */
+let saguKlar = false;
 
 const omniState = {
   mode: null,
@@ -3312,7 +3461,7 @@ function tegnLegend() {
   const host = document.getElementById('omniLegend');
   if (!host) return;
   const m = omniState.mode ? MODER[omniState.mode] : null;
-  const dele = m ? m.legend : STANDARD_LEGEND;
+  const dele = m ? m.legend : standardLegend();
   const k = omniKontekst();
   const kontekst = k ? `<span class="chip">in ${esc(k.name)}</span>` : '';
   host.innerHTML = kontekst + dele.map((d) => `<span>${esc(d)}</span>`).join('');
@@ -3415,6 +3564,26 @@ function byggRaekker() {
         type: 'tom',
         titel: omniState.mode === '/' ? 'No projects yet' : 'No tags yet',
         under: 'Type a name to create one',
+      });
+    }
+    return raekker;
+  }
+
+  /*
+   * `*` opretter en note i Sagu.
+   *
+   * Ingen soegning her: paletten er ét tastetryk, og et opslag pr. bogstav
+   * ville sende et kald gennem tunnelen for hvert tegn. Skal man FINDE en
+   * note, hoerer det hjemme i opgaveruden, hvor man ved hvad noten skal
+   * haenge paa.
+   */
+  if (omniState.mode === '*') {
+    if (q) raekker.push({ type: 'sagunote', titel: q, under: 'NEW NOTE IN SAGU' });
+    else {
+      raekker.push({
+        type: 'tom',
+        titel: 'Type a note title',
+        under: 'It lands in the notebook you picked under Settings',
       });
     }
     return raekker;
@@ -3587,6 +3756,7 @@ async function aktiver() {
     else gaaTil('tags', { tag: raekke.id });
     return;
   }
+  if (raekke.type === 'sagunote') { await opretSaguNote(raekke.titel); return; }
   if (raekke.type === 'nytTag') {
     try {
       const t = await api('POST', '/api/v1/items', { kind: 'tag', name: raekke.navn });
@@ -3676,12 +3846,41 @@ function opdaterOmniKontekst() {
   tegnLegend();
 }
 
+/**
+ * Opretter noten i Sagu og aabner den.
+ *
+ * Noten aabnes i en NY fane: den bor i Sagu, og tovo skal ikke lade som om
+ * den ejer den. Fejler oprettelsen, staar teksten stadig i feltet - man har
+ * lige skrevet den, og den maa ikke forsvinde med fejlen.
+ */
+async function opretSaguNote(titel) {
+  try {
+    const d = await api('POST', '/api/v1/sagu/note', { title: titel });
+    luk();
+    toast(`Note created in Sagu — ${d.page.title}`, {
+      label: 'Open',
+      run: () => window.open(d.page.url, '_blank', 'noopener'),
+    });
+  } catch (ex) { toast(ex.message); }
+}
+
 function bindOmni() {
   const el = omniEl();
   if (!el) return;
   saetMode(null);
   tegnLegend();
   tegnChips();
+
+  /*
+   * Spoerg ÉN gang, om Sagu er forbundet - og tegn legenden om, naar svaret
+   * kommer. Fejler kaldet, staar `saguKlar` bare paa false, og paletten
+   * lover ikke noget, den ikke kan holde.
+   */
+  api('GET', '/api/v1/sagu').then((d) => {
+    if (!d.connected === !saguKlar) return;
+    saguKlar = !!d.connected;
+    tegnLegend();
+  }).catch(() => { saguKlar = false; });
 
   el.addEventListener('input', opdaterOmni);
   el.addEventListener('focus', tegnPanel);
@@ -4445,6 +4644,8 @@ async function aabnOpgave(id) {
       </div>
       ${startLink ? `<p class="meta startlink-url">${esc(startLink.url)}</p>` : ''}
 
+      <div id="dSagu"></div>
+
       <h2 style="margin-top:18px">Links</h2>
       <ul class="plain" id="dLinks">${(it.links || []).map((l, i) => `
         <li>${linkHtml(l)}<button class="linkbtn" data-fjernlink="${i}">remove</button></li>`).join('')}</ul>
@@ -4640,6 +4841,9 @@ function bindDetalje(host, it, startLink) {
       toast('Saved.');
     } catch (ex) { toast(ex.message); }
   };
+  // Sagu-afsnittet hentes, naar ruden AABNES - ikke ved hver optegning.
+  tegnSaguIRude(it);
+
   document.getElementById('dSave').addEventListener('click', gemOpgaven);
   bindGemGenvej(host, gemOpgaven);
 
@@ -6909,4 +7113,426 @@ async function sletTag(tag, antal) {
       },
     });
   } catch (ex) { toast(ex.message); }
+}
+
+/* ---- pc_sagu.js ---- */
+'use strict';
+/* tovo -> Sagu: broen, som den ser ud i opgaveruden.
+ *
+ * ── Hvor en note BOR i tovo ───────────────────────────────────────────────
+ *
+ * doda har ét `link_url`/`link_title` pr. element. tovo har i forvejen et
+ * `links[]`-array (OneNote), saa en Sagu-note er bare et link med en KENDT
+ * form: `<sagu>/#note-<32 hex>`. Ingen skemaaendring, ingen ny kolonne - og
+ * noten lever side om side med OneNote-linket i stedet for at konkurrere.
+ *
+ * ── Kaldene ───────────────────────────────────────────────────────────────
+ *
+ * Der maa ALDRIG gaa et kald til Sagu pr. optegning: rundturen gennem en
+ * tunnel er 140-190 ms (RUNE-ERFARINGER, doda v27). Noten hentes derfor, naar
+ * ruden AABNES - én gang, og med indhold og kommentarer i samme svar.
+ */
+
+/* Adressens form. Den staar ogsaa i app/sagu.js paa serveren; det er samme
+   valg som doda traf, og grunden er, at frontenden skal kunne vaelge rude
+   UDEN et kald. Aendres formen, skal begge steder rettes - derfor staar den
+   ét sted i hver ende og ikke spredt ud. */
+const SAGU_NOTE = /#note-([0-9a-f]{32})$/i;
+
+const saguState = { url: '', connected: false, hentet: false };
+
+/** Hentes én gang pr. sideindlaesning - ikke pr. rude og ikke pr. optegning. */
+async function saguOpsaetning() {
+  if (saguState.hentet) return saguState;
+  try {
+    const d = await api('GET', '/api/v1/sagu');
+    saguState.connected = !!d.connected;
+    saguState.url = d.url || '';
+  } catch { saguState.connected = false; }
+  saguState.hentet = true;
+  return saguState;
+}
+
+/** Er linket en note i VORES Sagu? Samme form paa en fremmed vaert taeller ikke. */
+function erSaguLink(url) {
+  if (!SAGU_NOTE.test(String(url || ''))) return false;
+  if (!saguState.url) return true;
+  try { return new URL(url).origin === new URL(saguState.url).origin; } catch { return false; }
+}
+
+const saguLinks = (it) => (it.links || []).filter((l) => erSaguLink(l.url));
+
+/**
+ * Sagu-afsnittet i opgaveruden.
+ *
+ * Er Sagu ikke forbundet, tegnes INTET - hverken en tom overskrift eller en
+ * opfordring. En app, der reklamerer for en integration, man ikke bruger, er
+ * stoej paa hver eneste opgave.
+ */
+async function tegnSaguIRude(it) {
+  const vaert = document.getElementById('dSagu');
+  if (!vaert) return;
+  const s = await saguOpsaetning();
+  if (!s.connected) { vaert.innerHTML = ''; return; }
+
+  const noter = saguLinks(it);
+  vaert.innerHTML = `<h2 style="margin-top:18px">Sagu</h2>
+    <div id="dSaguKrop"><p class="meta">Loading…</p></div>`;
+  const krop = document.getElementById('dSaguKrop');
+
+  if (!noter.length) {
+    krop.innerHTML = `
+      <p class="meta">No note yet. Find one in Sagu, or make a new one for this task.</p>
+      <div class="row">
+        <input class="input" id="dSaguSoeg" placeholder="Type part of a note title…" style="flex:1">
+        <button class="btn" id="dSaguNy">New note</button>
+      </div>
+      <ul class="plain" id="dSaguTraef"></ul>`;
+    bindSaguSoeg(it);
+    return;
+  }
+
+  // Kun den FOERSTE note foldes ud. Har en opgave to, er den anden et link -
+  // ruden er et vindue ind til noten, ikke noten.
+  const note = noter[0];
+  let d;
+  try {
+    d = await api('GET', `/api/v1/sagu/note?url=${encodeURIComponent(note.url)}`);
+  } catch (ex) {
+    krop.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>
+      <p class="meta"><a href="${esc(note.url)}" target="_blank" rel="noopener noreferrer">Open in Sagu</a></p>`;
+    return;
+  }
+
+  krop.innerHTML = `
+    <p class="meta"><a href="${esc(note.url)}" target="_blank" rel="noopener noreferrer">
+      ${esc(d.note.title || 'Untitled')}</a> — open in Sagu</p>
+    ${d.note.body ? `<div class="note-preview saguindhold">${linkify(d.note.body).replace(/\n/g, '<br>')}</div>` : ''}
+    <!-- "in Sagu" er ikke pynt: opgaveruden har sine EGNE kommentarer
+         laengere nede, og to afsnit med samme overskrift lige under hinanden
+         kan man ikke svare rigtigt i. -->
+    <h2 style="margin-top:14px" class="group meta">Comments in Sagu
+      <span class="group-count">${(d.comments || []).length}</span></h2>
+    <ul class="plain kommentarer" id="dSaguKomm">${(d.comments || []).map((c) => `
+      <li>
+        <span class="kommentar-tid meta">${esc(c.author)}${c.guest ? ' (guest)' : ''}
+          · ${esc(visTidspunkt(c.at))}</span>
+        <span class="kommentar-tekst">${linkify(c.body)}</span>
+      </li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
+    <div class="row">
+      <input class="input" id="dSaguKommentar" placeholder="Comment on the note…" style="flex:1">
+      <button class="btn" id="dSaguSkriv">Add</button>
+    </div>
+    ${d.commentError ? `<p class="meta">${esc(d.commentError)}</p>` : ''}
+    <div class="row"><button class="linkbtn" id="dSaguFjern">Unlink this note</button>
+      <span class="meta">The note stays in Sagu.</span></div>`;
+
+  const skriv = async () => {
+    const felt = document.getElementById('dSaguKommentar');
+    const tekst = felt.value.trim();
+    if (!tekst) return;
+    try {
+      const r = await api('POST', '/api/v1/sagu/comment', { url: note.url, text: tekst });
+      felt.value = '';
+      toast(r.message);
+      await tegnSaguIRude(it);
+    } catch (ex) { toast(ex.message); }
+  };
+  document.getElementById('dSaguSkriv').addEventListener('click', skriv);
+  document.getElementById('dSaguKommentar').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); skriv(); }
+  });
+
+  document.getElementById('dSaguFjern').addEventListener('click', async () => {
+    try {
+      await api('PATCH', `/api/v1/items/${it.id}`,
+        { links: (it.links || []).filter((l) => l.url !== note.url) });
+      it.links = (it.links || []).filter((l) => l.url !== note.url);
+      await genindlaes();
+      await tegnSaguIRude(it);
+      toast('Unlinked. The note is still in Sagu.');
+    } catch (ex) { toast(ex.message); }
+  });
+}
+
+/** Soegning og oprettelse, naar opgaven endnu ikke har en note. */
+function bindSaguSoeg(it) {
+  const felt = document.getElementById('dSaguSoeg');
+  const traef = document.getElementById('dSaguTraef');
+  let timer = null;
+
+  const haeft = async (url, titel) => {
+    try {
+      const links = (it.links || []).concat([{ url, label: titel }]);
+      await api('PATCH', `/api/v1/items/${it.id}`, { links });
+      it.links = links;
+      await genindlaes();
+      await tegnSaguIRude(it);
+      toast('Linked.');
+    } catch (ex) { toast(ex.message); }
+  };
+
+  // Der soeges FOERST fra to tegn, og med en pause: ét kald pr. tastetryk
+  // ville sende en rundtur gennem tunnelen for hvert bogstav.
+  felt.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = felt.value.trim();
+    if (q.length < 2) { traef.innerHTML = ''; return; }
+    timer = setTimeout(async () => {
+      try {
+        const d = await api('GET', `/api/v1/sagu/search?q=${encodeURIComponent(q)}`);
+        traef.innerHTML = (d.pages || []).map((p) => `
+          <li><button class="linkbtn" data-haeft="${esc(p.url)}"
+            data-titel="${esc(p.title)}">${esc(p.title)}</button>
+            ${p.kind ? `<span class="meta">${esc(p.kind)}</span>` : ''}</li>`).join('')
+          || '<li class="meta">No notes match</li>';
+        traef.querySelectorAll('[data-haeft]').forEach((el) => el.addEventListener('click',
+          () => haeft(el.dataset.haeft, el.dataset.titel)));
+      } catch (ex) { traef.innerHTML = `<li class="gate-error">${esc(ex.message)}</li>`; }
+    }, 300);
+  });
+
+  document.getElementById('dSaguNy').addEventListener('click', async () => {
+    try {
+      const d = await api('POST', '/api/v1/sagu/note', {
+        title: it.title,
+        // Noten faar et link TILBAGE til opgaven, saa de to kan findes fra
+        // hinanden. Adressen er tovos egen - den er ikke hemmelig.
+        backUrl: `${location.origin}/#task-${it.id}`,
+        backTitle: it.title,
+      });
+      await haeft(d.page.url, d.page.title);
+    } catch (ex) { toast(ex.message); }
+  });
+}
+
+/* ---- pd_guide.js ---- */
+'use strict';
+/* tovo - skaermen "Guide": en samlet gennemgang af appen.
+ *
+ * FORMEN er dodas og sagus, saa de tre apps' hjaelpesider laeses ens: store
+ * DELE med eget navn, GRUPPER som et lille versalt maerke, EMNER som h2 med
+ * raekker, der har et maerke i venstre side.
+ *
+ * INDHOLDET er tovos eget. Fire regler, som forlaegget selv naevner:
+ *
+ * 1. Guiden maa ALDRIG love mere end koden kan. En hjaelpetekst er en
+ *    kravspecifikation. Hver raekke herunder er skrevet ud fra
+ *    app/shared/parse.js, beregn.js og skaermenes faktiske adfaerd.
+ * 2. tovo er ikke doda. Der er ingen inbox, ingen kontekster og ingen
+ *    ugentlig gennemgang - men der er en timer, sagsnumre, en kalender og
+ *    en Planner-import. Skriv tovos virkelighed, ikke forlaeggets.
+ * 3. Ingenting gentages, hvis det staar ét sted i forvejen: genvejene
+ *    hentes fra GENVEJE, saa de to lister ikke kan komme ud af trit.
+ * 4. Hvert EMNE er en <h2>. Det er ogsaa det, sideoversigten ville bygge
+ *    paa, hvis tovo faar §9b's skinne senere.
+ */
+
+/*
+ * Maerket er enten en TAST/MARKOER (monospace, ordret) eller en TILSTAND
+ * (versal etiket). Afgoerelsen traeffes paa teksten selv, ikke paa dens
+ * laengde: med en laengderegel blev "!every monday" til en versal etiket, og
+ * text-transform gjorde den til en syntaks, der ikke findes (doda v25).
+ */
+function guideMaerke(t) {
+  const erEtiket = /[a-zA-Z]/.test(t) && t === t.toUpperCase();
+  return erEtiket
+    ? `<span class="guide-tag">${esc(t)}</span>`
+    : `<code class="guide-key">${esc(t)}</code>`;
+}
+
+function guideEmne(e) {
+  const krop = (e.raekker || []).map(([m, tekst]) => `<div class="guide-row">
+        <div class="guide-badge">${guideMaerke(m)}</div>
+        <div class="guide-text">${tekst}</div></div>`).join('')
+    + (e.kort ? `<p class="guide-short"><strong>In short:</strong> ${e.kort}</p>` : '');
+  // Et emne uden raekker faar intet kort - men skal stadig kunne have sin
+  // knap. En betingelse, der bortkaster to ting paa én gang, er en faelde.
+  const knapper = e.go
+    ? `<div class="guide-go">${e.go.map(([v, t]) =>
+      `<button class="btn" data-guide-go="${esc(v)}">${esc(t)}</button>`).join(' ')}</div>`
+    : '';
+  return `<h2>${esc(e.titel)}</h2>
+    <p class="lead guide-lead">${e.lead}</p>
+    ${krop ? `<div class="card guide-card">${krop}${knapper}</div>` : knapper}`;
+}
+
+/* ------------------------------------------------------------ indholdet */
+
+const GUIDE_DELE = [
+  {
+    del: 'How tovo works',
+    lead: 'One line creates the work, one click times it, and the week adds up by itself.',
+    grupper: [
+      {
+        gruppe: 'Capture',
+        emner: [
+          {
+            titel: 'The search field',
+            lead: 'It searches when you type, and creates when you start the line with a marker.',
+            raekker: [
+              ['any key', 'On any screen, start typing and the field takes what you typed.'],
+              ['+', 'A task. Everything else on the line is read as detail, not as title.'],
+              ['%', 'Anywhere in the line: create it <em>and</em> start the timer at once.'],
+              ['//', 'Everything after <code>//</code> becomes the description.'],
+              ['WHERE', 'Standing inside a project, the field searches and creates <em>there</em>. What you write yourself always wins over what the screen assumes.'],
+            ],
+            kort: 'anything the parser does not understand stays in the title — it is never thrown away.',
+          },
+          {
+            titel: 'The markers',
+            lead: 'They can come in any order, and they must touch what they mark.',
+            raekker: [
+              ['@name', 'Put it under a project. <code>@"Two words"</code> when the name has a space. <code>/</code> does the same.'],
+              ['#name', 'Set a tag. Works in an existing title too — write it and save.'],
+              [':SAG-1234', 'The case number the hours are booked against. A project can carry one, and its tasks inherit it.'],
+              ['~2,5t', 'An estimate. <code>~90m</code> and <code>~1t30m</code> mean the same thing, and the Danish decimal comma works.'],
+              ['!friday', 'A due date. <code>!tomorrow</code>, <code>!3/9</code> and <code>!in 2 weeks</code> all work.'],
+              ['!every monday', 'A repeat. <code>every! friday</code> counts from when you finish, not from the plan.'],
+            ],
+            kort: 'a marker needs a space in front of it, so an e-mail address never becomes a project.',
+          },
+        ],
+      },
+      {
+        gruppe: 'Time',
+        emner: [
+          {
+            titel: 'The timer',
+            lead: 'One timer runs at a time — the database enforces it, not just the code.',
+            raekker: [
+              ['CLICK', 'The play button on any task row starts it. Starting another stops the first.'],
+              ['⌘↵', 'On the selected row: start or stop without opening anything.'],
+              ['ANYWHERE', 'It keeps running when you close the browser — the start time is what is stored, never a counter.'],
+            ],
+            go: [['today', 'Open Today']],
+          },
+          {
+            titel: 'Logging by hand',
+            lead: 'The timer and typing it in afterwards are equal ways in.',
+            raekker: [
+              ['⌘⇧M', 'Opens the form on any screen.'],
+              ['9-11.30', 'A span. <code>1,5t</code>, <code>90m</code> and <code>1t30m</code> are durations, and a bare duration lands after the day&rsquo;s last entry.'],
+              ['GAPS', 'Today shows the holes <em>between</em> what you registered. A click opens the form filled in with that span — that is where forgotten time hides.'],
+            ],
+            kort: 'rounding is a display rule. The stored times stay exact, and two minutes never round away to nothing.',
+          },
+          {
+            titel: 'Start links',
+            lead: 'A link you paste into OneNote next to the task.',
+            raekker: [
+              ['ONE CLICK', 'Starts the timer. The next click stops it. No sign-in.'],
+              ['SAFE', 'The address is the credential, so keep it where only you look. It can be revoked, and the same task always gives the same link.'],
+            ],
+          },
+        ],
+      },
+      {
+        gruppe: 'Organise',
+        emner: [
+          {
+            titel: 'Projects',
+            lead: 'Four numbers that answer &ldquo;where am I?&rdquo;.',
+            raekker: [
+              ['ESTIMATED', 'The task estimates, added up.'],
+              ['BUDGET', 'What you agreed with the customer. You set it under Edit project.'],
+              ['SPENT', 'Logged so far. When the estimates pass the budget, you have found more work than was sold.'],
+              ['BOARD', 'The columns are the project&rsquo;s own, so two projects can run through different phases. A Planner import brings its buckets in as columns.'],
+            ],
+            go: [['projects', 'Open Projects']],
+          },
+          {
+            titel: 'Importing from Planner',
+            lead: 'Export the plan to Excel, then pick the file here.',
+            raekker: [
+              ['NEVER TOUCHED', 'Estimates, logged time, comments, links and the budget are yours. A re-import cannot overwrite them.'],
+              ['UPDATED', 'Only the title, column, status, due date and description come from Planner.'],
+              ['PREVIEW', 'It says what will change before it writes — including how many columns it will add.'],
+            ],
+          },
+        ],
+      },
+      {
+        gruppe: 'Report',
+        emner: [
+          {
+            titel: 'The week',
+            lead: 'What the hours are written off from.',
+            raekker: [
+              ['PER CASE', 'A grid with one column per day. Rows and columns both add up to the total.'],
+              ['FORMAT', 'The button switches between <code>3,5</code> and <code>3h 30m</code>. Decimal hours are the form you type into the other system.'],
+              ['THIN DAYS', 'Days with strikingly few hours are called out — that is usually forgotten registration, not a quiet day.'],
+              ['OUT', 'Copy as markdown, print, or download it as Excel where the numbers are real numbers.'],
+            ],
+            go: [['report', 'Open Report']],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    del: 'Beyond tovo',
+    lead: 'The things that reach out of the app.',
+    grupper: [
+      {
+        gruppe: 'Connected',
+        emner: [
+          {
+            titel: 'Sagu',
+            lead: 'Sagu is where the notes live. Connect it under Settings.',
+            raekker: [
+              ['*', 'In the search field: create a note in Sagu, from here.'],
+              ['ON A TASK', 'Find a note and link it. The note, and its comments, then show in the task — and you can answer without leaving tovo.'],
+              ['NARROW', 'The key you paste has the <code>link</code> scope: it can search and create, and it cannot delete anything.'],
+            ],
+          },
+          {
+            titel: 'Calendar and Claude',
+            lead: 'Two more doors out.',
+            raekker: [
+              ['ICAL', 'Tasks with a date, as a feed your calendar subscribes to. On iOS, turn &ldquo;Remove Alarms&rdquo; off, or the reminders are stripped.'],
+              ['MCP', 'Claude can search, log time and read the week report — through the same functions the app itself uses, so the numbers cannot drift.'],
+            ],
+            go: [['settings', 'Open Settings']],
+          },
+        ],
+      },
+      {
+        gruppe: 'Keyboard',
+        emner: [{ titel: 'Every shortcut', lead: 'The same list the user menu shows.', genveje: true }],
+      },
+    ],
+  },
+];
+
+function sideGuide() {
+  return `<section class="page">
+    <div class="page-head">
+      <h1>Guide</h1>
+      <p class="lead">How tovo works, in one place.</p>
+    </div>
+    ${GUIDE_DELE.map((d) => `
+      <div class="guide-part">
+        <div class="guide-part-name">${esc(d.del)}</div>
+        <p class="lead" style="margin:0">${esc(d.lead)}</p>
+      </div>
+      ${d.grupper.map((g) => `
+        ${g.gruppe ? `<div class="guide-group">${esc(g.gruppe)}</div>` : ''}
+        ${g.emner.map((e) => {
+    // Genvejene hentes fra GENVEJE, saa de to lister ALDRIG kan komme ud
+    // af trit. En guide, der skriver dem af, er en legende mere at holde ved lige.
+    if (e.genveje) {
+      return `<h2>${esc(e.titel)}</h2><p class="lead guide-lead">${esc(e.lead)}</p>
+        <div class="card"><table class="shortcuts">${GENVEJE.map(([t, b]) =>
+    `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}</table></div>`;
+    }
+    return guideEmne(e);
+  }).join('')}`).join('')}`).join('')}
+  </section>`;
+}
+
+function bindGuide() {
+  document.querySelectorAll('[data-guide-go]').forEach((el) => {
+    el.addEventListener('click', () => gaaTil(el.dataset.guideGo));
+  });
 }

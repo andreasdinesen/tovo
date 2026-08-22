@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 14;
+const APP_VERSION = 15;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -327,6 +327,7 @@ const VIEWS = [
   // brugerknappen, hvor kontoen i forvejen bor - to indgange til det samme
   // sted er én for meget (§9c).
   { id: 'settings', label: 'Settings', icon: 'settings', group: 0 },
+  { id: 'guide', label: 'Guide', icon: 'link', group: 0 },
 ];
 
 const viewById = (id) => VIEWS.find((v) => v.id === id) || VIEWS[0];
@@ -658,6 +659,94 @@ async function tjekVersion() {
   } catch { /* offline: proev igen naar appen kommer frem */ }
 }
 
+/**
+ * Sagu-afsnittet under Settings.
+ *
+ * Tegnes for sig og hentes ved AABNING af siden - ikke ved hver optegning.
+ * Et kald til Sagu pr. render er praecis det, Sagus egen bro forbyder
+ * (RUNE-ERFARINGER, doda v27: taeal blokerende rundture, ikke millisekunder).
+ *
+ * Noeglen vises aldrig igen: serveren melder kun OM der er en. Feltet staar
+ * derfor tomt ved en genforbindelse, og en tom noegle betyder "behold den,
+ * der staar" - ellers kunne man ikke rette adressen uden at finde noeglen
+ * frem paa ny.
+ */
+async function tegnSaguKort() {
+  const vaert = document.getElementById('saguKort');
+  if (!vaert) return;
+  let d;
+  try { d = await api('GET', '/api/v1/sagu'); } catch (ex) {
+    vaert.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+    return;
+  }
+  const boeger = d.notebooks || [];
+  vaert.innerHTML = `
+    ${d.connected ? `<p class="meta">Connected to <strong>${esc(d.url)}</strong>.</p>` : ''}
+    <label class="field"><span>Sagu address</span>
+      <input class="input" id="saguUrl" placeholder="https://sagu.example.com"
+        value="${esc(d.url || '')}"></label>
+    <label class="field"><span>API key${d.connected ? ' — leave empty to keep the one you have' : ''}</span>
+      <input class="input" id="saguKey" type="password" autocomplete="off"
+        placeholder="${d.connected ? '••••••••' : 'Paste a "link" key from Sagu'}"></label>
+    <p class="meta">In Sagu: Settings → Access keys → new key with the <code>link</code> scope.
+      It can search and create notes, and it cannot delete anything.</p>
+    ${d.connected && boeger.length ? `<label class="field"><span>Where a note from the search field goes</span>
+      <select class="input" id="saguBog">
+        <option value="">No notebook</option>
+        ${boeger.map((b) => `<option value="${esc(b.id)}"${d.notebook === b.id ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
+      </select></label>` : ''}
+    <div class="row">
+      <button class="btn primary" id="saguGem">${d.connected ? 'Reconnect' : 'Connect'}</button>
+      ${d.connected ? '<button class="btn" id="saguFrisk">Refresh notebooks</button>' : ''}
+      ${d.connected ? '<span style="flex:1"></span><button class="btn danger" id="saguFra">Disconnect</button>' : ''}
+    </div>`;
+
+  document.getElementById('saguGem').addEventListener('click', async () => {
+    const knap = document.getElementById('saguGem');
+    knap.disabled = true;
+    try {
+      const r = await api('POST', '/api/v1/sagu', {
+        url: document.getElementById('saguUrl').value.trim(),
+        key: document.getElementById('saguKey').value.trim(),
+      });
+      toast(`Connected to Sagu — ${r.notes} note${r.notes === 1 ? '' : 's'}.`);
+      await tegnSaguKort();
+    } catch (ex) { toast(ex.message); knap.disabled = false; }
+  });
+
+  const frisk = document.getElementById('saguFrisk');
+  if (frisk) {
+    frisk.addEventListener('click', async () => {
+      try {
+        const r = await api('POST', '/api/v1/sagu/refresh', {});
+        toast(`${(r.notebooks || []).length} notebook${(r.notebooks || []).length === 1 ? '' : 's'}.`);
+        await tegnSaguKort();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+
+  const bog = document.getElementById('saguBog');
+  if (bog) {
+    bog.addEventListener('change', async () => {
+      try {
+        await api('POST', '/api/v1/sagu/notebook', { id: bog.value });
+        toast('Saved.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+
+  const fra = document.getElementById('saguFra');
+  if (fra) {
+    fra.addEventListener('click', async () => {
+      try {
+        await api('POST', '/api/v1/sagu/disconnect', {});
+        toast('Sagu disconnected. The notes are untouched.');
+        await tegnSaguKort();
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+}
+
 function bindTemaKnap() {
   const el = document.getElementById('temaBtn');
   if (!el) return;
@@ -828,6 +917,7 @@ function visBrugerMenu() {
       <div class="meta">${state.user.isAdmin ? 'Administrator' : 'Signed in'}${state.config.secureContext ? '' : ' · plain http'}</div>
     </div>
     <button class="usermenu-item" data-go="settings">${icon('settings', 17)}<span>Settings</span></button>
+    <button class="usermenu-item" data-go="guide">${icon('link', 17)}<span>Guide</span></button>
     <button class="usermenu-item" data-go="shortcuts">${icon('link', 17)}<span>Keyboard shortcuts</span></button>
     <button class="usermenu-item danger" data-go="logout">${icon('out', 17)}<span>Log out</span></button>`;
 
@@ -842,6 +932,7 @@ function visBrugerMenu() {
       const hvad = el.dataset.go;
       luk();
       if (hvad === 'settings') gaaTil('settings');
+      else if (hvad === 'guide') gaaTil('guide');
       else if (hvad === 'shortcuts') visGenveje();
       else {
         await api('POST', '/api/logout', {});
@@ -879,6 +970,7 @@ async function tegnSide() {
   if (state.view === 'week') { await tegnKalender(); return; }
   if (state.view === 'tags') { await tegnTags(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
+  if (state.view === 'guide') { host.innerHTML = sideGuide(); bindGuide(); return; }
   host.innerHTML = `<div class="page">
     <h1>${esc(v.label)}</h1>
     <p class="lead">${esc(BESKRIVELSER[v.id] || '')}</p>
@@ -903,6 +995,33 @@ async function settingsHtml() {
   return `
     <h1>Settings</h1>
     <p class="lead">${esc(BESKRIVELSER.settings)}</p>
+
+    <!-- Samme indgang som doda og sagu har: sig hvad siden RUMMER, foer den
+         ruller. Ellers er den en stak kort, man scroller i for at finde ud
+         af, om det man leder efter overhovedet er her. -->
+    <div class="card">
+      <h2>What you can set here</h2>
+      <p class="meta">How tovo looks, who you are, and what it is connected to. The
+        <button class="linkbtn" data-go-guide>Guide</button> explains how the app itself works.</p>
+      <p class="meta">Rounding, the normal week and the timer warning are yours alone —
+        another user on this server has their own.</p>
+    </div>
+
+    <div class="card">
+      <h2>Capture syntax</h2>
+      <p class="meta">What the search field understands. The same list is in the Guide, and
+        it comes from the same place in the code, so the two cannot drift apart.</p>
+      <table class="shortcuts">
+        <tr><td><kbd>+ text</kbd></td><td>Create a task</td></tr>
+        <tr><td><kbd>@name</kbd></td><td>Put it under a project — <code>@"Two words"</code></td></tr>
+        <tr><td><kbd>#name</kbd></td><td>Set a tag</td></tr>
+        <tr><td><kbd>:SAG-1234</kbd></td><td>Case number — inherited from the project</td></tr>
+        <tr><td><kbd>~2,5t</kbd></td><td>Estimate — <code>~90m</code>, <code>~1t30m</code></td></tr>
+        <tr><td><kbd>!friday</kbd></td><td>Due date — <code>!every monday</code> repeats</td></tr>
+        <tr><td><kbd>%</kbd></td><td>Create it and start the timer at once</td></tr>
+        <tr><td><kbd>// text</kbd></td><td>Everything after becomes the description</td></tr>
+      </table>
+    </div>
 
     <div class="card">
       <h2>Appearance</h2>
@@ -994,6 +1113,13 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Sagu</h2>
+      <p class="meta">Sagu is where the notes live. Connect it, and a task can point at a
+        note — you read it, and answer its comments, without leaving tovo.</p>
+      <div id="saguKort" class="meta">Loading…</div>
+    </div>
+
+    <div class="card">
       <h2>Case numbers</h2>
       <p class="meta">A task can carry the number the hours are booked against in your other
         system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
@@ -1068,6 +1194,11 @@ function bindSettings() {
       } catch (ex) { toast(ex.message); }
     });
   });
+
+  const tilGuide = document.querySelector('[data-go-guide]');
+  if (tilGuide) tilGuide.addEventListener('click', () => gaaTil('guide'));
+
+  tegnSaguKort();
 
   const caseUrl = document.getElementById('setCaseUrl');
   if (caseUrl) {

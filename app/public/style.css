@@ -2201,6 +2201,39 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 /* Genvejen staar PAA knappen. En genvej, ingen kan se, findes ikke. */
 .genvejstip { opacity: .55; font-size: 11.5px; margin-left: 6px; }
 
+/* ------------------------------------------------------------- guiden
+   Formen er dodas og sagus, saa de tre apps' hjaelpesider laeses ens:
+   store DELE med eget navn over en streg, GRUPPER som et lille versalt
+   maerke, og EMNER som h2 med raekker der har et maerke i venstre side. */
+.guide-part { margin: 34px 0 18px; padding-top: 18px; border-top: 1px solid var(--border); }
+.guide-part:first-of-type { margin-top: 22px; }
+.guide-part-name { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.guide-group {
+  margin: 26px 0 4px; font-size: 11.5px; font-weight: 700;
+  letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
+}
+.guide-card { padding-top: 4px; padding-bottom: 4px; }
+.guide-lead { margin: 6px 0 12px; }
+.guide-go { margin-top: 14px; }
+.guide-row { display: flex; gap: 14px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--border); }
+.guide-row:first-child { border-top: 0; }
+/* flex:none - ellers klemmer flex-foraeldren maerket sammen (§4). */
+.guide-badge { flex: none; width: 96px; padding-top: 1px; }
+.guide-text { flex: 1; min-width: 0; }
+.guide-key, .guide-tag {
+  display: inline-block; max-width: 100%; padding: 2px 7px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); font-size: 12px;
+  overflow-wrap: break-word;
+}
+.guide-tag { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.guide-short { margin: 14px 0 4px; color: var(--muted); font-size: 13.5px; }
+
+@media (max-width: 900px) {
+  /* Paa en telefon er 96 px til et maerke en fjerdedel af skaermen. */
+  .guide-row { flex-direction: column; gap: 6px; }
+  .guide-badge { width: auto; }
+}
+
 /* Egennavne i en .meta-linje. Den fælles .meta versaliserer, og det maa
    brugerens egne navne (kolonner fra Planner) ikke - saa kan de ikke
    genkendes fra det system, de kom fra. */

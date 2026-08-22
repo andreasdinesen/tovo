@@ -79,6 +79,22 @@ codeload.github.com, og det spørger ikke om et token.
   (sagsnumre). Historikken blev renset én gang; den øvelse skal ikke gentages.
 - Fixturer skal være syntetiske. `tests/fixtures/planner-eksport.xlsx` bruger »Testkunde«.
 
+## Broen til Sagu
+
+`app/sagu.js` er porteret fra doda og er afhængigheds-indsprøjtet: det kender hverken
+databasen eller http-laget. To regler, som ikke må brydes:
+
+- **Forbindelsen er PERSONLIG.** Hver funktion tager `userId` først. doda er én-bruger og
+  slipper for det; gør man det samme her, gælder den første brugers nøgle alle.
+- **Aldrig et kald til Sagu pr. optegning.** Noten hentes ved åbning af ruden — indhold og
+  kommentarer i ét svar — og søgningen venter 300 ms. En rundtur gennem tunnelen er
+  140–190 ms, og tre i træk er et halvt sekund, hvor der ikke sker noget.
+
+`sagu_key` er tovos **første hemmelighed** i settings-tabellen. Den står i
+`HEMMELIGE_SETTINGS`, og filteret ligger i `hentSettings()` selv — både settings-ruten og
+JSON-eksporten går den vej, så der er ét sted at huske det. Lægger du en hemmelighed mere
+i tabellen, skal den på den liste.
+
 ## Payload-budget
 
 Install-scriptet **henter** app-koden i stedet for at bære den (`HENT_FRA_GITHUB = True` i

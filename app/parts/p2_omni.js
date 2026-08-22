@@ -18,10 +18,28 @@ const MODER = {
   },
   '/': { id: 'project', pil: '/ Projects', ph: 'Find or create a project…', legend: [], enter: 'Open' },
   '#': { id: 'tag', pil: '# Tags', ph: 'Find a tag…', legend: [], enter: 'Open' },
+  '*': {
+    id: 'note', pil: '* New note in Sagu', ph: 'Note title…',
+    legend: [], enter: 'Create in Sagu',
+  },
 };
 
 const STANDARD_LEGEND = ['+ task', '@ project', '# tag', ': case', '! date', '~ estimate',
   '% start now', '⌘↵ start timer'];
+
+/** Legenden, som den ser ud LIGE NU. `*` naevnes kun, naar Sagu svarer. */
+const standardLegend = () => (saguKlar
+  ? STANDARD_LEGEND.concat(['* note in Sagu'])
+  : STANDARD_LEGEND);
+
+/*
+ * Er Sagu forbundet?
+ *
+ * Hentes ÉN gang, naar paletten bindes - ikke pr. tastetryk og ikke pr.
+ * optegning. Svaret bruges kun til at afgoere, om legenden skal NAEVNE `*`:
+ * en palet, der lover noget, appen ikke kan, er vaerre end en, der tier.
+ */
+let saguKlar = false;
 
 const omniState = {
   mode: null,
@@ -67,7 +85,7 @@ function tegnLegend() {
   const host = document.getElementById('omniLegend');
   if (!host) return;
   const m = omniState.mode ? MODER[omniState.mode] : null;
-  const dele = m ? m.legend : STANDARD_LEGEND;
+  const dele = m ? m.legend : standardLegend();
   const k = omniKontekst();
   const kontekst = k ? `<span class="chip">in ${esc(k.name)}</span>` : '';
   host.innerHTML = kontekst + dele.map((d) => `<span>${esc(d)}</span>`).join('');
@@ -170,6 +188,26 @@ function byggRaekker() {
         type: 'tom',
         titel: omniState.mode === '/' ? 'No projects yet' : 'No tags yet',
         under: 'Type a name to create one',
+      });
+    }
+    return raekker;
+  }
+
+  /*
+   * `*` opretter en note i Sagu.
+   *
+   * Ingen soegning her: paletten er ét tastetryk, og et opslag pr. bogstav
+   * ville sende et kald gennem tunnelen for hvert tegn. Skal man FINDE en
+   * note, hoerer det hjemme i opgaveruden, hvor man ved hvad noten skal
+   * haenge paa.
+   */
+  if (omniState.mode === '*') {
+    if (q) raekker.push({ type: 'sagunote', titel: q, under: 'NEW NOTE IN SAGU' });
+    else {
+      raekker.push({
+        type: 'tom',
+        titel: 'Type a note title',
+        under: 'It lands in the notebook you picked under Settings',
       });
     }
     return raekker;
@@ -342,6 +380,7 @@ async function aktiver() {
     else gaaTil('tags', { tag: raekke.id });
     return;
   }
+  if (raekke.type === 'sagunote') { await opretSaguNote(raekke.titel); return; }
   if (raekke.type === 'nytTag') {
     try {
       const t = await api('POST', '/api/v1/items', { kind: 'tag', name: raekke.navn });
@@ -431,12 +470,41 @@ function opdaterOmniKontekst() {
   tegnLegend();
 }
 
+/**
+ * Opretter noten i Sagu og aabner den.
+ *
+ * Noten aabnes i en NY fane: den bor i Sagu, og tovo skal ikke lade som om
+ * den ejer den. Fejler oprettelsen, staar teksten stadig i feltet - man har
+ * lige skrevet den, og den maa ikke forsvinde med fejlen.
+ */
+async function opretSaguNote(titel) {
+  try {
+    const d = await api('POST', '/api/v1/sagu/note', { title: titel });
+    luk();
+    toast(`Note created in Sagu — ${d.page.title}`, {
+      label: 'Open',
+      run: () => window.open(d.page.url, '_blank', 'noopener'),
+    });
+  } catch (ex) { toast(ex.message); }
+}
+
 function bindOmni() {
   const el = omniEl();
   if (!el) return;
   saetMode(null);
   tegnLegend();
   tegnChips();
+
+  /*
+   * Spoerg ÉN gang, om Sagu er forbundet - og tegn legenden om, naar svaret
+   * kommer. Fejler kaldet, staar `saguKlar` bare paa false, og paletten
+   * lover ikke noget, den ikke kan holde.
+   */
+  api('GET', '/api/v1/sagu').then((d) => {
+    if (!d.connected === !saguKlar) return;
+    saguKlar = !!d.connected;
+    tegnLegend();
+  }).catch(() => { saguKlar = false; });
 
   el.addEventListener('input', opdaterOmni);
   el.addEventListener('focus', tegnPanel);
