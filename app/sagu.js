@@ -222,6 +222,12 @@ function opret(srv) {
         body: String(c.body || '').slice(0, 2000),
         at: c.createdAt || 0,
         guest: !!c.guest,
+        // Hvor kommentaren blev skrevet fra (Sagu v20). Hvidlisten her er en
+        // SPAERRE mod at slaebe ukendte felter med - men den aeder ogsaa de
+        // felter, kilden tilfoejer BAGEFTER, og fejlen er tavs: Sagu viste
+        // "from tovo", og tovo viste ingenting (samme klasse som renseItem,
+        // der aad deletedAt i F1).
+        via: String(c.via || '').slice(0, 40),
       })),
     };
   }
@@ -254,6 +260,7 @@ function opret(srv) {
           body: String(c.body || '').slice(0, 2000),
           at: c.createdAt || 0,
           guest: !!c.guest,
+          via: String(c.via || '').slice(0, 40),
         }))
         : null,
     };

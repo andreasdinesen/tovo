@@ -54,6 +54,16 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v17 — kommentarer siger, hvor de blev skrevet fra
+
+- Sagu v20 begyndte at mærke kommentarer med afsenderen (»from tovo«), men tovo viste
+  dem uden mærke. Modulets **hvidliste åd feltet**: den er en spærre mod at slæbe ukendte
+  felter med, men den æder også de felter, kilden tilføjer bagefter — og fejlen er tavs.
+  Samme klasse som `renseItem`, der åd `deletedAt` i fase 1.
+- Nu står der `from tovo` / `from doda` på kommentarerne i opgaveruden, og de, der er
+  skrevet i Sagu selv, står uden mærke.
+
+
 ### v16 — nye noter lander i den notesbog, du har valgt
 
 - **Rettet: indstillingen blev gemt, men aldrig brugt.** En note oprettet fra søgefeltet

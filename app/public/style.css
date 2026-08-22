@@ -2239,6 +2239,13 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
    genkendes fra det system, de kom fra. */
 .meta.navne { text-transform: none; letter-spacing: 0; }
 
+/* Hvor en Sagu-kommentar blev skrevet fra. Samme daempede maerke som Sagu
+   selv bruger, saa den samme kommentar ser ens ud i begge apps. */
+.kildemaerke {
+  display: inline-block; padding: 0 5px; margin: 0 2px; border-radius: var(--r-sm);
+  border: 1px solid var(--border); color: var(--muted); font-size: 10px;
+}
+
 /* Maerkaterne i opgaveruden. Samme chips som paletten bruger, saa det man
    skrev i soegefeltet ser ud som det, opgaven har. */
 .tagrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 2px; }

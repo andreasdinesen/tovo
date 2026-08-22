@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 16;
+const APP_VERSION = 17;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -7216,6 +7216,7 @@ async function tegnSaguIRude(it) {
     <ul class="plain kommentarer" id="dSaguKomm">${(d.comments || []).map((c) => `
       <li>
         <span class="kommentar-tid meta">${esc(c.author)}${c.guest ? ' (guest)' : ''}
+          ${c.via ? `<span class="kildemaerke">from ${esc(c.via)}</span>` : ''}
           · ${esc(visTidspunkt(c.at))}</span>
         <span class="kommentar-tekst">${linkify(c.body)}</span>
       </li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>

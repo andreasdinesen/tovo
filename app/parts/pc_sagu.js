@@ -98,6 +98,7 @@ async function tegnSaguIRude(it) {
     <ul class="plain kommentarer" id="dSaguKomm">${(d.comments || []).map((c) => `
       <li>
         <span class="kommentar-tid meta">${esc(c.author)}${c.guest ? ' (guest)' : ''}
+          ${c.via ? `<span class="kildemaerke">from ${esc(c.via)}</span>` : ''}
           · ${esc(visTidspunkt(c.at))}</span>
         <span class="kommentar-tekst">${linkify(c.body)}</span>
       </li>`).join('') || '<li class="meta">No comments yet</li>'}</ul>
