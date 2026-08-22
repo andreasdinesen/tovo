@@ -126,3 +126,65 @@ test('en ugyldig "since" afvises med en kode, ikke med et krak', async () => {
   assert.equal(r.status, 400);
   assert.equal(r.data.error, 'bad_since');
 });
+
+/*
+ * Notesbogen: standarden skal ANVENDES, ikke bare gemmes.
+ *
+ * Meldt fra brug: en note oprettet fra en opgave landede uden notesbog,
+ * selv om indstillingen stod og pegede paa én. Serveren LAESTE
+ * `notebookId`, modulet BRUGTE den - men ingen af kaldsstederne sendte den
+ * nogensinde. Kaeden var brudt i sidste led.
+ *
+ * Testen kigger derfor paa det, der ryger AF STED til Sagu, ikke paa hvad
+ * indstillingen indeholder. En falsk Sagu er nok: det, der skal bevises, er
+ * hvad tovo SENDER.
+ */
+test('en ny note faar brugerens valgte notesbog - ogsaa naar klienten ikke siger noget', async () => {
+  const http = await import('node:http');
+  const set = [];
+  const falskSagu = http.createServer((req, res) => {
+    let krop = '';
+    req.on('data', (d) => { krop += d; });
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/v1/state') {
+        res.end(JSON.stringify({ counts: { notes: 0 },
+          notebooks: [{ id: 'bog-1', name: 'Tovo - noter' }] }));
+        return;
+      }
+      if (req.url === '/api/v1/notes' && req.method === 'POST') {
+        set.push(JSON.parse(krop || '{}'));
+        res.end(JSON.stringify({ note: { id: 'a'.repeat(32) } }));
+        return;
+      }
+      res.end('{}');
+    });
+  });
+  await new Promise((ok) => falskSagu.listen(0, '127.0.0.1', ok));
+  const port = falskSagu.address().port;
+
+  try {
+    const f = await a.klient.kald('POST', '/api/v1/sagu',
+      { url: `http://127.0.0.1:${port}`, key: 'noegle' });
+    assert.equal(f.status, 200, 'forbindelsen skal lykkes mod den falske Sagu');
+
+    // Brugeren vaelger sin notesbog.
+    const v = await a.klient.kald('POST', '/api/v1/sagu/notebook', { id: 'bog-1' });
+    assert.equal(v.status, 200);
+
+    // Klienten siger INTET om notesbog - som paletten og opgaveruden goer.
+    const r = await a.klient.kald('POST', '/api/v1/sagu/note', { title: 'En note' });
+    assert.equal(r.status, 200);
+    assert.equal(set.length, 1);
+    assert.equal(set[0].notebookId, 'bog-1',
+      'noten skal lande i den notesbog, indstillingen peger paa');
+
+    // ... og siger klienten det UDTRYKKELIGT, vinder det. Det mest
+    // specifikke skriver sidst.
+    await a.klient.kald('POST', '/api/v1/sagu/note', { title: 'To', notebookId: 'bog-1' });
+    assert.equal(set[1].notebookId, 'bog-1');
+  } finally {
+    await new Promise((ok) => falskSagu.close(ok));
+    await a.klient.kald('POST', '/api/v1/sagu/disconnect', {});
+  }
+});

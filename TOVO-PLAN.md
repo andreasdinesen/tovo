@@ -641,6 +641,23 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v15 · Fund fra brug (2026-08-22)
+
+- [x] **Notesbogs-indstillingen blev gemt, læst og vist — men aldrig sendt.** Meldt fra
+      brug: en note oprettet på en sag landede uden notesbog. Serveren læste
+      `body.notebookId` og modulet brugte den, men **hverken paletten eller opgaveruden
+      sendte den**. Nøjagtig samme fejlklasse som `sw.js`' `'ryd'`-handler uden afsender
+      (v14) — koden ser komplet ud fra begge ender, og fejlen findes kun ved at bruge den.
+      Standarden ligger nu i ruten og ikke i de to kaldssteder: ét sted at huske det, og
+      en fremtidig klient (fx et MCP-værktøj) arver opførslen gratis. En udtrykkelig
+      notesbog fra klienten vinder — det mest specifikke skriver sidst.
+      Testen bruger en **falsk Sagu** og kigger på det, tovo SENDER — ikke på hvad
+      indstillingen indeholder. Set fejle på den gamle kode.
+- [x] **To tekster løj med.** Etiketten sagde »from the search field«, men reglen gælder
+      alle nye noter; guiden nævnte slet ikke notesbogen ved `*`.
+
+---
+
 ## Efter v14 · Broen til Sagu, og tre apps der ligner hinanden (2026-08-22)
 
 - [x] **`app/sagu.js` porteret fra doda.** Modulet var afhængigheds-indsprøjtet og kunne

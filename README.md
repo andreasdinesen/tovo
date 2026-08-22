@@ -54,6 +54,19 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v16 — nye noter lander i den notesbog, du har valgt
+
+- **Rettet: indstillingen blev gemt, men aldrig brugt.** En note oprettet fra søgefeltet
+  eller fra en opgave landede uden notesbog, selv om valget stod og pegede på én.
+  Serveren læste feltet og modulet brugte det — men ingen af de to steder i frontenden
+  sendte det nogensinde. Kæden var brudt i sidste led.
+- Standarden ligger nu på **serveren**, ikke i kaldstederne, så søgefeltet, opgaveruden og
+  alt, der måtte komme til senere, opfører sig ens. Siger en klient udtrykkeligt en anden
+  notesbog, vinder den.
+- Etiketten sagde »Where a note **from the search field** goes«, men den gælder alle nye
+  noter. Den hedder nu »Where new notes go«, og guiden nævner notesbogen ved `*`.
+
+
 ### v15 — Sagu, en guide, og en Settings der siger hvad den rummer
 
 - **tovo taler med Sagu.** Forbind under Settings med en `link`-nøgle fra Sagu — den kan

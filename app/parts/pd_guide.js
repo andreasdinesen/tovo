@@ -172,7 +172,7 @@ const GUIDE_DELE = [
             titel: 'Sagu',
             lead: 'Sagu is where the notes live. Connect it under Settings.',
             raekker: [
-              ['*', 'In the search field: create a note in Sagu, from here.'],
+              ['*', 'In the search field: create a note in Sagu, from here. It lands in the notebook you picked under Settings.'],
               ['ON A TASK', 'Find a note and link it. The note, and its comments, then show in the task — and you can answer without leaving tovo.'],
               ['NARROW', 'The key you paste has the <code>link</code> scope: it can search and create, and it cannot delete anything.'],
             ],

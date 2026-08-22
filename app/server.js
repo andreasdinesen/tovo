@@ -2530,8 +2530,22 @@ const ROUTES = {
     const auth = godkend(req, res, 'write');
     if (!auth) return;
     const body = await readJsonBody(req, auth.viaToken);
+    /*
+     * Notesbogen falder tilbage til brugerens valg.
+     *
+     * Den blev laest her og brugt af modulet - men INGEN af kaldsstederne
+     * sendte den nogensinde, saa hver note landede uden notesbog, mens
+     * indstillingen stod og lovede noget andet. Kaeden var brudt i sidste
+     * led, praecis som sw.js' 'ryd'-handler ingen afsender havde.
+     *
+     * Standarden hoerer HER og ikke i de to kaldssteder: saa faar paletten,
+     * opgaveruden og alt, der maatte komme til senere, den samme opfoersel,
+     * og der er ét sted at huske det. Sender en klient udtrykkeligt en
+     * notesbog, vinder den - det mest specifikke skriver sidst.
+     */
+    const valgtBog = str(body.notebookId, 64) || getSetting(auth.user.id, 'sagu_notebook', '');
     const r = await sagu.opretNote(auth.user.id, body.title, {
-      notebookId: str(body.notebookId, 64),
+      notebookId: valgtBog,
       tilbageUrl: str(body.backUrl, 500),
       tilbageTitel: str(body.backTitle, 200),
     });

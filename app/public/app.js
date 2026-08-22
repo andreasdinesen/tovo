@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 15;
+const APP_VERSION = 16;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2610,7 +2610,7 @@ async function tegnSaguKort() {
         placeholder="${d.connected ? '••••••••' : 'Paste a "link" key from Sagu'}"></label>
     <p class="meta">In Sagu: Settings → Access keys → new key with the <code>link</code> scope.
       It can search and create notes, and it cannot delete anything.</p>
-    ${d.connected && boeger.length ? `<label class="field"><span>Where a note from the search field goes</span>
+    ${d.connected && boeger.length ? `<label class="field"><span>Where new notes go</span>
       <select class="input" id="saguBog">
         <option value="">No notebook</option>
         ${boeger.map((b) => `<option value="${esc(b.id)}"${d.notebook === b.id ? ' selected' : ''}>${esc(b.name)}</option>`).join('')}
@@ -7481,7 +7481,7 @@ const GUIDE_DELE = [
             titel: 'Sagu',
             lead: 'Sagu is where the notes live. Connect it under Settings.',
             raekker: [
-              ['*', 'In the search field: create a note in Sagu, from here.'],
+              ['*', 'In the search field: create a note in Sagu, from here. It lands in the notebook you picked under Settings.'],
               ['ON A TASK', 'Find a note and link it. The note, and its comments, then show in the task — and you can answer without leaving tovo.'],
               ['NARROW', 'The key you paste has the <code>link</code> scope: it can search and create, and it cannot delete anything.'],
             ],
