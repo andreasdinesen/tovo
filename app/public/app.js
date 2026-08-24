@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 19;
+const APP_VERSION = 20;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2073,8 +2073,16 @@ async function api(method, path, body) {
   let data = {};
   try { data = await res.json(); } catch { /* tomt svar er i orden */ }
   if (!res.ok) {
+    /*
+     * Hele kroppen faelger med som `svar`.
+     *
+     * Foer stod der kun `status` og `code`, og saa faldt alt andet paa gulvet
+     * - fx `needsCode` ved login. Det er samme fejlform som hvidlisten, der
+     * aad `via` fra Sagu: en udvaelgelse, der er rigtig den dag den skrives,
+     * og tavst forkert foerste gang serveren svarer med et felt mere.
+     */
     throw Object.assign(new Error(data.message || data.error || `Error ${res.status}`),
-      { status: res.status, code: data.error });
+      { status: res.status, code: data.error, svar: data, needsCode: !!data.needsCode });
   }
   return data;
 }
@@ -2289,6 +2297,9 @@ function gateHtml() {
         <label class="field"><span>Password</span>
           <input class="input" id="gatePass" type="password"
             autocomplete="${setup || state.gateNy ? 'new-password' : 'current-password'}" required></label>
+        <label class="field" id="gateKodeFelt" hidden><span>Code from your app</span>
+          <input class="input" id="gateKode" inputmode="numeric" autocomplete="one-time-code"
+            placeholder="123456 — or a recovery code"></label>
         <button class="btn primary" type="submit" style="width:100%">
           ${setup || state.gateNy ? 'Create account' : 'Sign in'}</button>
       </form>
@@ -2319,10 +2330,24 @@ function bindGate() {
     err.hidden = true;
     try {
       const nyKonto = state.config.needsSetup || state.gateNy;
+      const kodeFelt = document.getElementById('gateKodeFelt');
+      const kodeInput = document.getElementById('gateKode');
       const data = await api('POST', nyKonto ? '/api/register' : '/api/login', {
         username: document.getElementById('gateUser').value,
         password: document.getElementById('gatePass').value,
+        // Tom ved foerste forsoeg; serveren beder saa om den.
+        code: kodeInput && !kodeFelt.hidden ? kodeInput.value.trim() : undefined,
       });
+      /*
+       * Kodeordet passede, men der mangler et led. Der er INGEN cookie endnu
+       * - porten ligger foer sessionen paa serveren (§9d).
+       */
+      if (data.needsCode) {
+        kodeFelt.hidden = false;
+        kodeInput.value = '';
+        kodeInput.focus();
+        return;
+      }
       state.user = data.user;
       state.config.needsSetup = false;
       state.gateNy = false;
@@ -2334,6 +2359,21 @@ function bindGate() {
       await hentState();
       render();
     } catch (ex) {
+      /*
+       * `needsCode` paa FEJLEN er det, fladen skelner paa: en forkert
+       * engangskode lader feltet blive staaende (proev igen), mens et forkert
+       * kodeord folder det vaek - ellers ville man taste en kode ind i en
+       * formular, der aldrig naaede til andet trin.
+       */
+      const kodeFelt = document.getElementById('gateKodeFelt');
+      if (kodeFelt) {
+        if (ex.needsCode) {
+          const k = document.getElementById('gateKode');
+          if (k) { k.value = ''; k.focus(); }
+        } else {
+          kodeFelt.hidden = true;
+        }
+      }
       err.textContent = ex.message;
       err.hidden = false;
     }
@@ -2705,6 +2745,122 @@ function registrerRullevagt() {
   }, { rootMargin: '-8px 0px 0px 0px', threshold: 0 }).observe(vagt);
 }
 
+/**
+ * Totrinsbekraeftelsen under Settings.
+ *
+ * Tre tilstande, ikke to: FRA, PAABEGYNDT (hemmeligheden findes, men koden er
+ * ikke bekraeftet) og TIL. Uden den midterste ville fladen vise »slaa til« til
+ * en, der staar midt i opsaetningen.
+ */
+async function tegnTotpKort() {
+  const vaert = document.getElementById('totpKort');
+  if (!vaert) return;
+  let d;
+  try { d = await api('GET', '/api/v1/totp'); } catch (ex) {
+    vaert.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
+    return;
+  }
+
+  if (d.enabled) {
+    vaert.innerHTML = `
+      <p class="meta">On. You need a code from your app to sign in.
+        <strong>${d.recoveryLeft}</strong> recovery code${d.recoveryLeft === 1 ? '' : 's'} left.</p>
+      <div class="row">
+        <button class="btn" id="totpNyeKoder">New recovery codes</button>
+        <span style="flex:1"></span>
+        <button class="btn danger" id="totpFra">Turn off</button>
+      </div>
+      <div id="totpKoder"></div>`;
+
+    document.getElementById('totpNyeKoder').addEventListener('click', async () => {
+      try {
+        const r = await api('POST', '/api/v1/totp/recovery', {});
+        visGenoprettelseskoder(r.recoveryCodes);
+        toast('Ten new codes. The old ones no longer work.');
+        await tegnTotpKort();
+      } catch (ex) { toast(ex.message); }
+    });
+
+    // At slaa FRA kraever en kode. En aaben fane paa en laant maskine skal
+    // ikke kunne fjerne det andet led med ét klik.
+    document.getElementById('totpFra').addEventListener('click', async () => {
+      const kode = prompt('Enter a code from your app (or a recovery code) to turn two-factor off:');
+      if (kode === null) return;
+      try {
+        await api('POST', '/api/v1/totp/disable', { code: kode.trim() });
+        toast('Two-factor is off.');
+        await tegnTotpKort();
+      } catch (ex) { toast(ex.message); }
+    });
+    return;
+  }
+
+  vaert.innerHTML = `
+    <p class="meta">Off. Your password is the only thing needed to sign in.</p>
+    <div class="row"><button class="btn primary" id="totpStart">${d.pending ? 'Start over' : 'Set up two-factor'}</button></div>
+    <div id="totpOpsaet"></div>`;
+
+  document.getElementById('totpStart').addEventListener('click', async () => {
+    try {
+      const r = await api('POST', '/api/v1/totp/setup', {});
+      const host = document.getElementById('totpOpsaet');
+      host.innerHTML = `
+        <p class="meta" style="margin-top:14px">Scan this with your authenticator app, then type
+          the six digits it shows.</p>
+        <div class="totp-qr">${r.svg}</div>
+        <p class="meta">Cannot scan? Type this key in by hand:
+          <code class="totp-hem">${esc(r.secret)}</code></p>
+        <div class="row">
+          <input class="input" id="totpKode" inputmode="numeric" autocomplete="one-time-code"
+            maxlength="6" placeholder="123456" style="max-width:140px">
+          <button class="btn primary" id="totpBekraeft">Turn it on</button>
+        </div>`;
+      const bekraeft = async () => {
+        try {
+          const svar = await api('POST', '/api/v1/totp/enable',
+            { code: document.getElementById('totpKode').value.trim() });
+          visGenoprettelseskoder(svar.recoveryCodes);
+          toast('Two-factor is on.');
+          await tegnTotpKort();
+        } catch (ex) { toast(ex.message); }
+      };
+      document.getElementById('totpBekraeft').addEventListener('click', bekraeft);
+      document.getElementById('totpKode').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); bekraeft(); }
+      });
+      document.getElementById('totpKode').focus();
+    } catch (ex) { toast(ex.message); }
+  });
+}
+
+/**
+ * Koderne vises ÉN gang.
+ *
+ * De gemmes hashet og kan aldrig laeses igen - derfor en rude, man selv skal
+ * lukke, og ikke en linje, der forsvinder ved naeste optegning.
+ */
+function visGenoprettelseskoder(koder) {
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="Recovery codes">
+      <h2>Recovery codes</h2>
+      <p class="meta">Keep these somewhere safe — on paper is fine. Each one works once, and
+        they are the only way in if you lose your phone. <strong>They are shown once.</strong></p>
+      <ul class="plain totp-koder">${koder.map((k) => `<li><code>${esc(k)}</code></li>`).join('')}</ul>
+      <div class="modal-foot">
+        <button class="btn" id="kodeKopi">Copy them</button>
+        <span style="flex:1"></span>
+        <button class="btn primary" id="kodeLuk">I have saved them</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  document.getElementById('kodeKopi').addEventListener('click', async () => {
+    toast(await kopier(koder.join('\n')) ? 'Copied.' : 'Could not copy — write them down instead.');
+  });
+  document.getElementById('kodeLuk').addEventListener('click', () => host.remove());
+}
+
 function bindTemaKnap() {
   const el = document.getElementById('temaBtn');
   if (!el) return;
@@ -3063,6 +3219,15 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Two-factor</h2>
+      <p class="meta">A code from an authenticator app, on top of your password. Unlike a
+        passkey it works over plain http too — which is how this server is reached from
+        the panel, and where the password alone would otherwise be the only thing between
+        your data and whoever has it.</p>
+      <div id="totpKort" class="meta">Loading…</div>
+    </div>
+
+    <div class="card">
       <h2>Passkeys</h2>
       ${pk.blocked ? `<p class="meta">${esc(pk.blocked)}</p>` : `
         <p class="meta">A passkey is an extra way in — it never replaces the password.</p>
@@ -3157,6 +3322,7 @@ function bindSettings() {
   const tilGuide = document.querySelector('[data-go-guide]');
   if (tilGuide) tilGuide.addEventListener('click', () => gaaTil('guide'));
 
+  tegnTotpKort();
   tegnSaguKort();
 
   const caseUrl = document.getElementById('setCaseUrl');
@@ -7532,6 +7698,22 @@ const GUIDE_DELE = [
             raekker: [
               ['ICAL', 'Tasks with a date, as a feed your calendar subscribes to. On iOS, turn &ldquo;Remove Alarms&rdquo; off, or the reminders are stripped.'],
               ['MCP', 'Claude can search, log time and read the week report — through the same functions the app itself uses, so the numbers cannot drift.'],
+            ],
+            go: [['settings', 'Open Settings']],
+          },
+        ],
+      },
+      {
+        gruppe: 'Your account',
+        emner: [
+          {
+            titel: 'Two-factor',
+            lead: 'A code from your phone, on top of the password.',
+            raekker: [
+              ['TURN IT ON', 'Settings &rarr; Two-factor. Scan the square with an authenticator app, then type the six digits back to prove it took.'],
+              ['SIGNING IN', 'Password first. If the code is wrong, the field stays and you try again — tovo does not send you back to the start.'],
+              ['LOST THE PHONE', 'Ten recovery codes are shown once, when you turn it on. Each works a single time, in place of the six digits. Keep them somewhere that is not the phone.'],
+              ['PASSKEYS', 'A passkey already proves it is your device, so it signs you straight in — no code on top.'],
             ],
             go: [['settings', 'Open Settings']],
           },

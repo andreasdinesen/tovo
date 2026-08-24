@@ -189,6 +189,22 @@ const GUIDE_DELE = [
         ],
       },
       {
+        gruppe: 'Your account',
+        emner: [
+          {
+            titel: 'Two-factor',
+            lead: 'A code from your phone, on top of the password.',
+            raekker: [
+              ['TURN IT ON', 'Settings &rarr; Two-factor. Scan the square with an authenticator app, then type the six digits back to prove it took.'],
+              ['SIGNING IN', 'Password first. If the code is wrong, the field stays and you try again — tovo does not send you back to the start.'],
+              ['LOST THE PHONE', 'Ten recovery codes are shown once, when you turn it on. Each works a single time, in place of the six digits. Keep them somewhere that is not the phone.'],
+              ['PASSKEYS', 'A passkey already proves it is your device, so it signs you straight in — no code on top.'],
+            ],
+            go: [['settings', 'Open Settings']],
+          },
+        ],
+      },
+      {
         gruppe: 'Keyboard',
         emner: [{ titel: 'Every shortcut', lead: 'The same list the user menu shows.', genveje: true }],
       },

@@ -2281,6 +2281,14 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
    vaerdien ville ramme login, registrering og dubletcheck. */
 #userBtn span, .usermenu-name { text-transform: capitalize; }
 
+/* Totrinsbekraeftelse: QR-koden og koderne.
+   Hvid baggrund under QR'en uanset tema - en scanner vil have sort paa hvidt,
+   og i moerkt tema ville modulerne ellers staa lyst paa moerkt. */
+.totp-qr { display: inline-block; margin: 12px 0; padding: 10px; background: #fff; border-radius: var(--r); }
+.totp-hem { font-size: 13px; letter-spacing: .06em; word-break: break-all; }
+.totp-koder { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin: 14px 0; }
+.totp-koder code { font-size: 14px; letter-spacing: .08em; }
+
 /* Genvejen staar PAA knappen. En genvej, ingen kan se, findes ikke. */
 .genvejstip { opacity: .55; font-size: 11.5px; margin-left: 6px; }
 

@@ -54,6 +54,25 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v20 — totrinsbekræftelse
+
+- **2FA med engangskoder.** Settings → Two-factor: scan firkanten med en godkendelses-app,
+  og tast de seks cifre tilbage for at bevise, at den tog imod. Løsningen er Sagus,
+  genbrugt ordret — `app/totp.js` og `app/qr.js` er kopieret uden ændringer ud over
+  udstederens navn.
+- **Ti genoprettelseskoder**, vist én gang. Hver virker én gang i stedet for cifrene, og de
+  gemmes kun som hash. Store og små bogstaver og manglende bindestreg er lige gyldige —
+  koden tastes af et menneske, der lige har mistet sin telefon.
+- **Porten ligger før sessionen.** Er kodeordet rigtigt, men koden mangler, svarer serveren
+  `needsCode` uden at sætte en cookie. Der findes ikke et halvt login.
+- Ved en forkert **engangskode** bliver kodefeltet stående, så man kan prøve igen. Ved et
+  forkert **kodeord** foldes det væk — ellers taster man en kode ind i en formular, der
+  aldrig nåede til andet trin.
+- **Adgangsnøgler springer porten over,** med vilje: en nøgle er selv to led (enheden plus
+  fingeren eller pinkoden). En engangskode ovenpå ville være et tredje.
+- `totp_secret` og `totp_last` står i `HEMMELIGE_SETTINGS`, så de hverken kan læses gennem
+  settings-ruten eller falde ud i en JSON-eksport.
+
 ### v19 — menuknappen står ved siden af feltet
 
 - På telefonen lå den faste menuknap oven på den klæbende bjælke, så feltet begyndte bag

@@ -90,10 +90,27 @@ databasen eller http-laget. To regler, som ikke må brydes:
   kommentarer i ét svar — og søgningen venter 300 ms. En rundtur gennem tunnelen er
   140–190 ms, og tre i træk er et halvt sekund, hvor der ikke sker noget.
 
-`sagu_key` er tovos **første hemmelighed** i settings-tabellen. Den står i
-`HEMMELIGE_SETTINGS`, og filteret ligger i `hentSettings()` selv — både settings-ruten og
-JSON-eksporten går den vej, så der er ét sted at huske det. Lægger du en hemmelighed mere
-i tabellen, skal den på den liste.
+`sagu_key` var tovos **første hemmelighed** i settings-tabellen. Den står i
+`HEMMELIGE_SETTINGS` sammen med `totp_secret` og `totp_last`, og filteret ligger i
+`hentSettings()` selv — både settings-ruten og JSON-eksporten går den vej, så der er ét
+sted at huske det. Lægger du en hemmelighed mere i tabellen, skal den på den liste.
+
+## Totrinsbekræftelse
+
+`app/totp.js` og `app/qr.js` er **kopieret ordret fra sagu**; kun udstederens navn er
+skiftet. Ret dem ikke uden at rette dem samme sted i sagu — to udgaver af den samme
+RFC-implementering er to steder at have en fejl.
+
+- **Porten ligger før `createSession`.** Mangler koden, svares `needsCode` uden cookie.
+  Udstedte man cookien først, ville et halvt login være et helt login for enhver, der
+  kunne læse den.
+- **`tjek()` returnerer det vindue, der passede** — ikke `true`. Værdien gemmes i
+  `totp_last`, så den samme kode ikke kan bruges to gange inden for sit vindue.
+- **Adgangsnøgler springer porten over.** En nøgle er selv to led; en engangskode ovenpå
+  ville være et tredje. Det står også i guiden, så retter man det, lyver siden.
+- `kodeFor(hemmelighed, **counter**)` tager et tælleskridt, ikke et tidspunkt. Kalder man
+  den uden, bliver counter `NaN` → 0, og man får den samme kode hver gang — en kode, der
+  ser rigtig ud og aldrig virker. Det kostede mig en fejlsøgning af appen, som var rask.
 
 ## Payload-budget
 

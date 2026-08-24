@@ -38,7 +38,7 @@ start-links klikkes fra OneNote.
 
 ```sh
 cd ~/ClaudeMacBook/tovo
-node --test tests/*.test.mjs      # 166 tests, ~4 sek.
+node --test tests/*.test.mjs      # 186 tests, ~4 sek.
 python3 build_rune.py             # -> runes/tovo.yaml, rapporterer payload-størrelsen
 ```
 
@@ -63,6 +63,12 @@ Bryder man en af dem, opstår der to sandheder, og fejlen opdages først i en ra
 5. **`app/public/app.js` og `runes/tovo.yaml` er genererede.** Ret kilderne, kør build'et.
 6. **Endepunkter uden login** (`/s/:token`, `/ical/:token`) må aldrig scanne datasættet og
    svarer **404** på alt forkert — aldrig 401/403.
+7. **Hemmeligheder i `settings` står på `HEMMELIGE_SETTINGS`,** og filteret ligger i
+   `hentSettings()` selv — både settings-ruten og JSON-eksporten går den vej. I dag:
+   `sagu_key`, `totp_secret`, `totp_last`. Lægger du en til, skal den på listen.
+8. **Totrins-porten ligger FØR `createSession`.** Er kodeordet rigtigt, men koden mangler,
+   svares `needsCode` uden cookie. Der må ikke findes et halvt login, man kan bruge til
+   noget. Adgangsnøgle-ruten springer porten over med vilje — en nøgle er selv to led.
 
 ## Filerne
 
@@ -71,6 +77,8 @@ app/server.js          hele backenden (~2900 linjer)
 app/mcp.js             MCP-server, tretten værktøjer
 app/oauth.js           OAuth 2.1 (kopieret fra doda, motoren er ordret den samme)
 app/webauthn.js        passkeys (kopieret fra doda)
+app/totp.js            engangskoder (RFC 6238) — kopieret ORDRET fra sagu
+app/qr.js              QR-koder som SVG — kopieret ORDRET fra sagu
 app/shared/beregn.js   ALLE udregninger + formatering af varigheder
 app/shared/parse.js    fangst-syntaksen og dansk datosprog (fra doda, ændrede markører)
 app/shared/planner.js  Planner-eksporten: arkvalg, kolonner, fletning (testbar uden browser)

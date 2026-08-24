@@ -641,6 +641,41 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v19 · Totrinsbekræftelse (2026-08-24)
+
+- [x] **`app/totp.js` og `app/qr.js` kopieret ORDRET fra sagu.** Kun udstederens navn er
+      skiftet. Fristelsen til at »rydde op undervejs« er den dyre: to udgaver af den samme
+      RFC-implementering er to steder at have en fejl, og den slags fejl viser sig som
+      koder, der virker hos den ene app og ikke den anden.
+- [x] **Porten ligger FØR `createSession`.** Er kodeordet rigtigt, men koden mangler,
+      svares `needsCode` uden `Set-Cookie`. Verificeret med curl: der er ingen cookie i
+      svaret. Udstedte man sessionen først og »huskede« at kræve koden i fladen, var
+      andet trin en høflig anmodning, ikke en lås.
+- [x] **`tjek()` returnerer det VINDUE, der passede** — ikke `true` — og vinduet gemmes i
+      `totp_last`. Uden det kan den samme kode bruges igen inden for sine 30 sekunder.
+      Afvisningen af en genbrugt kode er testet.
+- [x] **Genoprettelseskoder: ti, vist én gang, gemt som hash.** `used_at` sættes i stedet
+      for at slette rækken, så et forbrug kan ses. Store/små bogstaver og manglende
+      bindestreg accepteres — koden tastes i hånden af en, der lige har mistet sin telefon.
+      Alle tre former er afprøvet mod den kørende server.
+- [x] **`totp_secret` og `totp_last` på `HEMMELIGE_SETTINGS`.** Samme lektie som
+      `sagu_key`: filteret ligger i `hentSettings()`, så settings-ruten og JSON-eksporten
+      deler ét sted at huske det.
+- [x] **Adgangsnøgler springer porten over — med vilje.** En nøgle er selv to led (enhed +
+      finger/pinkode). Begrundelsen står som kommentar PÅ ruten og i guiden, så en senere
+      »rettelse« støder på den.
+- [x] **`api()` bar kun `status` og `code` videre fra en fejl.** `needsCode` faldt på
+      gulvet, og fladen kunne ikke skelne en forkert engangskode fra et forkert kodeord.
+      Samme fejlform som hvidlisten, der åd `via` fra Sagu: en udvælgelse, der er rigtig
+      den dag den skrives, og tavst forkert første gang serveren svarer med et felt mere.
+      Hele kroppen følger nu med som `svar`.
+- [x] **QR'en er verificeret som indhold, ikke som billede.** At der STÅR et `<svg>` på
+      skærmen beviser intet. Stien blev sammenlignet modul for modul med en lokalt bygget
+      kode for den forventede `otpauth://`-URI: samme viewBox, samme 1027 moduler, samme
+      `d`. Det er den stærkeste dom uden et kamera.
+- [x] **Sabotage-prøven:** porten slået fra med `if (false && …)` → præcis de to
+      porttests blev røde, resten grønne. En test, man ikke har set fejle, er en formodning.
+
 ## Efter v18 · Menuknappen ved siden af feltet (2026-08-22)
 
 - [x] **`body.rullet .topbar { padding-left: 60px }`** i mobilblokken. Knappen er `fixed` i
