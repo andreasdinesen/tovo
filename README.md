@@ -54,6 +54,13 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v19 — menuknappen står ved siden af feltet
+
+- På telefonen lå den faste menuknap oven på den klæbende bjælke, så feltet begyndte bag
+  den. Bjælken rykker nu ind, når du har rullet, så de to står på række — som i doda.
+- **Rettet:** indhold glimtede forbi i striben øverst. `.main`s luft over feltet lå ikke
+  længere over bjælken, når den klæbede; bjælken bærer den nu selv.
+
 ### v18 — søgefeltet bliver stående, når du ruller
 
 - Feltet klæber til toppen på alle sider, som i Sagu. Tallene (»13 open · 2 projects«)

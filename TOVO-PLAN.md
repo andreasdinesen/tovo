@@ -641,6 +641,20 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v18 · Menuknappen ved siden af feltet (2026-08-22)
+
+- [x] **`body.rullet .topbar { padding-left: 60px }`** i mobilblokken. Knappen er `fixed` i
+      øverste venstre hjørne; uden indrykningen begyndte feltet bag den. Samme greb som
+      doda, men **tallet er tovos eget**: dodas 52 px passer til dens knap, og målt her
+      endte feltets kant præcis på knappens (begge 70 px). 60 giver de otte pixels luft,
+      der gør dem til to ting og ikke én.
+- [x] **Bjælken bærer `.main`s padding-top selv** (`padding-top: 22px; margin-top: -22px`).
+      Uden det lå de 22 px ikke længere over bjælken, når den klæbede, og indholdet
+      glimtede forbi i striben øverst. Målt med `elementFromPoint` langs bjælkens egen
+      bredde: intet indhold over den, hverken på mobil eller desktop.
+
+---
+
 ## Efter v17 · Klæbende søgefelt (2026-08-22)
 
 - [x] **`.topbar` er `position: sticky`**, ikke `fixed`. `fixed` ville tage bjælken ud af

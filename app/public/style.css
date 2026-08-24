@@ -305,7 +305,15 @@ button.version-old:hover { text-decoration: underline; }
   /* Ugennemsigtig: teksten under skal ikke skinne igennem, naar den ruller
      forbi. */
   background: var(--bg);
-  padding-top: 12px;
+  /*
+   * Luften over feltet er `.main`s padding-top (22 px). Naar bjaelken
+   * klaeber, ligger den padding ikke laengere OVER den - og saa glimter
+   * indholdet forbi i stribien oeverst. Bjaelken baerer derfor selv de 22 px
+   * og traekker sig tilbage paa plads med det samme tal. Ét sted at rette,
+   * og tallet skal foelge `.main` (doda).
+   */
+  padding-top: 22px;
+  margin-top: -22px;
   /* Negativ margen og padding i samme maal, saa kortets skygge ikke bliver
      klippet af, at foraelderen nu har en baggrund at gaa ud over. */
   margin-left: -10px; margin-right: -10px;
@@ -1144,6 +1152,20 @@ textarea.input { resize: vertical; min-height: 90px; font-family: inherit; }
    (RUNE-ERFARINGER §4). Tallet bor ogsaa i JS - hold dem i trit. */
 @media (max-width: 900px) {
   .navtoggle { display: inline-flex; }
+
+  /*
+   * Rullet: menuknappen skal staa VED SIDEN AF feltet, ikke over det.
+   *
+   * Knappen er `fixed` i oeverste venstre hjoerne. Uden en indrykning ligger
+   * den oven paa den klaebende bjaelke, og feltet begynder BAG den. Samme
+   * greb som doda - men tallet er tovos eget: dodas 52 px passer til dens
+   * knap, og maalt her endte feltets kant PRAECIS paa knappens (begge 70 px).
+   * 60 giver de otte pixels luft, der goer dem til to ting og ikke én.
+   *
+   * Kun naar der er RULLET: paa toppen har `.main` sin egen padding, og der
+   * er plads til knappen over indholdet i forvejen.
+   */
+  body.rullet .topbar { padding-left: 60px; }
 
   .sidebar {
     position: fixed;
