@@ -54,6 +54,17 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v18 — søgefeltet bliver stående, når du ruller
+
+- Feltet klæber til toppen på alle sider, som i Sagu. Tallene (»13 open · 2 projects«)
+  foldes væk, så snart du har rullet — de læses én gang, mens feltet er noget, man vil
+  kunne nå hele tiden.
+- Genvejslegenden bliver derimod. Den vises i forvejen kun, når feltet har fokus, og at
+  skjule den ville tage hjælpen væk præcis når du er ved at skrive. Dét er tovo bevidst
+  anderledes end Sagu på.
+- Overskrifter får `scroll-margin-top`, så et anker ikke lander bag bjælken.
+
+
 ### v17 — kommentarer siger, hvor de blev skrevet fra
 
 - Sagu v20 begyndte at mærke kommentarer med afsenderen (»from tovo«), men tovo viste

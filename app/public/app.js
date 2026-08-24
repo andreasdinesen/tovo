@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 17;
+const APP_VERSION = 18;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2460,6 +2460,7 @@ function shellHtml() {
       </div>
     </aside>
     <main class="main">
+      <div class="rulvagt" id="rulVagt"></div>
       <div class="topbar">
         <div class="toprow">
           <div class="stats meta" id="statsHost">${statsHtml()}</div>
@@ -2667,6 +2668,43 @@ async function tegnSaguKort() {
   }
 }
 
+/*
+ * `body.rullet` - er siden rullet ned fra toppen?
+ *
+ * Den klaebende topbjaelke bruger den til at folde tallene og legenden
+ * sammen, saa kun soegefeltet bliver staaende.
+ *
+ * ── En VAGTPOST, ikke en scroll-lytter (laant fra Sagu) ───────────────────
+ *
+ * En `scroll`-lytter er i princippet rigtig og i praksis skroebelig: den
+ * skal vide HVEM der ruller (`window.scrollY` mod et elements `scrollTop`),
+ * og en programmatisk rulning kan give NUL haendelser, mens klassen bliver
+ * haengende i den forkerte stilling.
+ *
+ * En `IntersectionObserver` paa en usynlig vagtpost lige OVER bjaelken
+ * spoerger om det, der faktisk betyder noget: er toppen af siden ude af
+ * billedet? Den er ligeglad med hvem der ruller og fyrer uden en haendelse
+ * pr. billede.
+ *
+ * En observer paa selve BJAELKEN ville aldrig fyre - den er sticky og
+ * forlader aldrig skaermen. Derfor vagtposten.
+ *
+ * `rootMargin` giver hysterese: uden den blafrer bjaelken lige paa graensen,
+ * fordi sammenfoldningen selv flytter indholdet.
+ */
+function registrerRullevagt() {
+  const vagt = document.getElementById('rulVagt');
+  if (!vagt || !('IntersectionObserver' in window)) {
+    // Uden observer: ingen sammenfoldning. Bjaelken klaeber stadig - man
+    // mister kun den ekstra plads, og det er bedre end en klasse, der
+    // saetter sig fast i den forkerte stilling.
+    return;
+  }
+  new IntersectionObserver(([post]) => {
+    document.body.classList.toggle('rullet', !post.isIntersecting);
+  }, { rootMargin: '-8px 0px 0px 0px', threshold: 0 }).observe(vagt);
+}
+
 function bindTemaKnap() {
   const el = document.getElementById('temaBtn');
   if (!el) return;
@@ -2731,6 +2769,7 @@ function bindShell() {
   });
   bindTemaKnap();
   bindVersionKnap();
+  registrerRullevagt();
   document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
   document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
   bindOmni();

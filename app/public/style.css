@@ -274,7 +274,68 @@ button.version-old:hover { text-decoration: underline; }
 
 /* ------------------------------------------------------- kommandobaren */
 
-.topbar { width: 100%; max-width: 940px; display: flex; flex-direction: column; align-items: center; }
+/*
+ * Soegefeltet bliver staaende, naar man ruller (samme greb som Sagu).
+ *
+ * ── `sticky` og ikke `fixed` ──────────────────────────────────────────────
+ *
+ * `fixed` ville tage bjaelken ud af flowet, og saa skulle indholdet under den
+ * have en margen, der passer PRAECIS til dens hoejde - et tal, der skal
+ * rettes hver gang bjaelken aendrer sig. Sticky beholder pladsen selv.
+ *
+ * ── Den KRYMPER, og det er hele forskellen ────────────────────────────────
+ *
+ * En bjaelke, der bare klaeber, tager tallene og genvejslegenden med sig ned
+ * gennem hele siden - en tredjedel af en telefonskaerm. De to er noget, man
+ * laeser én gang; feltet er noget, man vil kunne naa hele tiden. Derfor
+ * foldes alt andet end feltet sammen, saa snart siden er rullet.
+ *
+ * ── Lag 35, ikke 40 ───────────────────────────────────────────────────────
+ *
+ * Menuknappen paa mobil ligger paa 40 og er `fixed` i samme hjoerne. Med
+ * samme tal ville bjaelken vinde (den staar senere i DOM'en) og daekke den
+ * knap, der aabner menuen - praecis naar man har rullet ned.
+ */
+.topbar {
+  width: 100%; max-width: 940px;
+  display: flex; flex-direction: column; align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 35;
+  /* Ugennemsigtig: teksten under skal ikke skinne igennem, naar den ruller
+     forbi. */
+  background: var(--bg);
+  padding-top: 12px;
+  /* Negativ margen og padding i samme maal, saa kortets skygge ikke bliver
+     klippet af, at foraelderen nu har en baggrund at gaa ud over. */
+  margin-left: -10px; margin-right: -10px;
+  padding-left: 10px; padding-right: 10px;
+}
+
+/*
+ * Rullet: tallene foldes vaek. Kun feltet bliver staaende.
+ *
+ * Sagu skjuler ogsaa genvejslegenden her - men tovos legend vises i forvejen
+ * KUN naar feltet har fokus (`.omni-card:focus-within`). At skjule den, naar
+ * man har rullet, ville tage hjaelpen vaek praecis naar man er ved at skrive.
+ * Reglen udelades derfor med vilje: forlaegget bestemmer formen, ikke
+ * opfoerslen, naar den anden app har en bedre regel i forvejen.
+ */
+body.rullet .toprow { display: none; }
+body.rullet .topbar {
+  padding-bottom: 10px;
+  box-shadow: 0 6px 16px -10px rgba(0, 0, 0, .55);
+}
+
+/*
+ * Et anker maa ikke lande BAG bjaelken. Klikker man sig til en overskrift,
+ * ruller browseren den til toppen - og saa ligger den under soegefeltet.
+ */
+#pageHost h1, #pageHost h2, #pageHost h3 { scroll-margin-top: 96px; }
+
+/* Vagtposten: 1 px, usynlig, lige OVER den klaebende bjaelke. Den er kun til
+   for at kunne SES forsvinde - se registrerRullevagt(). */
+.rulvagt { height: 1px; margin: 0; padding: 0; pointer-events: none; }
 
 .toprow { align-self: flex-end; display: flex; align-items: baseline; gap: 14px; }
 .stats { display: flex; gap: 6px; padding: 0 4px 14px; }

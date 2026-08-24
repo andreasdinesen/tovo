@@ -641,6 +641,32 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v17 · Klæbende søgefelt (2026-08-22)
+
+- [x] **`.topbar` er `position: sticky`**, ikke `fixed`. `fixed` ville tage bjælken ud af
+      flowet, og så skulle indholdet under den have en margen, der passer præcis til dens
+      højde — et tal, der skal rettes hver gang bjælken ændrer sig.
+- [x] **Lag 35, ikke 40.** Menuknappen på mobil ligger på 40 og er `fixed` i samme hjørne;
+      med samme tal ville bjælken vinde (senere i DOM'en) og dække den knap, der åbner
+      menuen — præcis når man har rullet ned. Målt: knappen kan stadig rammes.
+- [x] **En vagtpost med `IntersectionObserver`, ikke en scroll-lytter** (lånt fra Sagu).
+      En scroll-lytter skal vide *hvem* der ruller — og det er ikke det samme her:
+      **BODY** er rulle-containeren, ikke vinduet, så `window.scrollY` er 0 på mobil.
+      En observer på selve bjælken ville aldrig fyre; den er sticky og forlader aldrig
+      skærmen. Derfor en 1 px vagtpost lige over den.
+- [x] **Legenden foldes IKKE væk**, modsat Sagu: tovos vises kun ved fokus, og at skjule
+      den ville tage hjælpen væk, når man skriver. Forlægget bestemmer formen, ikke
+      opførslen, når den anden app har en bedre regel i forvejen.
+
+**Ikke verificeret:** at vagtposten faktisk skifter klassen. `IntersectionObserver` fyrer
+**slet ikke** i Claude Codes browser-panel — heller ikke det første kald, specifikationen
+lover — fordi siden kører med `visibilityState: 'hidden'`. Klæbningen er målt (`barTop: 0`
+ved 1.200 px på desktop og 1.980 px på mobil), og CSS-effekten af `body.rullet` er målt ved
+at sætte klassen manuelt (bjælken 122 → 101 px, tallene væk). Selve udløseren skal ses i en
+rigtig browser.
+
+---
+
 ## Efter v15 · Fund fra brug (2026-08-22)
 
 - [x] **Notesbogs-indstillingen blev gemt, læst og vist — men aldrig sendt.** Meldt fra
