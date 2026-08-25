@@ -641,6 +641,28 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v20 · Rulningen på telefonen (2026-08-25)
+
+- [x] **`window.scrollTo(0, 0)` ramte ingenting på mobil.** Under mobilgrænsen er **body**
+      rullekassen: `html, body { height: 100% }` globalt plus `html, body { overflow-x:
+      hidden }` i `@media` gør den til det. `window` havde altså intet at rulle, og
+      `window.scrollY` stod på 0 uanset hvor langt nede man var. Følgen var tavs og
+      irriterende: et sideskift efterlod brugeren i den gamle rulleposition, midt i den nye
+      side. `tilToppen()` sætter alle tre i stedet for at gætte — den, der ikke ruller,
+      ignorerer sit nul.
+- [x] **Meldt fra doda-sessionen (doda v61), ikke fundet her.** Det er anden gang på tre
+      dage, at en fejl vandrer mellem tvillingerne, fordi CSS'en er kopieret ordret: først
+      `via`-hvidlisten, nu rullekassen. **Deler man kilde, deler man fejl** — og så er en
+      melding fra søsterprojektet mere værd end en gennemgang af egen kode.
+- [x] **Vagten er set fejle på det, den vogter.** `tests/flade.test.mjs` læser den byggede
+      `app.js` som tekst og afviser et bart `window.scrollTo` uden for hjælperen. Jeg satte
+      det gamle kald tilbage i den byggede fil: testen blev rød og navngav linjen. Nogle
+      fejl er ikke logik, men et forkert kaldsted — dem fanger en enhedstest aldrig.
+- [ ] **Uafklaret: `target="_blank"` fra en PWA på iOS' hjemmeskærm.** tovo har seks og
+      kører `"display": "standalone"`. doda-sessionen mistænkte det, jagtede det forgæves
+      og har aldrig set det ske. Behandl det som en åben mulighed, ikke en kendt fejl.
+      Prøven er at åbne tovo fra hjemmeskærmen og trykke på et eksternt link.
+
 ## Efter v19 · Totrinsbekræftelse (2026-08-24)
 
 - [x] **`app/totp.js` og `app/qr.js` kopieret ORDRET fra sagu.** Kun udstederens navn er

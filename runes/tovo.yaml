@@ -6,7 +6,7 @@ gameskill:
     kan klikkes fra OneNote, og opgaver kan importeres fra Microsoft Planner uden at miste estimater eller registreret tid.
     Egen SQLite-database, ingen eksterne afhaengigheder.
   author: andreas
-  version: 20
+  version: 21
   icon: app
   docker:
     image: '{{NODE_IMAGE}}'
@@ -23,9 +23,9 @@ gameskill:
     hint: Skal vaere et node:-image, fx node:24-alpine eller node:24.9.0-alpine
   install:
     image: '{{NODE_IMAGE}}'
-    script: "set -eu\necho \"Installerer tovo v20 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra GitHub\
+    script: "set -eu\necho \"Installerer tovo v21 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra GitHub\
       \ ...\"\nrm -rf /tmp/tovo-hent\nmkdir -p /tmp/tovo-hent\nnode -e 'const https=require(\"https\"),zlib=require(\"zlib\"\
-      );const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v20\";function d(m){console.error(\"[fejl]\
+      );const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v21\";function d(m){console.error(\"[fejl]\
       \ \"+m);console.error(\"Adresse: \"+U);console.error(\"GitHub svarer 404 BAADE naar adressen ikke findes OG naar der\
       \ ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.\");process.exit(1);}function hent(u,n){https.get(u,{headers:{\"\
       user-agent\":\"tovo-installer\"}},(r)=>{if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){if(n<=0)return d(\"\
@@ -41,9 +41,9 @@ gameskill:
   update:
     image: '{{NODE_IMAGE}}'
     label: Opdater tovo
-    script: "set -eu\necho \"Opdaterer tovo til v20 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra\
+    script: "set -eu\necho \"Opdaterer tovo til v21 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra\
       \ GitHub ...\"\nrm -rf /tmp/tovo-hent\nmkdir -p /tmp/tovo-hent\nnode -e 'const https=require(\"https\"),zlib=require(\"\
-      zlib\");const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v20\";function d(m){console.error(\"\
+      zlib\");const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v21\";function d(m){console.error(\"\
       [fejl] \"+m);console.error(\"Adresse: \"+U);console.error(\"GitHub svarer 404 BAADE naar adressen ikke findes OG naar\
       \ der ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.\");process.exit(1);}function hent(u,n){https.get(u,{headers:{\"\
       user-agent\":\"tovo-installer\"}},(r)=>{if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){if(n<=0)return d(\"\

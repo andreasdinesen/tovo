@@ -54,6 +54,18 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v21 — sideskift lander i toppen igen på telefonen
+
+- **Rettet:** skiftede man side på mobilen, blev man stående i den gamle rulleposition og
+  landede midt i den nye side. `window.scrollTo(0, 0)` ramte ikke noget: under mobilgrænsen
+  er **body** rullekassen — `html, body { height: 100% }` plus `overflow-x: hidden` i
+  `@media` gør den til det — så `window` havde intet at rulle.
+- `tilToppen()` sætter alle tre (`window`, `body`, `documentElement`) i stedet for at gætte
+  på, hvem der ruller. Den, der ikke ruller, ignorerer sit nul.
+- **Ny vagt** i `tests/flade.test.mjs`: den byggede `app.js` må ikke indeholde et bart
+  `window.scrollTo` uden for hjælperen. Set fejle — den navngiver linjen.
+- Fejlen blev fundet i doda (v61) og meldt herover; tovo havde de samme to CSS-regler.
+
 ### v20 — totrinsbekræftelse
 
 - **2FA med engangskoder.** Settings → Two-factor: scan firkanten med en godkendelses-app,

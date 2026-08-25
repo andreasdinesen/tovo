@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 20;
+const APP_VERSION = 21;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2709,6 +2709,28 @@ async function tegnSaguKort() {
 }
 
 /*
+ * Til toppen - uden at gaette paa hvem der ruller.
+ *
+ * `window.scrollTo()` gaar til den boks, browseren har udpeget som rullende.
+ * Under mobilgraensen er dét ikke `window`: `html, body { height: 100% }`
+ * (globalt) plus `html, body { overflow-x: hidden }` (i @media) goer BODY til
+ * rullekassen. Saa gaar `window.scrollTo(0, 0)` ingen steder, og `scrollY`
+ * staar paa 0, uanset hvor langt nede man er.
+ *
+ * Foelgen var stille og irriterende: skiftede man side paa telefonen, blev
+ * man staaende i den gamle rulleposition og landede midt i den nye side.
+ *
+ * De tre linjer koster intet. Den, der ikke ruller, ignorerer sit nul - og
+ * saa behoever koden her ikke vide, hvilken af dem det er. Fundet i doda
+ * (v61) og meldt herover; tovo har de samme to CSS-regler.
+ */
+function tilToppen() {
+  window.scrollTo(0, 0);
+  document.body.scrollTop = 0;
+  document.documentElement.scrollTop = 0;
+}
+
+/*
  * `body.rullet` - er siden rullet ned fra toppen?
  *
  * Den klaebende topbjaelke bruger den til at folde tallene og legenden
@@ -2957,7 +2979,7 @@ function gaaTil(view, opt) {
   tegnSide();
   // Scroll kun til toppen ved REELT sideskift - ellers kastes brugeren op,
   // hver gang en inline-redigering gentegner samme side (Beanledger v24).
-  if (skifter) window.scrollTo(0, 0);
+  if (skifter) tilToppen();
 }
 
 async function genindlaes() {
