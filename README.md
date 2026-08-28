@@ -54,6 +54,26 @@ mellemrum afslutter, Esc slipper listen igen.
 
 ## Versionshistorik
 
+### v22 — bjælken går ikke længere i hak
+
+- **Rettet:** den klæbende bjælke kunne flimre på **korte** sider. Den ligger i flow, så når
+  den folder sig sammen, bliver dokumentet kortere med præcis det, den krymper. Er der
+  mindre tilbage at rulle i end det, klipper browseren rullepositionen — vagtposten kom i
+  syne, klassen røg af, bjælken voksede, og forfra, mange gange i sekundet.
+- `IntersectionObserver` kan kun **ét** skifte, og hysteresen på 8 px var langt mindre end
+  det, bjælken krymper. Den er skiftet ud med en rulle-lytter med **to tærskler** (folder
+  ved 120 px, folder først ud igen ved 8) og et krav om, at der er mindst 200 px at rulle i.
+  Det sidste gør løkken umulig ved konstruktion.
+- `rulletNed()` tager max af `window.scrollY`, `body.scrollTop` og `documentElement.scrollTop`
+  — under mobilgrænsen er det body, der ruller. Det var netop dét, der gjorde en rulle-lytter
+  utryg, da vagtposten blev valgt.
+- **Ny prøve** i `tests/flade.test.mjs`: den kører tærskellogikken gennem browserens opførsel
+  for hver sidehøjde fra 812 til 2012 px og kræver, at tilstanden falder til ro. Set fejle på
+  den gamle logik — den navngiver sidehøjden.
+- **Rettet:** en test forventede, at `!fredag` betød *næste uges* fredag. Parserens regel er
+  »næste forekomst, i dag hvis i dag er fredag« — så testen var rød hver fredag.
+- Fejlen blev fundet i doda og meldt herover; tovo havde samme opskrift, lånt fra Sagu.
+
 ### v21 — sideskift lander i toppen igen på telefonen
 
 - **Rettet:** skiftede man side på mobilen, blev man stående i den gamle rulleposition og

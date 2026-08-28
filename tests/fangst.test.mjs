@@ -34,7 +34,17 @@ test('+ opretter opgave OG projekt paa én linje', async () => {
    */
   const naesteFredag = (() => {
     const d = new Date();
-    d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7 || 7));
+    /*
+     * INGEN `|| 7`. Parserens regel er "naeste forekomst, I DAG hvis i dag er
+     * fredag" (parse.js:162, et dokumenteret valg - DESIGN.md §3).
+     *
+     * Her stod `|| 7`, og saa forventede testen naeste uges fredag. Den var
+     * groen i en uge, fordi det kun er om FREDAGEN, de to svar er forskellige.
+     * At regne datoen i stedet for at skrive den af fjernede den haardkodede
+     * dato, men smuglede en formodning om BETYDNINGEN ind. Laes reglen af
+     * kilden - gaet den ikke ud fra, hvad der foeles rigtigt.
+     */
+    d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7));
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   })();
   assert.equal(r.data.item.dueDate, naesteFredag);

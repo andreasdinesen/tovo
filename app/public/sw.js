@@ -10,7 +10,7 @@
  * offline-koe staar med vilje uden for tovos omfang (doda F6).
  */
 
-const VERSION = 21;
+const VERSION = 22;
 const CACHE = `tovo-v${VERSION}`;
 
 // PRAECIS de adresser, index.html henter. Peger de et andet sted hen, ligger

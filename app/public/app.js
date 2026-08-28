@@ -1925,7 +1925,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 21;
+const APP_VERSION = 22;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2500,7 +2500,6 @@ function shellHtml() {
       </div>
     </aside>
     <main class="main">
-      <div class="rulvagt" id="rulVagt"></div>
       <div class="topbar">
         <div class="toprow">
           <div class="stats meta" id="statsHost">${statsHtml()}</div>
@@ -2733,38 +2732,93 @@ function tilToppen() {
 /*
  * `body.rullet` - er siden rullet ned fra toppen?
  *
- * Den klaebende topbjaelke bruger den til at folde tallene og legenden
- * sammen, saa kun soegefeltet bliver staaende.
+ * Den klaebende topbjaelke bruger den til at folde tallene sammen, saa kun
+ * soegefeltet bliver staaende.
  *
- * ── En VAGTPOST, ikke en scroll-lytter (laant fra Sagu) ───────────────────
+ * ── Hvorfor ikke en vagtpost og en IntersectionObserver ───────────────────
  *
- * En `scroll`-lytter er i princippet rigtig og i praksis skroebelig: den
- * skal vide HVEM der ruller (`window.scrollY` mod et elements `scrollTop`),
- * og en programmatisk rulning kan give NUL haendelser, mens klassen bliver
- * haengende i den forkerte stilling.
+ * Det var den foerste loesning (laant fra Sagu), og den flimrede paa KORTE
+ * sider. Bjaelken vinder plads, naar den folder sig sammen - og da den ligger
+ * i flow, bliver dokumentet kortere med praecis det samme. Er der mindre
+ * tilbage at rulle i end det, bjaelken slap, klipper browseren
+ * rullepositionen til det, der er plads til. Saa er vagtposten i syne igen,
+ * klassen ryger af, bjaelken vokser, dokumentet bliver laengere - og forfra,
+ * mange gange i sekundet.
  *
- * En `IntersectionObserver` paa en usynlig vagtpost lige OVER bjaelken
- * spoerger om det, der faktisk betyder noget: er toppen af siden ude af
- * billedet? Den er ligeglad med hvem der ruller og fyrer uden en haendelse
- * pr. billede.
+ *     (dokumenthoejde − skaermhoejde) < det, bjaelken krymper
  *
- * En observer paa selve BJAELKEN ville aldrig fyre - den er sticky og
- * forlader aldrig skaermen. Derfor vagtposten.
+ * En observer kan kun ÉT skifte. Hysteresen paa 8 px hjalp mod det, den var
+ * skrevet imod (indholdet flytter sig lidt), men browserens tilklipning
+ * springer i ét hug langt forbi 8 px. To taerskler er den eneste vej, og saa
+ * maa det vaere en rulle-lytter.
  *
- * `rootMargin` giver hysterese: uden den blafrer bjaelken lige paa graensen,
- * fordi sammenfoldningen selv flytter indholdet.
+ * ── Tre tal, og hvorfor det tredje er det vigtige ─────────────────────────
+ *
+ * Afstanden mellem TIL og FRA skal vaere stoerre end det, bjaelken krymper -
+ * ellers kan tilklipningen naa ned under den nedre taerskel, og loekken er
+ * tilbage.
+ *
+ * `RULLET_PLADS` er selve forsikringen: fold kun sammen, hvis der er rigeligt
+ * at rulle i. Den goer loekken umulig ved konstruktion, uanset taerskler.
+ * Doda-sessionen proevede med to taerskler ALENE, og saa foldede bjaelken sig
+ * aldrig paa en kort side - 29 px at rulle i, og man naar ikke 120. Maalingen
+ * sagde "ingen flimmer", hvilket lignede en sejr: fejlen var vaek, fordi
+ * funktionen var vaek. Derfor skal BEGGE tilfaelde maales - den korte side,
+ * der flimrede, OG en lang, hvor folden stadig skal virke.
+ *
+ * Fundet i doda og meldt herover; tovo havde samme opskrift.
  */
+
+/* <<rullelogik>>  — udtrukket og proevet i tests/flade.test.mjs */
+const RULLET_TIL = 120;    // folder sammen her
+const RULLET_FRA = 8;      // folder foerst ud igen her
+const RULLET_PLADS = 200;  // og kun hvis der er saa meget at rulle i
+
+/*
+ * Ren beslutning: ingen DOM, saa den kan doemmes uden en browser.
+ * `rullet` er tilstanden nu, `y` hvor langt nede vi er, `plads` hvor meget
+ * der er tilbage at rulle i.
+ */
+function skalFoldes(rullet, y, plads) {
+  if (rullet) return y >= RULLET_FRA;
+  return y > RULLET_TIL && plads > RULLET_PLADS;
+}
+/* <</rullelogik>> */
+
+/*
+ * Hvem ruller? Under mobilgraensen er det BODY, og saa er `window.scrollY`
+ * altid 0 - se `tilToppen()`. Max af de tre svarer rigtigt begge steder.
+ */
+function rulletNed() {
+  return Math.max(window.scrollY || 0, document.body.scrollTop || 0,
+    document.documentElement.scrollTop || 0);
+}
+
+function rullePlads() {
+  return Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
+    - window.innerHeight;
+}
+
+/*
+ * Monteres ÉN gang. `render()` koerer ved baade login og logout, og
+ * `window` og `body` overlever begge - en lytter pr. optegning ville stable
+ * sig. Den gamle observer slap for det, fordi den doede med sit element.
+ */
+let rullevagtMonteret = false;
+
 function registrerRullevagt() {
-  const vagt = document.getElementById('rulVagt');
-  if (!vagt || !('IntersectionObserver' in window)) {
-    // Uden observer: ingen sammenfoldning. Bjaelken klaeber stadig - man
-    // mister kun den ekstra plads, og det er bedre end en klasse, der
-    // saetter sig fast i den forkerte stilling.
-    return;
-  }
-  new IntersectionObserver(([post]) => {
-    document.body.classList.toggle('rullet', !post.isIntersecting);
-  }, { rootMargin: '-8px 0px 0px 0px', threshold: 0 }).observe(vagt);
+  if (rullevagtMonteret) return;
+  rullevagtMonteret = true;
+
+  const tjek = () => {
+    const rullet = document.body.classList.contains('rullet');
+    const naeste = skalFoldes(rullet, rulletNed(), rullePlads());
+    if (naeste !== rullet) document.body.classList.toggle('rullet', naeste);
+  };
+
+  window.addEventListener('scroll', tjek, { passive: true });
+  document.body.addEventListener('scroll', tjek, { passive: true });
+  tjek();
 }
 
 /**

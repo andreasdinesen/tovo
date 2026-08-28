@@ -341,10 +341,6 @@ body.rullet .topbar {
  */
 #pageHost h1, #pageHost h2, #pageHost h3 { scroll-margin-top: 96px; }
 
-/* Vagtposten: 1 px, usynlig, lige OVER den klaebende bjaelke. Den er kun til
-   for at kunne SES forsvinde - se registrerRullevagt(). */
-.rulvagt { height: 1px; margin: 0; padding: 0; pointer-events: none; }
-
 .toprow { align-self: flex-end; display: flex; align-items: baseline; gap: 14px; }
 .stats { display: flex; gap: 6px; padding: 0 4px 14px; }
 

@@ -641,6 +641,31 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v21 · Bjælken gik i hak (2026-08-28)
+
+- [x] **En klæbende bjælke, der KRYMPER, kan svinge.** Den ligger i flow, så sammenfoldningen
+      gør dokumentet kortere med præcis det, den vandt. Er `(dokumenthøjde − skærmhøjde)`
+      mindre end det, klipper browseren rullepositionen — og lander man derved under
+      tærsklen, folder den sig ud igen. Betingelsen rammer kun **korte** sider, og derfor
+      kunne den ligge upåagtet længe.
+- [x] **En `IntersectionObserver` kan kun ét skifte.** Hysteresen på 8 px var skrevet mod
+      noget andet (indholdet flytter sig lidt) og springes over i ét hug af browserens
+      tilklipning. To tærskler er den eneste vej — og så må det være en rulle-lytter.
+      `rulletNed()` fjerner den grund, der oprindeligt talte imod en lytter.
+- [x] **`RULLET_PLADS` er selve forsikringen,** ikke tærsklerne. Fold kun, hvis der er
+      rigeligt at rulle i; så er løkken umulig uanset tal.
+- [x] **Min egen svingningstest målte ingenting i første udgave.** Den klippede `y`
+      permanent ned, og så faldt alt til ro af sig selv — testen bestod ogsaa på den gamle,
+      fejlbehæftede logik. I en browser bliver positionen GENSKABT, når dokumentet vokser
+      (scroll-anchoring, eller en finger der stadig ruller). Først med den drivkraft blev
+      sabotagen rød. **Sabotageprøven dømte modellen, ikke koden** — og det var dens værdi.
+- [x] **`!fredag` var rød hver fredag.** Testen regnede »næste fredag« med `|| 7`, altså
+      næste uges. Parserens regel er »næste forekomst, i dag hvis i dag er fredag«
+      (parse.js:162, dokumenteret valg). Da jeg i mandags fjernede den hårdkodede dato,
+      smuglede jeg en formodning om betydningen ind i stedet — og den lå grøn i en uge,
+      fordi det kun er om fredagen, de to svar er forskellige.
+- [x] **Vagtposten fjernet** — element og CSS. Død kode efterlader spørgsmål.
+
 ## Efter v20 · Rulningen på telefonen (2026-08-25)
 
 - [x] **`window.scrollTo(0, 0)` ramte ingenting på mobil.** Under mobilgrænsen er **body**
