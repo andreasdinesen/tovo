@@ -6,7 +6,7 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, opretBruger } from './hjaelp.mjs';
+import { startServer, opretBruger, naesteDato } from './hjaelp.mjs';
 
 let srv;
 let a;
@@ -79,33 +79,39 @@ test('en aftale kl. 9 staar kl. 9 - ogsaa efter sommertidsskiftet', async () => 
   // Den klassiske fejl: konverteres tiden til UTC ved eksporten, ligger
   // aftalen en time forkert paa den anden side af skiftet. Derfor to
   // datoer - én i sommertid og én i vintertid.
-  const sommer = await a.klient.kald('POST', '/api/v1/capture', { text: 'sommermoede !3/9 kl 9' });
-  const vinter = await a.klient.kald('POST', '/api/v1/capture', { text: 'vintermoede !3/12 kl 9' });
+  // 15. juli er ALTID sommertid, 15. januar altid vintertid - uanset hvornaar
+  // testen koeres. Datoerne regnes frem, saa de aldrig ligger i fortiden.
+  const sDato = naesteDato(15, 7);
+  const vDato = naesteDato(15, 1);
+  const sommer = await a.klient.kald('POST', '/api/v1/capture', { text: `sommermoede !${sDato.tekst} kl 9` });
+  const vinter = await a.klient.kald('POST', '/api/v1/capture', { text: `vintermoede !${vDato.tekst} kl 9` });
   assert.equal(sommer.data.item.dueTime, '09:00');
   assert.equal(vinter.data.item.dueTime, '09:00');
 
   const ics = await (await fetch(feed.url)).text();
   const starter = felt(ics, 'DTSTART');
-  assert.ok(starter.some((l) => l === 'DTSTART;TZID=Europe/Copenhagen:20260903T090000'),
+  assert.ok(starter.some((l) => l === `DTSTART;TZID=Europe/Copenhagen:${sDato.ics}T090000`),
     `sommertid mangler: ${starter.join(' | ')}`);
-  assert.ok(starter.some((l) => l === 'DTSTART;TZID=Europe/Copenhagen:20261203T090000'),
+  assert.ok(starter.some((l) => l === `DTSTART;TZID=Europe/Copenhagen:${vDato.ics}T090000`),
     `vintertid mangler: ${starter.join(' | ')}`);
   // Ingen Z-suffiks paa DTSTART: det ville betyde UTC.
   for (const l of starter) assert.doesNotMatch(l, /\dZ$/, `${l} er konverteret til UTC`);
 });
 
 test('varigheden er estimatet - ellers en time', async () => {
-  const med = await a.klient.kald('POST', '/api/v1/capture', { text: 'lang opgave !4/9 kl 10 ~2,5t' });
+  const lDato = naesteDato(20, 6);
+  const med = await a.klient.kald('POST', '/api/v1/capture', { text: `lang opgave !${lDato.tekst} kl 10 ~2,5t` });
   const ics = await (await fetch(feed.url)).text();
   const i = linjer(ics).findIndex((l) => l.includes('lang opgave'));
   const blok = linjer(ics).slice(i - 4, i + 6).join('\n');
-  assert.match(blok, /DTSTART;TZID=Europe\/Copenhagen:20260904T100000/);
-  assert.match(blok, /DTEND;TZID=Europe\/Copenhagen:20260904T123000/, '2,5 t efter kl. 10 er 12:30');
+  assert.match(blok, new RegExp(`DTSTART;TZID=Europe/Copenhagen:${lDato.ics}T100000`));
+  assert.match(blok, new RegExp(`DTEND;TZID=Europe/Copenhagen:${lDato.ics}T123000`), '2,5 t efter kl. 10 er 12:30');
   assert.ok(med.data.item.estimateMinutes === 150);
 
   const uden = linjer(ics).findIndex((l) => l.includes('sommermoede'));
   const blok2 = linjer(ics).slice(uden - 4, uden + 6).join('\n');
-  assert.match(blok2, /DTEND;TZID=Europe\/Copenhagen:20260903T100000/, 'uden estimat: en time');
+  assert.match(blok2, new RegExp(`DTEND;TZID=Europe/Copenhagen:${naesteDato(15, 7).ics}T100000`),
+    'uden estimat: en time');
 });
 
 test('VALARM kun paa begivenheder MED klokkeslaet', async () => {

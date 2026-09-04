@@ -60,6 +60,28 @@ HENT_FRA_GITHUB = True
 GITHUB_EJER = 'andreasdinesen'
 GITHUB_REPO = 'tovo'
 
+# ---------------------------------------------------------------- to versioner
+#
+# Indtil v22 fulgtes app-koden og runen ad: hver udgivelse kraevede en ny rune,
+# som Andreas skulle igennem panelets to trin for at tage i brug - for at flytte
+# ét tal i en YAML. Runen BAR ikke koden laengere (den hentede fra GitHub), saa
+# trinnet var ren ceremoni.
+#
+# Fra v23 henter `app/kilde.js` koden ved hver opstart, og **en genstart ER
+# opdateringen**. Runen er blevet en startsnor.
+#
+#   APP_VERSION  (app/parts/p1_core.js) - koden. Bumpes ved hver udgivelse.
+#   RUNE_VERSION (her)                  - runen. Bumpes KUN naar YAML'en
+#                                         herunder aendrer sig.
+#
+# **Bumper man RUNE_VERSION ved hver udgivelse, er hele pointen tabt** - saa er
+# man tilbage ved to trin i panelet.
+#
+# RUNE_VERSION er ogsaa den tag, install-scriptet henter foerste gang. Den
+# behoever ikke vaere den nyeste; foerste opstart henter alligevel det, der
+# staar i KODE_VERSION. Den skal bare vaere en udgave, der KAN starte.
+RUNE_VERSION = 23
+
 
 def tarball_url(version):
     """Runens version N hoerer sammen med taggen vN - ikke med en gren.
@@ -473,6 +495,26 @@ def opdater_script(version, payload):
             '\n'
             + hent_krop(version)
             + '\n'
+            # Findes kilde.js, er DEN facit: den kender KODE_VERSION og henter
+            # nyeste. Uden det her trin ville knappen hente STARTSNORENS tag
+            # oven i en nyere app - en nedgradering, ingen bad om.
+            #
+            # `{{KODE_VERSION}}` bliver templatet ind af panelet, HVIS panelet
+            # templater variabler i script-TEKST. Det er ikke bevist (kun at de
+            # naar frem som env til startup). Derfor case'en: ligner det ikke en
+            # gyldig vaerdi, er skabelonen ikke blevet erstattet, og saa laeses
+            # env i stedet. En laasning maa ikke kunne tabes paa en formodning.
+            'if [ -f app/kilde.js ]; then\n'
+            '  echo "Henter nyeste udgave ..."\n'
+            '  K="{{KODE_VERSION}}"\n'
+            '  case "$K" in\n'
+            "    '') : ;;\n"
+            '    seneste|latest|[0-9]*) : ;;\n'
+            '    *) K="${KODE_VERSION:-}" ;;\n'
+            '  esac\n'
+            '  KODE_VERSION="$K" node app/kilde.js || echo "[kode] advarsel: kunne ikke hente nyeste"\n'
+            'fi\n'
+            '\n'
             'echo "App-filerne er skiftet ud. Databasen i /data er uroert."\n'
             'echo "Skemaet opdateres automatisk, naar serveren starter."\n'
         )
@@ -491,7 +533,7 @@ def opdater_script(version, payload):
     )
 
 
-def byg_yaml(version, payload):
+def byg_yaml(version, rune_version, payload):
     rune = {'gameskill': {
         'id': 'tovo',
         'name': 'tovo',
@@ -503,7 +545,7 @@ def byg_yaml(version, payload):
             'Egen SQLite-database, ingen eksterne afhaengigheder.'
         ),
         'author': 'andreas',
-        'version': version,
+        'version': rune_version,
         'icon': 'app',
 
         # Node-versionen er et FELT i panelet, ikke en konstant i koden: findes
@@ -516,14 +558,57 @@ def byg_yaml(version, payload):
              'default': 'node:24-alpine',
              'pattern': r'^node:[0-9][A-Za-z0-9._-]*$',
              'hint': 'Skal vaere et node:-image, fx node:24-alpine eller node:24.9.0-alpine'},
+            # Laasen - og vejen hele vejen tilbage: saet 22, genstart, og
+            # serveren koerer v22 igen.
+            #
+            # TOM = nyeste. Standarden for »goer det normale« skal vaere
+            # ingenting: et felt, der SKAL udfyldes for at opfoere sig
+            # almindeligt, laeser man som en indstilling, nogen har taget.
+            # Ordene godtages stadig. `?` i moensteret er noedvendigt, ellers
+            # kan den tomme standard ikke gemmes i panelet.
+            {'key': 'KODE_VERSION', 'name': 'Kodeversion', 'type': 'string',
+             'default': '',
+             'pattern': r'^([0-9]+|seneste|latest)?$',
+             'hint': 'Tom = hent nyeste udgivelse fra GitHub ved hver genstart. '
+                     'Et tal (fx 22) laaser til praecis den udgave.'},
         ],
 
-        'install': {'image': '{{NODE_IMAGE}}', 'script': install_script(version, payload)},
+        # Begge scripts henter STARTSNOREN, ikke appens nyeste udgave: runen
+        # kender kun sin egen version. Resten klarer kilde.js.
+        'install': {'image': '{{NODE_IMAGE}}', 'script': install_script(rune_version, payload)},
         'update': {'image': '{{NODE_IMAGE}}', 'label': 'Opdater tovo',
-                   'script': opdater_script(version, payload)},
+                   'script': opdater_script(rune_version, payload)},
 
         'startup': {
-            'command': ('if node -e "require(\'node:sqlite\')" >/dev/null 2>&1; then\n'
+            # Opstarten ER opdateringen. Tre trin, i den raekkefoelge:
+            #
+            #  1. Redningen. kilde.js bytter app/ med to omdoebninger, og doer
+            #     containeren imellem dem, ligger den gamle app under
+            #     .tovo-gammel. Uden det her trin ville et daarligt sekund
+            #     efterlade en container helt uden app/ - og uden app/ er der
+            #     heller ingen kilde.js til at hente en ny. Det er den eneste
+            #     rigtigt farlige brik; alt andet herinde maa gerne fejle.
+            #  2. Hentningen. Fejler den, siger den det og gaar videre - den
+            #     kode, der ligger, er stadig en koerende tovo. Det vejer
+            #     tungt her: tovo er flerbruger.
+            #  3. Serveren, som foer.
+            'command': ('if [ ! -f app/server.js ] && [ -f .tovo-gammel/server.js ]; then\n'
+                        '  rm -rf app\n'
+                        '  mv .tovo-gammel app\n'
+                        '  echo "[kode] app/ sat tilbage efter en afbrudt udskiftning"\n'
+                        'fi\n'
+                        # Findes kilde.js ikke, er vi laast til en udgave fra
+                        # FOER v23. Uden `if` kaster node et stakspor i panelets
+                        # log ved hver eneste genstart - `||` fanger det, men
+                        # laeseren ser en fejl, der ikke er en fejl. Sig i
+                        # stedet, hvad vejen videre er.
+                        'if [ -f app/kilde.js ]; then\n'
+                        '  node app/kilde.js || echo "[kode] advarsel: opdateringen kunne ikke koeres"\n'
+                        'else\n'
+                        '  echo "[kode] denne udgave kan ikke hente sin egen kode "\n'
+                        '  echo "[kode] - brug \\"Opdater tovo\\" i panelet for at komme videre"\n'
+                        'fi\n'
+                        'if node -e "require(\'node:sqlite\')" >/dev/null 2>&1; then\n'
                         '  exec node app/server.js\n'
                         'else\n'
                         '  exec node --experimental-sqlite app/server.js\n'
@@ -566,14 +651,17 @@ def byg_yaml(version, payload):
         # Henter de to scripts DET SAMME? En update, der henter en anden
         # version end installationen, opdages ellers foerst, naar en bruger
         # trykker paa knappen (Kokkeri v26).
-        forventet = tarball_url(version) + '"'
+        # Alle tag-adresser i runen skal pege paa RUNENS egen version. Peger de
+        # paa appens, kan runen ikke installeres foerste gang - og det viser
+        # sig foerst hos en, der installerer forfra.
+        forventet = tarball_url(rune_version) + '"'
         for blok in ('install', 'update'):
             script = genlaest['gameskill'][blok]['script']
             fund = re.findall(r'https://codeload\.github\.com/\S+?"', script)
             if len(fund) != 1:
                 fejl(f'{blok}-scriptet henter fra {len(fund)} adresser - der skal vaere praecis én')
             if fund[0] != forventet:
-                fejl(f'{blok}-scriptet henter ikke fra {tarball_url(version)}')
+                fejl(f'{blok}-scriptet henter ikke fra {tarball_url(rune_version)}')
             # Her SKAL `rm -rf app` staa i begge: ombytningen af den friske
             # mappe er det, der goer, at en halv hentning ikke efterlader et
             # halvt app/.
@@ -605,12 +693,22 @@ def main():
     payload = b85(komprimeret)
     verificer(payload, raw)
 
-    install = install_script(version, payload)
+    # Startsnoren skal pege paa en tag, der FINDES. Er RUNE_VERSION hoejere
+    # end appens, er den tag ikke udgivet endnu, og runen kan ikke installeres
+    # foerste gang - det viser sig foerst hos en, der installerer forfra, og
+    # aldrig hos os, der allerede har en koerende server.
+    if RUNE_VERSION > version:
+        fejl(f'RUNE_VERSION er {RUNE_VERSION}, men appen er v{version}. '
+             f'Startsnoren ville hente v{RUNE_VERSION}, som ikke er udgivet. '
+             f'Saet APP_VERSION til mindst {RUNE_VERSION}, eller RUNE_VERSION ned.')
+
+    # Install-scriptet er runens, ikke appens: det henter startsnoren.
+    install = install_script(RUNE_VERSION, payload)
     if len(install) > MAX_INSTALL:
         fejl(f'install-scriptet er {len(install):,} tegn - loftet er {MAX_INSTALL:,} '
              '(Linux MAX_ARG_STRLEN er 131072). Noget skal ud af payloaden.')
 
-    tekst = byg_yaml(version, payload)
+    tekst = byg_yaml(version, RUNE_VERSION, payload)
     if len(tekst.encode('utf8')) > MAX_YAML:
         fejl(f'YAML er {len(tekst.encode("utf8")):,} b - panelets loft er {MAX_YAML:,}')
 
@@ -627,11 +725,16 @@ def main():
         # betyde noget: det er maalet paa, hvor stor appen er blevet, og det er
         # det, §8's vane handler om. Rapportér det, ogsaa naar det ikke laengere
         # kan faelde build'et.
-        print(f'  app-koden hentes fra: {tarball_url(version)}')
+        print(f'  startsnoren henter: {tarball_url(RUNE_VERSION)}')
+        print(f'  derefter henter app/kilde.js selv nyeste ved hver opstart')
         print(f'  (indlejret ville payloaden fylde {len(payload):,} tegn '
               f'= {len(payload) * 100 // MAX_INSTALL} % af loftet)')
         print(f'  HUSK ved udgivelse: git tag v{version} && git push --tags')
-    print(f'\nOK  runes/tovo.yaml  (v{version}, {len(tekst.encode("utf8")):,} b)')
+    print(f'\nOK  runes/tovo.yaml  (rune v{RUNE_VERSION}, app v{version}, '
+          f'{len(tekst.encode("utf8")):,} b)')
+    if RUNE_VERSION != version:
+        print(f'  Runen er UAENDRET paa v{RUNE_VERSION} - den skal ikke udgives igen.')
+        print(f'  En genstart paa Hjorten henter v{version} af sig selv.')
 
 
 if __name__ == '__main__':

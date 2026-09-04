@@ -6,7 +6,7 @@
  */
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, opretBruger } from './hjaelp.mjs';
+import { startServer, opretBruger, naesteDato } from './hjaelp.mjs';
 
 let srv;
 let k;      // klienten for bruger A
@@ -304,15 +304,17 @@ test('et maerkat LAEGGES TIL - de gamle ryger ikke', async () => {
 });
 
 test('hele syntaksen virker ved redigering - undtagen %', async () => {
+  // Datoen REGNES. Stod den haardkodet, blev testen roed den dag, den passerede.
+  const dato = naesteDato(3, 9);
   const ny = await k.kald('POST', '/api/v1/capture', { text: 'ren opgave' });
   const r = await k.kald('POST', `/api/v1/tasks/${ny.data.item.id}/syntax`,
     // Et projektnavn med mellemrum SKAL i anfoerselstegn - ellers tager
     // parseren kun det foerste ord, og resten bliver staaende i titlen.
-    { text: 'ren opgave @"Nyt projekt" :SAG-9 ~90m !3/9' });
+    { text: `ren opgave @"Nyt projekt" :SAG-9 ~90m !${dato.tekst}` });
   assert.equal(r.data.item.title, 'ren opgave');
   assert.equal(r.data.item.caseNumber, 'SAG-9');
   assert.equal(r.data.item.estimateMinutes, 90);
-  assert.equal(r.data.item.dueDate, '2026-09-03');
+  assert.equal(r.data.item.dueDate, dato.iso);
   assert.ok(r.data.item.projectId, 'projektet blev oprettet og sat');
   assert.equal(r.data.nye[0].name, 'Nyt projekt');
 

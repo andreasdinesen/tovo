@@ -641,6 +641,33 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v22 · Serveren henter sin egen kode (2026-09-03)
+
+- [x] **Designet er dodas (v82/v83), meldt herover — men ikke kopieret blindt.** Tre steder
+      er tovos egne: `tjekTrae` kræver **tolv** filer og ikke dodas fire, fordi tovos
+      `server.js` require'r oauth, mcp, webauthn, sagu, totp og qr **på modulniveau**;
+      mangler ét, dør serveren med MODULE_NOT_FOUND ved opstart. Minimumsversionen er 23.
+      Og regel 1 (»en fejl må aldrig forhindre opstart«) vejer tungere her: doda er én
+      brugers opgaveliste, tovo er flere menneskers tidsregistrering.
+- [x] **Prøvet end-to-end mod det rigtige GitHub**, ikke kun i enhedstests: låst til v21 →
+      byttede; samme version igen → hentede ikke; tom → hentede nyeste (v22); låst til
+      v9999 → 404, advarsel, `exit 0`, `app/` urørt, ingen rester.
+- [x] **Fundet undervejs, som doda ikke havde:** efter en nedgradering til før v23 er
+      `kilde.js` væk, og `startup` kastede et Node-stakspor ved hver genstart. `||` fangede
+      det, så serveren startede — men en fejl, der ikke er en fejl, står i panelets log for
+      evigt. Nu siger den i stedet, hvad vejen videre er.
+- [x] **Build'et spærrer for `RUNE_VERSION > APP_VERSION`.** Startsnoren ville pege på en
+      tag, der ikke er udgivet — og det viser sig først hos en, der installerer forfra.
+      Spærren fyrede med det samme og fangede, at ændringen ikke kan udgives som andet
+      end v23: runen har ændret sig, så begge tal skal op netop denne gang.
+- [x] **`kilde.js` kom med i payloaden af sig selv,** fordi filerne globbes. Beanledger v30's
+      lærdom (to udgivelser kunne ikke installeres, fordi et modul manglede i en håndholdt
+      liste) betalte sig uden at nogen skulle huske den.
+- [ ] **Ikke bevist: en rigtig genstart i panelet på Hjorten.** Doda-sessionen har samme
+      forbehold. Om panelet templater `{{KODE_VERSION}}` ind i `update`-scriptets tekst er
+      heller ikke bevist — derfor faldet tilbage til env, så en låsning ikke kan tabes på
+      en formodning.
+
 ## Efter v21 · Bjælken gik i hak (2026-08-28)
 
 - [x] **En klæbende bjælke, der KRYMPER, kan svinge.** Den ligger i flow, så sammenfoldningen

@@ -52,7 +52,44 @@ Serveren → Settings → Update/Reinstall installerer selve appen; `/data` over
 `Cmd/Ctrl+K` åbner feltet overalt. Piletaster fører ind i listen, Enter åbner,
 mellemrum afslutter, Esc slipper listen igen.
 
+## Sådan holder du den opdateret
+
+Fra v23 henter serveren selv sin kode ved opstart. **En genstart er opdateringen** — runen
+skal kun opdateres, når selve runen ændrer sig.
+
+| Du vil | Gør |
+|---|---|
+| Have nyeste udgave | Genstart tovo i panelet |
+| Rulle tilbage til v22 | Skriv `22` i **Kodeversion**, genstart |
+| Frem igen | Tøm feltet, genstart |
+
+`Kodeversion` tom betyder nyeste. Kan GitHub ikke nås, starter serveren på den kode, der
+allerede ligger — en netværksfejl udsætter en opdatering, den slukker aldrig for appen.
+
+Låser du til en version før v23, kan den udgave ikke hente sin egen kode. Så er vejen
+videre panelets »Opdater tovo«.
+
 ## Versionshistorik
+
+### v23 — en genstart er opdateringen
+
+- **Serveren henter selv sin kode.** `app/kilde.js` kører fra runens `startup` før serveren
+  og henter nyeste udgivelse fra GitHub — eller præcis den, `Kodeversion` låser til. Runen
+  er blevet en startsnor og skal kun udgives, når YAML'en selv ændrer sig.
+- **En fejl kan aldrig forhindre serveren i at starte.** Alt i modulet ender med `exit 0`.
+  Det vejer tungere her end i doda: tovo er flerbruger, og en netværksfejl må ikke kunne
+  tage dagen fra flere mennesker på én gang. Prøvet mod det rigtige GitHub: låst til en
+  version, der ikke findes → advarsel, `exit 0`, `app/` urørt.
+- **Der byttes aldrig halvt.** Koden pakkes ud ved siden af `app/` — ikke i `/tmp`, hvor et
+  `mv` ville være en kopi, der kan afbrydes på midten. Mellem de to omdøbninger ligger den
+  gamle app under `.tovo-gammel`, og `startup` sætter den tilbage, hvis containeren dør
+  præcis der.
+- **Træet tjekkes før byttet:** alle de moduler, `server.js` require'r ved indlæsning, skal
+  være der — og det udpakkede `index.html` skal bære præcis det versionsstempel, taggen
+  lover. Er en tag flyttet oven på en anden commit, byttes der ikke.
+- **13 nye prøver**, alle uden net. Set fejle på tre sabotager, blandt andet den, der ville
+  rulle hver server tilbage til v9 (GitHub sorterer tags alfabetisk).
+- Designet kommer fra doda v82/v83 og er meldt herover.
 
 ### v22 — bjælken går ikke længere i hak
 

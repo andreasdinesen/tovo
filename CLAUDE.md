@@ -112,6 +112,30 @@ RFC-implementering er to steder at have en fejl.
   den uden, bliver counter `NaN` → 0, og man får den samme kode hver gang — en kode, der
   ser rigtig ud og aldrig virker. Det kostede mig en fejlsøgning af appen, som var rask.
 
+## To versionsnumre — og hvorfor det ene næsten aldrig flyttes
+
+Fra v23 henter `app/kilde.js` app-koden ved hver opstart. **En genstart ER opdateringen.**
+Runen er blevet en startsnor.
+
+- **`APP_VERSION`** (`app/parts/p1_core.js`) — koden. Bumpes ved hver udgivelse, som før.
+- **`RUNE_VERSION`** (`build_rune.py`) — runen. **Bumpes KUN, når YAML'en selv ændrer sig**
+  (variabler, startup, porte, watchers, events).
+
+Bumper du `RUNE_VERSION` ved hver udgivelse, er hele pointen tabt: så skal Andreas igennem
+panelets to trin hver gang, og det var netop dét, ændringen fjernede. Build'et siger til,
+når runen er uændret.
+
+Build'et spærrer for `RUNE_VERSION > APP_VERSION`: startsnoren ville pege på en tag, der
+ikke er udgivet, og det viser sig **først hos en, der installerer forfra** — aldrig hos os,
+der har en kørende server.
+
+`KODE_VERSION` i panelet: **tom = nyeste**, et tal låser. Vejen tilbage fra en dårlig
+udgivelse er at skrive tallet og genstarte; frem igen er at tømme feltet.
+
+**Låser du til før v23, forsvinder `kilde.js` sammen med resten,** og en genstart opdaterer
+ikke længere. Vejen videre er panelets »Opdater tovo«. Modulet advarer, før det sker, og
+startup-kommandoen siger det ved hver opstart i stedet for at kaste et stakspor.
+
 ## Payload-budget
 
 Install-scriptet **henter** app-koden i stedet for at bære den (`HENT_FRA_GITHUB = True` i

@@ -6,7 +6,7 @@ gameskill:
     kan klikkes fra OneNote, og opgaver kan importeres fra Microsoft Planner uden at miste estimater eller registreret tid.
     Egen SQLite-database, ingen eksterne afhaengigheder.
   author: andreas
-  version: 22
+  version: 23
   icon: app
   docker:
     image: '{{NODE_IMAGE}}'
@@ -21,11 +21,17 @@ gameskill:
     default: node:24-alpine
     pattern: ^node:[0-9][A-Za-z0-9._-]*$
     hint: Skal vaere et node:-image, fx node:24-alpine eller node:24.9.0-alpine
+  - key: KODE_VERSION
+    name: Kodeversion
+    type: string
+    default: ''
+    pattern: ^([0-9]+|seneste|latest)?$
+    hint: Tom = hent nyeste udgivelse fra GitHub ved hver genstart. Et tal (fx 22) laaser til praecis den udgave.
   install:
     image: '{{NODE_IMAGE}}'
-    script: "set -eu\necho \"Installerer tovo v22 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra GitHub\
+    script: "set -eu\necho \"Installerer tovo v23 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra GitHub\
       \ ...\"\nrm -rf /tmp/tovo-hent\nmkdir -p /tmp/tovo-hent\nnode -e 'const https=require(\"https\"),zlib=require(\"zlib\"\
-      );const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v22\";function d(m){console.error(\"[fejl]\
+      );const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v23\";function d(m){console.error(\"[fejl]\
       \ \"+m);console.error(\"Adresse: \"+U);console.error(\"GitHub svarer 404 BAADE naar adressen ikke findes OG naar der\
       \ ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.\");process.exit(1);}function hent(u,n){https.get(u,{headers:{\"\
       user-agent\":\"tovo-installer\"}},(r)=>{if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){if(n<=0)return d(\"\
@@ -41,9 +47,9 @@ gameskill:
   update:
     image: '{{NODE_IMAGE}}'
     label: Opdater tovo
-    script: "set -eu\necho \"Opdaterer tovo til v22 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra\
+    script: "set -eu\necho \"Opdaterer tovo til v23 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra\
       \ GitHub ...\"\nrm -rf /tmp/tovo-hent\nmkdir -p /tmp/tovo-hent\nnode -e 'const https=require(\"https\"),zlib=require(\"\
-      zlib\");const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v22\";function d(m){console.error(\"\
+      zlib\");const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v23\";function d(m){console.error(\"\
       [fejl] \"+m);console.error(\"Adresse: \"+U);console.error(\"GitHub svarer 404 BAADE naar adressen ikke findes OG naar\
       \ der ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.\");process.exit(1);}function hent(u,n){https.get(u,{headers:{\"\
       user-agent\":\"tovo-installer\"}},(r)=>{if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){if(n<=0)return d(\"\
@@ -54,11 +60,16 @@ gameskill:
       \ <repo>-<ref uden v>, og arkivet\n# begynder med en pax_global_header-post. Ingen af delene gaettes:\n# find den app-mappe,\
       \ der FINDES.\nNY=$(find /tmp/tovo-hent -maxdepth 2 -type d -name app | head -n 1)\nif [ -z \"$NY\" ] || [ ! -f \"$NY/server.js\"\
       \ ]; then\n  echo \"[fejl] arkivet fra GitHub indeholder ingen app/server.js\"\n  exit 1\nfi\nrm -rf app\nmv \"$NY\"\
-      \ app\nrm -rf /tmp/tovo-hent\n\necho \"App-filerne er skiftet ud. Databasen i /data er uroert.\"\necho \"Skemaet opdateres\
-      \ automatisk, naar serveren starter.\"\n"
+      \ app\nrm -rf /tmp/tovo-hent\n\nif [ -f app/kilde.js ]; then\n  echo \"Henter nyeste udgave ...\"\n  K=\"{{KODE_VERSION}}\"\
+      \n  case \"$K\" in\n    '') : ;;\n    seneste|latest|[0-9]*) : ;;\n    *) K=\"${KODE_VERSION:-}\" ;;\n  esac\n  KODE_VERSION=\"\
+      $K\" node app/kilde.js || echo \"[kode] advarsel: kunne ikke hente nyeste\"\nfi\n\necho \"App-filerne er skiftet ud.\
+      \ Databasen i /data er uroert.\"\necho \"Skemaet opdateres automatisk, naar serveren starter.\"\n"
   startup:
-    command: "if node -e \"require('node:sqlite')\" >/dev/null 2>&1; then\n  exec node app/server.js\nelse\n  exec node --experimental-sqlite\
-      \ app/server.js\nfi\n"
+    command: "if [ ! -f app/server.js ] && [ -f .tovo-gammel/server.js ]; then\n  rm -rf app\n  mv .tovo-gammel app\n  echo\
+      \ \"[kode] app/ sat tilbage efter en afbrudt udskiftning\"\nfi\nif [ -f app/kilde.js ]; then\n  node app/kilde.js ||\
+      \ echo \"[kode] advarsel: opdateringen kunne ikke koeres\"\nelse\n  echo \"[kode] denne udgave kan ikke hente sin egen\
+      \ kode \"\n  echo \"[kode] - brug \\\"Opdater tovo\\\" i panelet for at komme videre\"\nfi\nif node -e \"require('node:sqlite')\"\
+      \ >/dev/null 2>&1; then\n  exec node app/server.js\nelse\n  exec node --experimental-sqlite app/server.js\nfi\n"
     done_regex: tovo lytter
     stop_timeout: 30
   ports:

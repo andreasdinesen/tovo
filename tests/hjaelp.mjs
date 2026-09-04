@@ -95,3 +95,32 @@ export async function opretBruger(srv, username, password = 'hemmeligt123') {
   if (r.status !== 200) throw new Error(`kunne ikke oprette ${username}: ${JSON.stringify(r.data)}`);
   return { klient: k, user: r.data.user };
 }
+
+/**
+ * Naeste forekomst af en dag/maaned - i aar, hvis den ikke er passeret.
+ *
+ * Tre tests stod med `!3/9` og ventede aaret 2026. Den 4. september rullede
+ * parseren datoen frem til 2027 - korrekt - og tre tests blev roede, uden at
+ * noget var i stykker. Det er tredje gang i dette projekt, at en haardkodet
+ * dato er blevet til stoej (se ogsaa `!fredag`, v22).
+ *
+ * Parserens regel er den samme som for ugedage: naeste forekomst, I DAG hvis
+ * datoen er i dag.
+ *
+ * Returnerer det, de tre kaldssteder hver isaer skal bruge:
+ *   tekst - til fangst-syntaksen (`3/9`)
+ *   iso   - til dueDate (`2026-09-03`)
+ *   ics   - til DTSTART/DTEND (`20260903`)
+ */
+export function naesteDato(dag, maaned) {
+  const nu = new Date();
+  const iDag = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate());
+  let aar = nu.getFullYear();
+  if (new Date(aar, maaned - 1, dag) < iDag) aar += 1;
+  const to = (n) => String(n).padStart(2, '0');
+  return {
+    tekst: `${dag}/${maaned}`,
+    iso: `${aar}-${to(maaned)}-${to(dag)}`,
+    ics: `${aar}${to(maaned)}${to(dag)}`,
+  };
+}

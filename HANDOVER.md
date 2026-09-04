@@ -38,7 +38,7 @@ start-links klikkes fra OneNote.
 
 ```sh
 cd ~/ClaudeMacBook/tovo
-node --test tests/*.test.mjs      # 186 tests, ~4 sek.
+node --test tests/*.test.mjs      # 204 tests, ~4 sek.
 python3 build_rune.py             # -> runes/tovo.yaml, rapporterer payload-størrelsen
 ```
 
@@ -77,6 +77,7 @@ app/server.js          hele backenden (~2900 linjer)
 app/mcp.js             MCP-server, tretten værktøjer
 app/oauth.js           OAuth 2.1 (kopieret fra doda, motoren er ordret den samme)
 app/webauthn.js        passkeys (kopieret fra doda)
+app/kilde.js           henter app-koden ved opstart — en genstart ER opdateringen
 app/totp.js            engangskoder (RFC 6238) — kopieret ORDRET fra sagu
 app/qr.js              QR-koder som SVG — kopieret ORDRET fra sagu
 app/shared/beregn.js   ALLE udregninger + formatering af varigheder
