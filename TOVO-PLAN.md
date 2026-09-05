@@ -641,6 +641,37 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v23 · Redningsvejen var den farlige (2026-09-05)
+
+- [x] **Vi skrev de tre bærende valg ned, byggede hovedvejen efter dem — og lod dem stå i
+      redningsvejen.** `kilde.js` blev bygget netop for at undgå fast temp-sti, `rm -rf app`
+      før `mv`, og et `mv` over to filsystemer. Alle tre blev stående i `update`-scriptets
+      else-gren, altså **præcis den ene opgradering, hele mekanikken handler om**. Meldt fra
+      Sagu v48, hvor de tog appen ned i ti timer.
+- [x] **Og tovo havde en fjerde, som var værre og var min egen.** Startsnoren blev hentet
+      ubetinget FØR forgreningen, så hvert tryk nedgraderede appen og hentede den frem igen;
+      slog nettet fejl i andet trin, slugte `|| echo` det. Jeg havde endda skrevet en
+      kommentar om, at grenen forhindrede en nedgradering — og placeret den efter den
+      hentning, der udførte den. **En kommentar, der beskriver hensigten, er ikke et bevis
+      for rækkefølgen.**
+- [x] **Låsen ligger om HELE scriptet.** Fra nu af er `kilde.js`-grenen den almindelige, og
+      to samtidige `kilde.js` kan bytte `app/` under hinanden. En lås om den gren, der snart
+      aldrig bruges, er ingen lås. `mkdir` frem for `[ -d ]` + `mkdir`; `trap` frigiver den,
+      fordi en fejlet hentning er den *almindelige* fejl.
+- [x] **Prøverne kører panelets EGET script, hentet ud af den udgivne YAML** med den samme
+      PyYAML, build'et skriver den med. Samtidighedsprøven kører mod en **forsinket**
+      server — uden forsinkelsen består den ved et tilfælde, når hentningen er hurtig nok.
+- [x] **Saboteret på YAML'en, ikke i kilden.** Kollegaen advarede om, at build'ets egen
+      validering fanger flere af sabotagerne, så prøven aldrig når at køre — så havde jeg
+      kun bevist vagten og ikke prøven. Fire sabotager på den udgivne YAML: alle røde.
+      Og fire på build'et: alle fyrer med den rigtige besked.
+- [x] **Rækkefølge-kontrollen er guardet.** `index()` på noget, der mangler, er ikke et
+      svar. Begge led bevises at findes, før positionerne sammenlignes — ellers ville
+      kontrollen bestå netop den dag, låsen var væk.
+- [x] **Beanledger v30's regel er skiftet ud, ikke slettet.** `rm -rf app` var der, for at
+      filer slettet i en ny udgave ikke blev liggende. At flytte hele den gamle app væk gør
+      det samme uden vinduet — og build'et håndhæver nu dét i stedet.
+
 ## Efter v22 · Serveren henter sin egen kode (2026-09-03)
 
 - [x] **Designet er dodas (v82/v83), meldt herover — men ikke kopieret blindt.** Tre steder

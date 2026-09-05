@@ -71,6 +71,29 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v24 — »Opdater«-knappen er gjort sikker
+
+- **Rettet, alvorligt:** knappen hentede startsnoren **ubetinget og først** og kørte
+  `kilde.js` bagefter. Hvert tryk nedgraderede altså tovo til runens udgave og hentede den
+  så frem igen — og slog nettet fejl i andet trin, blev appen liggende på den gamle udgave
+  uden at nogen fik det at vide. `kilde.js`-grenen ligger nu først.
+- **Rettet:** scriptet pakkede ud i `/tmp` og kørte `rm -rf app` før `mv`. Et `mv` fra
+  `/tmp` er en **kopi** over to filsystemer og kan afbrydes på midten, og `rm -rf app`
+  efterlod et vindue helt uden `app/` — og dermed uden `kilde.js` til at redde sig selv.
+  Nu pakkes der ud ved siden af `app/`, og den gamle app **flyttes** væk i stedet for at
+  slettes, så `startup`-redningen også dækker denne vej.
+- **Ny lås.** Knappen kan trykkes to gange, og de to kørsler delte arbejdsmappe.
+  `mkdir .tovo-laas` er atomisk, ligger om **hele** scriptet, og en `trap` frigiver den —
+  en lås, der overlever en netværksfejl, ville gøre knappen død for altid. `startup` rydder
+  en strandet lås, fordi `trap` ikke når at køre ved et hårdt drab.
+- **Knappen genstarter ikke serveren.** Den skifter filer; serveren kører videre på den
+  gamle kode. Scriptet siger det nu i en ramme til sidst, og en prøve holder beskeden på
+  plads.
+- **8 nye prøver**, der kører panelets **eget** script hentet ud af den udgivne YAML — ikke
+  en afskrift. Den vigtigste starter to kørsler samtidig mod en forsinket server og kræver,
+  at præcis én kommer igennem.
+- Fejlene blev meldt fra Sagu v48, hvor de tog appen ned i ti timer.
+
 ### v23 — en genstart er opdateringen
 
 - **Serveren henter selv sin kode.** `app/kilde.js` kører fra runens `startup` før serveren

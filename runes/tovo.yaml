@@ -6,7 +6,7 @@ gameskill:
     kan klikkes fra OneNote, og opgaver kan importeres fra Microsoft Planner uden at miste estimater eller registreret tid.
     Egen SQLite-database, ingen eksterne afhaengigheder.
   author: andreas
-  version: 23
+  version: 24
   icon: app
   docker:
     image: '{{NODE_IMAGE}}'
@@ -29,46 +29,53 @@ gameskill:
     hint: Tom = hent nyeste udgivelse fra GitHub ved hver genstart. Et tal (fx 22) laaser til praecis den udgave.
   install:
     image: '{{NODE_IMAGE}}'
-    script: "set -eu\necho \"Installerer tovo v23 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra GitHub\
-      \ ...\"\nrm -rf /tmp/tovo-hent\nmkdir -p /tmp/tovo-hent\nnode -e 'const https=require(\"https\"),zlib=require(\"zlib\"\
-      );const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v23\";function d(m){console.error(\"[fejl]\
+    script: "set -eu\necho \"Installerer tovo v24 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra GitHub\
+      \ ...\"\nrm -rf .tovo-ny .tovo-gammel\nmkdir -p .tovo-ny\nnode -e 'const https=require(\"https\"),zlib=require(\"zlib\"\
+      );const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v24\";function d(m){console.error(\"[fejl]\
       \ \"+m);console.error(\"Adresse: \"+U);console.error(\"GitHub svarer 404 BAADE naar adressen ikke findes OG naar der\
       \ ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.\");process.exit(1);}function hent(u,n){https.get(u,{headers:{\"\
       user-agent\":\"tovo-installer\"}},(r)=>{if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){if(n<=0)return d(\"\
       for mange omdirigeringer\");r.resume();return hent(new URL(r.headers.location,u).toString(),n-1);}if(r.statusCode!==200)return\
       \ d(\"GitHub svarede \"+r.statusCode);const g=zlib.createGunzip();g.on(\"error\",(e)=>d(\"arkivet kunne ikke pakkes\
       \ ud: \"+e.message));r.pipe(g).pipe(process.stdout);}).on(\"error\",(e)=>d(\"kunne ikke naa GitHub: \"+e.message));}hent(U,3);'\
-      \ > /tmp/tovo-hent/app.tar\ntar x -C /tmp/tovo-hent -f /tmp/tovo-hent/app.tar\n\n# Mappenavnet i et GitHub-arkiv er\
-      \ <repo>-<ref uden v>, og arkivet\n# begynder med en pax_global_header-post. Ingen af delene gaettes:\n# find den app-mappe,\
-      \ der FINDES.\nNY=$(find /tmp/tovo-hent -maxdepth 2 -type d -name app | head -n 1)\nif [ -z \"$NY\" ] || [ ! -f \"$NY/server.js\"\
-      \ ]; then\n  echo \"[fejl] arkivet fra GitHub indeholder ingen app/server.js\"\n  exit 1\nfi\nrm -rf app\nmv \"$NY\"\
-      \ app\nrm -rf /tmp/tovo-hent\n\necho \"Filer udpakket:\"\nls -1 app app/public\necho \"Klar. Start serveren i panelet.\"\
-      \n"
+      \ > .tovo-ny/app.tar\ntar x -C .tovo-ny -f .tovo-ny/app.tar\nrm -f .tovo-ny/app.tar\n\n# Mappenavnet i et GitHub-arkiv\
+      \ er <repo>-<ref uden v>, og arkivet\n# begynder med en pax_global_header-post. Ingen af delene gaettes:\n# find den\
+      \ app-mappe, der FINDES.\nNY=$(find .tovo-ny -maxdepth 2 -type d -name app | head -n 1)\nif [ -z \"$NY\" ] || [ ! -f\
+      \ \"$NY/server.js\" ]; then\n  echo \"[fejl] arkivet fra GitHub indeholder ingen app/server.js\"\n  exit 1\nfi\nif [\
+      \ -d app ]; then mv app .tovo-gammel; fi\nmv \"$NY\" app\nrm -rf .tovo-ny .tovo-gammel\n\necho \"Filer udpakket:\"\n\
+      ls -1 app app/public\necho \"Klar. Start serveren i panelet.\"\n"
   update:
     image: '{{NODE_IMAGE}}'
     label: Opdater tovo
-    script: "set -eu\necho \"Opdaterer tovo til v23 ...\"\necho \"Node: $(node --version)\"\n\necho \"Henter app-koden fra\
-      \ GitHub ...\"\nrm -rf /tmp/tovo-hent\nmkdir -p /tmp/tovo-hent\nnode -e 'const https=require(\"https\"),zlib=require(\"\
-      zlib\");const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v23\";function d(m){console.error(\"\
+    script: "set -eu\necho \"Opdaterer tovo ...\"\necho \"Node: $(node --version)\"\n\n# Atomisk. To tryk paa knappen med\
+      \ sekunders mellemrum er set i\n# praksis (Sagu v48), og de to koersler delte arbejdsmappe.\nif ! mkdir .tovo-laas 2>/dev/null;\
+      \ then\n  echo \"[fejl] en anden opdatering er allerede i gang.\"\n  echo \"Vent til den er faerdig, eller genstart\
+      \ tovo og proev igen.\"\n  exit 1\nfi\ntrap 'rm -rf .tovo-laas .tovo-ny' EXIT INT TERM\n\nif [ -f app/kilde.js ]; then\n\
+      \  echo \"Henter nyeste udgave ...\"\n  K=\"{{KODE_VERSION}}\"\n  case \"$K\" in\n    '') : ;;\n    seneste|latest|[0-9]*)\
+      \ : ;;\n    *) K=\"${KODE_VERSION:-}\" ;;\n  esac\n  KODE_VERSION=\"$K\" node app/kilde.js\nelse\n  echo \"Henter app-koden\
+      \ fra GitHub ...\"\n  rm -rf .tovo-ny .tovo-gammel\n  mkdir -p .tovo-ny\n  node -e 'const https=require(\"https\"),zlib=require(\"\
+      zlib\");const U=\"https://codeload.github.com/andreasdinesen/tovo/tar.gz/refs/tags/v24\";function d(m){console.error(\"\
       [fejl] \"+m);console.error(\"Adresse: \"+U);console.error(\"GitHub svarer 404 BAADE naar adressen ikke findes OG naar\
       \ der ikke er adgang - tjek at taggen er pushet, og at repoet er offentligt.\");process.exit(1);}function hent(u,n){https.get(u,{headers:{\"\
       user-agent\":\"tovo-installer\"}},(r)=>{if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){if(n<=0)return d(\"\
       for mange omdirigeringer\");r.resume();return hent(new URL(r.headers.location,u).toString(),n-1);}if(r.statusCode!==200)return\
       \ d(\"GitHub svarede \"+r.statusCode);const g=zlib.createGunzip();g.on(\"error\",(e)=>d(\"arkivet kunne ikke pakkes\
       \ ud: \"+e.message));r.pipe(g).pipe(process.stdout);}).on(\"error\",(e)=>d(\"kunne ikke naa GitHub: \"+e.message));}hent(U,3);'\
-      \ > /tmp/tovo-hent/app.tar\ntar x -C /tmp/tovo-hent -f /tmp/tovo-hent/app.tar\n\n# Mappenavnet i et GitHub-arkiv er\
-      \ <repo>-<ref uden v>, og arkivet\n# begynder med en pax_global_header-post. Ingen af delene gaettes:\n# find den app-mappe,\
-      \ der FINDES.\nNY=$(find /tmp/tovo-hent -maxdepth 2 -type d -name app | head -n 1)\nif [ -z \"$NY\" ] || [ ! -f \"$NY/server.js\"\
-      \ ]; then\n  echo \"[fejl] arkivet fra GitHub indeholder ingen app/server.js\"\n  exit 1\nfi\nrm -rf app\nmv \"$NY\"\
-      \ app\nrm -rf /tmp/tovo-hent\n\nif [ -f app/kilde.js ]; then\n  echo \"Henter nyeste udgave ...\"\n  K=\"{{KODE_VERSION}}\"\
-      \n  case \"$K\" in\n    '') : ;;\n    seneste|latest|[0-9]*) : ;;\n    *) K=\"${KODE_VERSION:-}\" ;;\n  esac\n  KODE_VERSION=\"\
-      $K\" node app/kilde.js || echo \"[kode] advarsel: kunne ikke hente nyeste\"\nfi\n\necho \"App-filerne er skiftet ud.\
-      \ Databasen i /data er uroert.\"\necho \"Skemaet opdateres automatisk, naar serveren starter.\"\n"
+      \ > .tovo-ny/app.tar\n  tar x -C .tovo-ny -f .tovo-ny/app.tar\n  rm -f .tovo-ny/app.tar\n\n  # Mappenavnet i et GitHub-arkiv\
+      \ er <repo>-<ref uden v>, og arkivet\n  # begynder med en pax_global_header-post. Ingen af delene gaettes:\n  # find\
+      \ den app-mappe, der FINDES.\n  NY=$(find .tovo-ny -maxdepth 2 -type d -name app | head -n 1)\n  if [ -z \"$NY\" ] ||\
+      \ [ ! -f \"$NY/server.js\" ]; then\n    echo \"[fejl] arkivet fra GitHub indeholder ingen app/server.js\"\n    exit\
+      \ 1\n  fi\n  if [ -d app ]; then mv app .tovo-gammel; fi\n  mv \"$NY\" app\n  rm -rf .tovo-ny .tovo-gammel\nfi\n\necho\
+      \ \"App-filerne er skiftet ud. Databasen i /data er uroert.\"\necho \"Skemaet opdateres automatisk, naar serveren starter.\"\
+      \necho \"\"\necho \"============================================\"\necho \"  GENSTART TOVO NU.\"\necho \"  Filerne er\
+      \ skiftet ud, men serveren koerer\"\necho \"  stadig den gamle kode, indtil den genstartes.\"\necho \"============================================\"\
+      \n"
   startup:
     command: "if [ ! -f app/server.js ] && [ -f .tovo-gammel/server.js ]; then\n  rm -rf app\n  mv .tovo-gammel app\n  echo\
-      \ \"[kode] app/ sat tilbage efter en afbrudt udskiftning\"\nfi\nif [ -f app/kilde.js ]; then\n  node app/kilde.js ||\
-      \ echo \"[kode] advarsel: opdateringen kunne ikke koeres\"\nelse\n  echo \"[kode] denne udgave kan ikke hente sin egen\
-      \ kode \"\n  echo \"[kode] - brug \\\"Opdater tovo\\\" i panelet for at komme videre\"\nfi\nif node -e \"require('node:sqlite')\"\
+      \ \"[kode] app/ sat tilbage efter en afbrudt udskiftning\"\nfi\nif [ -d .tovo-laas ]; then\n  rm -rf .tovo-laas .tovo-ny\n\
+      \  echo \"[kode] en strandet opdateringslaas er ryddet\"\nfi\nif [ -f app/kilde.js ]; then\n  node app/kilde.js || echo\
+      \ \"[kode] advarsel: opdateringen kunne ikke koeres\"\nelse\n  echo \"[kode] denne udgave kan ikke hente sin egen kode\
+      \ \"\n  echo \"[kode] - brug \\\"Opdater tovo\\\" i panelet for at komme videre\"\nfi\nif node -e \"require('node:sqlite')\"\
       \ >/dev/null 2>&1; then\n  exec node app/server.js\nelse\n  exec node --experimental-sqlite app/server.js\nfi\n"
     done_regex: tovo lytter
     stop_timeout: 30

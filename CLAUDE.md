@@ -136,6 +136,28 @@ udgivelse er at skrive tallet og genstarte; frem igen er at tømme feltet.
 ikke længere. Vejen videre er panelets »Opdater tovo«. Modulet advarer, før det sker, og
 startup-kommandoen siger det ved hver opstart i stedet for at kaste et stakspor.
 
+## »Opdater tovo«-knappen
+
+Panelets `app-update` skifter **filer** og **genstarter ikke serveren** — `restart` er et
+separat endpoint. Uden en besked kører serveren videre på den gamle kode oven på nye filer.
+Sagu lå ti timer sådan. Beskeden står derfor sidst i scriptet, i en ramme, og en prøve
+holder den på plads.
+
+Fire regler, som build'et håndhæver — de er alle betalt for én gang:
+
+- **`kilde.js`-grenen først, startsnoren i `else`.** Omvendt nedgraderer hvert tryk appen
+  til runens udgave og henter den frem igen; fejler andet trin, bliver den liggende.
+- **Aldrig `/tmp`.** `mv` mellem to filsystemer er en kopi, der kan afbrydes på midten.
+  Pak ud ved siden af `app/`.
+- **Aldrig `rm -rf app`.** Flyt den gamle app til `.tovo-gammel` i stedet: samme virkning
+  (slettede filer bliver ikke liggende, Beanledger v30), men uden et vindue uden `app/` —
+  og `startup`-redningen dækker så også denne vej.
+- **Låsen om hele scriptet.** `mkdir` er atomisk; `[ -d ]` + `mkdir` har et hul. En `trap`
+  skal frigive den, og `startup` rydder en strandet lås.
+
+`tests/opdatering.test.mjs` kører panelets **eget** script, hentet ud af den udgivne YAML.
+En afskrift ville kun bevise, at afskriften er rigtig.
+
 ## Payload-budget
 
 Install-scriptet **henter** app-koden i stedet for at bære den (`HENT_FRA_GITHUB = True` i

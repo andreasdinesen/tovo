@@ -80,7 +80,7 @@ GITHUB_REPO = 'tovo'
 # RUNE_VERSION er ogsaa den tag, install-scriptet henter foerste gang. Den
 # behoever ikke vaere den nyeste; foerste opstart henter alligevel det, der
 # staar i KODE_VERSION. Den skal bare vaere en udgave, der KAN starte.
-RUNE_VERSION = 23
+RUNE_VERSION = 24
 
 
 def tarball_url(version):
@@ -425,29 +425,43 @@ def henter(version):
 def hent_krop(version):
     """De linjer, install og update har TILFAELLES, naar koden hentes.
 
-    Der pakkes ALTID ud i en frisk mappe, som byttes ind - saa kan en halv
-    hentning aldrig efterlade et halvt app/. `rm -rf app` staar med, fordi tar
-    overskriver, men ikke fjerner filer, der er slettet i en ny version
-    (Beanledger v30). Datamappen roeres ikke: alt midlertidigt ligger i /tmp.
+    Det her er den vej, der KUN bruges, foer `app/kilde.js` findes - altsaa
+    praecis den ene opgradering, hele mekanikken handler om. Den skal derfor
+    vaere lige saa forsigtig som kilde.js, og var det ikke: Sagu laa nede i ti
+    timer paa de tre fejl herunder (meldt fra Sagu v48).
+
+    1. **Ingen /tmp.** `mv` mellem to filsystemer er en KOPI, og en kopi kan
+       afbrydes paa midten. To `rename` inden for samme filsystem kan ikke.
+       Derfor pakkes der ud ved siden af app/.
+    2. **`rm -rf app` er vaek.** Den efterlod et vindue helt uden app/ - og
+       dermed uden kilde.js til at redde sig selv. Startup-redningen hjalp
+       ikke: den leder efter `.tovo-gammel`, som den vej aldrig lavede.
+    3. **Den gamle app FLYTTES vaek** frem for at slettes. Det loeser ogsaa
+       det, `rm -rf app` var der for: filer, der er slettet i en ny udgave,
+       bliver ikke liggende (Beanledger v30). Og nu daekker startup-redningen
+       ogsaa denne vej.
+
+    Datamappen roeres ikke.
     """
     return (
         'echo "Henter app-koden fra GitHub ..."\n'
-        'rm -rf /tmp/tovo-hent\n'
-        'mkdir -p /tmp/tovo-hent\n'
-        f"node -e '{henter(version)}' > /tmp/tovo-hent/app.tar\n"
-        'tar x -C /tmp/tovo-hent -f /tmp/tovo-hent/app.tar\n'
+        'rm -rf .tovo-ny .tovo-gammel\n'
+        'mkdir -p .tovo-ny\n'
+        f"node -e '{henter(version)}' > .tovo-ny/app.tar\n"
+        'tar x -C .tovo-ny -f .tovo-ny/app.tar\n'
+        'rm -f .tovo-ny/app.tar\n'
         '\n'
         '# Mappenavnet i et GitHub-arkiv er <repo>-<ref uden v>, og arkivet\n'
         '# begynder med en pax_global_header-post. Ingen af delene gaettes:\n'
         '# find den app-mappe, der FINDES.\n'
-        'NY=$(find /tmp/tovo-hent -maxdepth 2 -type d -name app | head -n 1)\n'
+        'NY=$(find .tovo-ny -maxdepth 2 -type d -name app | head -n 1)\n'
         'if [ -z "$NY" ] || [ ! -f "$NY/server.js" ]; then\n'
         '  echo "[fejl] arkivet fra GitHub indeholder ingen app/server.js"\n'
         '  exit 1\n'
         'fi\n'
-        'rm -rf app\n'
+        'if [ -d app ]; then mv app .tovo-gammel; fi\n'
         'mv "$NY" app\n'
-        'rm -rf /tmp/tovo-hent\n'
+        'rm -rf .tovo-ny .tovo-gammel\n'
     )
 
 
@@ -482,54 +496,102 @@ def install_script(version, payload):
 
 
 def opdater_script(version, payload):
-    """update:-blokken: skriver app-filerne igen og lader /data staa.
+    """Panelets »Opdater tovo«-knap.
 
-    `rm -rf app` FOERST: tar overskriver, men fjerner ikke filer, der er
-    slettet i en ny version - uden det bliver de liggende for evigt
-    (Beanledger v30)."""
+    ── Knappen genstarter IKKE serveren ──────────────────────────────────────
+
+    Panelets app-update svarer 202 og skifter FILER. Serveren koerer videre paa
+    den gamle kode, indtil nogen genstarter den. Sagu laa ti timer i den
+    tilstand, fordi ingen sagde det. Derfor rammen til sidst - og en proeve,
+    der holder den paa plads.
+
+    ── Raekkefoelgen er hele forskellen ──────────────────────────────────────
+
+    `kilde.js`-grenen skal vaere FOERST. Stod startsnoren foerst og ubetinget
+    (som den gjorde i v23), nedgraderede hvert tryk paa knappen tovo til
+    startsnorens udgave og hentede den saa frem igen. Slog nettet fejl i andet
+    trin, blev appen liggende paa den gamle udgave - stille. Det var den
+    nedgradering, doda advarede om; her skete den hver gang.
+
+    ── Laasen ligger om HELE scriptet ────────────────────────────────────────
+
+    Ikke inde i else-grenen. Fra nu af er kilde.js-grenen den almindelige, og
+    to samtidige kilde.js kan bytte app/ ud under hinanden. En laas, der kun
+    beskytter den gren, der snart aldrig bruges, er ingen laas.
+
+    `mkdir` og ikke `[ -d ]` + `mkdir`: mkdir er atomisk paa alle filsystemer,
+    og tochecks-moensteret har et hul imellem sig. `trap` frigiver den, fordi
+    en fejlet hentning er den ALMINDELIGE fejl - en laas, der overlever den,
+    goer knappen doed for altid.
+    """
+    besked = (
+        'echo ""\n'
+        'echo "============================================"\n'
+        'echo "  GENSTART TOVO NU."\n'
+        'echo "  Filerne er skiftet ud, men serveren koerer"\n'
+        'echo "  stadig den gamle kode, indtil den genstartes."\n'
+        'echo "============================================"\n'
+    )
+    laas = (
+        '# Atomisk. To tryk paa knappen med sekunders mellemrum er set i\n'
+        '# praksis (Sagu v48), og de to koersler delte arbejdsmappe.\n'
+        'if ! mkdir .tovo-laas 2>/dev/null; then\n'
+        '  echo "[fejl] en anden opdatering er allerede i gang."\n'
+        '  echo "Vent til den er faerdig, eller genstart tovo og proev igen."\n'
+        '  exit 1\n'
+        'fi\n'
+        "trap 'rm -rf .tovo-laas .tovo-ny' EXIT INT TERM\n"
+    )
     if HENT_FRA_GITHUB:
         return (
             'set -eu\n'
-            f'echo "Opdaterer tovo til v{version} ..."\n'
+            'echo "Opdaterer tovo ..."\n'
             'echo "Node: $(node --version)"\n'
             '\n'
-            + hent_krop(version)
+            + laas
             + '\n'
-            # Findes kilde.js, er DEN facit: den kender KODE_VERSION og henter
-            # nyeste. Uden det her trin ville knappen hente STARTSNORENS tag
-            # oven i en nyere app - en nedgradering, ingen bad om.
-            #
-            # `{{KODE_VERSION}}` bliver templatet ind af panelet, HVIS panelet
-            # templater variabler i script-TEKST. Det er ikke bevist (kun at de
-            # naar frem som env til startup). Derfor case'en: ligner det ikke en
-            # gyldig vaerdi, er skabelonen ikke blevet erstattet, og saa laeses
-            # env i stedet. En laasning maa ikke kunne tabes paa en formodning.
+            # kilde.js FOERST. Den kender KODE_VERSION og henter nyeste; den
+            # kan ikke fejle udad (alt i den ender med exit 0).
             'if [ -f app/kilde.js ]; then\n'
             '  echo "Henter nyeste udgave ..."\n'
+            # `{{KODE_VERSION}}` templates ind af panelet, HVIS panelet
+            # templater variabler i script-TEKST. Det er ikke bevist - kun at
+            # de naar frem som env til startup. Ligner vaerdien ikke noget
+            # gyldigt, er skabelonen ikke erstattet, og saa laeses env.
             '  K="{{KODE_VERSION}}"\n'
             '  case "$K" in\n'
             "    '') : ;;\n"
             '    seneste|latest|[0-9]*) : ;;\n'
             '    *) K="${KODE_VERSION:-}" ;;\n'
             '  esac\n'
-            '  KODE_VERSION="$K" node app/kilde.js || echo "[kode] advarsel: kunne ikke hente nyeste"\n'
-            'fi\n'
+            '  KODE_VERSION="$K" node app/kilde.js\n'
+            'else\n'
+            # Kun foer v23. Herfra klarer kilde.js resten.
+            + ''.join(f'  {l}\n' if l.strip() else '\n'
+                      for l in hent_krop(version).split('\n')[:-1])
+            + 'fi\n'
             '\n'
             'echo "App-filerne er skiftet ud. Databasen i /data er uroert."\n'
             'echo "Skemaet opdateres automatisk, naar serveren starter."\n'
+            + besked
         )
     linjer = textwrap.wrap(payload, 100)
     return (
         'set -eu\n'
         f'echo "Opdaterer tovo til v{version} ..."\n'
         'echo "Node: $(node --version)"\n'
-        'rm -rf app\n'
+        '\n'
+        + laas
+        + '\n'
+        'if [ -d app ]; then mv app .tovo-gammel; fi\n'
         f"node -e '{DEKODER}' <<'{HEREDOC}' | tar x\n"
         + '\n'.join(linjer) + '\n'
         f'{HEREDOC}\n'
+        'rm -rf .tovo-gammel\n'
         '\n'
         'echo "App-filerne er skiftet ud. Databasen i /data er uroert."\n'
         'echo "Skemaet opdateres automatisk, naar serveren starter."\n'
+        + besked
     )
 
 
@@ -596,6 +658,15 @@ def byg_yaml(version, rune_version, payload):
                         '  rm -rf app\n'
                         '  mv .tovo-gammel app\n'
                         '  echo "[kode] app/ sat tilbage efter en afbrudt udskiftning"\n'
+                        'fi\n'
+                        # En strandet laas. `trap` naar ikke at koere ved et
+                        # haardt drab, og en laas, der bliver liggende, goer
+                        # knappen doed for altid. Prisen er, at en opdatering,
+                        # der koerer praecis mens appen starter, mister sin
+                        # laas - mindre end en knap, der aldrig virker igen.
+                        'if [ -d .tovo-laas ]; then\n'
+                        '  rm -rf .tovo-laas .tovo-ny\n'
+                        '  echo "[kode] en strandet opdateringslaas er ryddet"\n'
                         'fi\n'
                         # Findes kilde.js ikke, er vi laast til en udgave fra
                         # FOER v23. Uden `if` kaster node et stakspor i panelets
@@ -665,15 +736,51 @@ def byg_yaml(version, rune_version, payload):
             # Her SKAL `rm -rf app` staa i begge: ombytningen af den friske
             # mappe er det, der goer, at en halv hentning ikke efterlader et
             # halvt app/.
-            if 'rm -rf app' not in script:
-                fejl(f'{blok}-scriptet mangler `rm -rf app` - slettede filer '
-                     'ville blive liggende')
+            # Foer stod her `rm -rf app`, saa filer slettet i en ny udgave
+            # ikke blev liggende (Beanledger v30). Den efterlod et vindue helt
+            # uden app/ og tog Sagu ned i ti timer. At FLYTTE hele den gamle
+            # app vaek loeser det samme uden vinduet - men reglen skal
+            # skiftes ud, ikke slettes, ellers er Beanledgers laerdom vaek.
+            if 'mv app .tovo-gammel' not in script:
+                fejl(f'{blok}-scriptet flytter ikke den gamle app vaek - '
+                     'slettede filer ville blive liggende')
+            if 'rm -rf app\n' in script or 'rm -rf app ' in script:
+                fejl(f'{blok}-scriptet sletter app/ foer den nye ligger klar - '
+                     'det efterlader et vindue uden app/ og uden kilde.js')
+            if '/tmp' in script:
+                fejl(f'{blok}-scriptet pakker ud i /tmp - `mv` derfra er en '
+                     'KOPI over to filsystemer og kan afbrydes paa midten')
             if HEREDOC in script:
                 fejl(f'{blok}-scriptet baerer stadig en payload')
-    elif 'rm -rf app' in genlaest['gameskill']['install']['script']:
+    elif 'rm -rf app\n' in genlaest['gameskill']['install']['script']:
         fejl('install-scriptet maa ikke slette app/ - det er update-scriptets opgave')
     if '/data' in genlaest['gameskill']['update']['script'].replace('/data er uroert', ''):
         fejl('update-scriptet maa ikke roere /data')
+
+    opd = genlaest['gameskill']['update']['script']
+    # Laasen skal tages FOER forgreningen. En laas inde i else-grenen beskytter
+    # den gren, der snart aldrig bruges.
+    #
+    # BEGGE led skal bevises at findes, FOER positionerne sammenlignes:
+    # `indexOf` giver -1, og -1 er mindre end alt. En raekkefoelge-test paa to
+    # ting, hvoraf den ene mangler, bestaar - netop den dag, laasen er vaek.
+    # (Faelden er meldt fra Sagu v48, hvor den kostede tid.)
+    if 'mkdir .tovo-laas' not in opd:
+        fejl('update-scriptet tager ingen laas - to tryk paa knappen kan '
+             'bytte app/ ud under hinanden')
+    if 'if [ -f app/kilde.js ]' not in opd:
+        fejl('update-scriptet forgrener ikke paa kilde.js')
+    if opd.index('mkdir .tovo-laas') > opd.index('if [ -f app/kilde.js ]'):
+        fejl('update-scriptet tager laasen EFTER forgreningen')
+    if "trap 'rm -rf .tovo-laas" not in opd:
+        fejl('update-scriptet frigiver ikke laasen ved fejl - knappen ville '
+             'vaere doed for altid efter en enkelt netvaerksfejl')
+    # Knappen skifter FILER og genstarter ikke serveren. Beskeden er den eneste
+    # vagt mod at koere videre paa gammel kode (Sagu laa ti timer saadan).
+    if 'GENSTART TOVO NU.' not in opd:
+        fejl('update-scriptet siger ikke, at serveren skal genstartes')
+    if opd.rstrip().split('\n')[-1] != 'echo "============================================"':
+        fejl('genstart-beskeden staar ikke sidst i update-scriptet')
     return tekst
 
 
