@@ -214,6 +214,45 @@ def indsaml_filer():
     return filer
 
 
+# ServiceNow-sagsnumre: <PRAEFIKS>-INC0012345 og lignende.
+#
+# `SAG` er tovos dokumenterede EKSEMPEL-praefiks (som Nordvind er det for
+# kunder), saa det er det eneste, der slipper igennem. Ethvert andet praefiks
+# er et rigtigt sagsnummer fra en rigtig instans.
+#
+# Selve moensteret leaker intet: det beskriver en FORM, ikke en kunde.
+SAGSNUMMER = re.compile(r'\b(?!SAG\b)[A-Z]{2,6}-(?:INC|RITM|RQ|TASK|PRB|CHG|SCTASK)\d{4,}\b')
+
+
+def tjek_kundedata(filer):
+    """Repoet er OFFENTLIGT. Et kundenavn eller sagsnummer maa ikke med.
+
+    Reglen staar oeverst i CLAUDE.md, og den blev alligevel brudt: et rigtigt
+    kundenavn havnede i en dok-kommentar i app/shared/servicenow.js og blev
+    fanget af en grep, jeg tilfaeldigvis koerte foer commit. **En regel, man
+    kender, er ikke en regel, man overholder - kun et tjek er.**
+
+    Vagten kan kun se det, der har en FORM (sagsnumre). Et kundenavn ligner
+    almindelig tekst og kan ikke fanges maskinelt - dér er eneste vaern at
+    bruge Nordvind og Bjergby som eksempler, hver gang.
+    """
+    fund = []
+    # Kun tekst. app/public/ indeholder ogsaa ikoner, og en PNG er ikke utf8.
+    tekst = ('.js', '.css', '.html', '.json', '.md', '.svg', '.webmanifest')
+    for navn, sti in filer:
+        if not navn.endswith(tekst):
+            continue
+        with open(sti, encoding='utf8') as fh:
+            for nr, linje in enumerate(fh, 1):
+                m = SAGSNUMMER.search(linje)
+                if m:
+                    fund.append(f'{navn}:{nr}  {m.group(0)}')
+    if fund:
+        fejl('der staar rigtige sagsnumre i kilderne - repoet er OFFENTLIGT:\n  '
+             + '\n  '.join(fund[:10])
+             + '\n  Brug SAG-INC0000001 og opdigtede kundenavne (Nordvind, Bjergby).')
+
+
 def tjek_kilder(filer):
     for arkivnavn, sti in filer:
         if not sti.endswith(('.js', '.html', '.css', '.webmanifest')):
@@ -793,6 +832,7 @@ def main():
 
     filer = indsaml_filer()
     tjek_kilder(filer)
+    tjek_kundedata(filer)
     tjek_requires(filer)
 
     raw = byg_tar(filer)

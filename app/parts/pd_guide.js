@@ -178,6 +178,16 @@ const GUIDE_DELE = [
             ],
           },
           {
+            titel: 'ServiceNow',
+            lead: 'Your assigned tasks, brought over as they are.',
+            raekker: [
+              ['EXPORT', 'In ServiceNow: open your task list, right-click the header, Export &rarr; CSV. Then pick the file under Projects.'],
+              ['WHAT LANDS WHERE', 'The customer becomes a project, the subcategory a tag, and the ticket number goes in the case number field &mdash; so it shows up in the report.'],
+              ['AGAIN LATER', 'Re-importing updates what changed and creates nothing twice. Your estimates, logged time, notes and columns are never touched.'],
+              ['RESOLVED ONES', 'A ticket that has left your export is listed for you to tick. Nothing closes by itself &mdash; a changed filter would otherwise close work still running.'],
+            ],
+          },
+          {
             titel: 'Calendar and Claude',
             lead: 'Two more doors out.',
             raekker: [

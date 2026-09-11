@@ -641,6 +641,32 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v24 · ServiceNow-import (2026-09-11)
+
+- [x] **CSV og ikke JSON — og det var ikke tæt løb.** JSON-eksporten har 145 felter mod
+      CSV'ens 16, men gemmer referencer som `sys_id`: `company` er en GUID, `state` er `-30`.
+      De kan kun slås op inde i ServiceNow. Listevisningens CSV har dem allerede opløst.
+      **Flere felter er ikke det samme som mere information.**
+- [x] **Den eksisterende CSV-læser fra Toggl-importen kunne bruges ordret** — en rigtig
+      RFC 4180-maskine, så en `description` med linjeskift ikke knækker filen. Verificeret
+      mod en rigtig eksport: 32 rækker, 16 kolonner, alle rækker samme bredde.
+- [x] **Matchet på `snNumber`, ikke `caseNumber`.** De bærer samme værdi, men sagsnummeret
+      kan rettes i hånden — og så ville den samme sag blive oprettet igen. Samme regel som
+      Planners `plannerTaskId`. Set fejle.
+- [ ] → [x] **FEJL FUNDET I BROWSEREN, som alle enhedstests bestod henover.** Kaldsstedet
+      sendte et bart objekt til `/items/bulk`, som gemmer en **hel** opgave — så estimat,
+      note, kolonne og links blev slettet ved hver genimport. `sammenlign` var rigtig hele
+      vejen; fejlen lå i limen. **En enhedstest kan ikke se et forkert kaldssted** (§9d, og
+      nu anden gang i dette projekt). Alt går nu gennem `flet()` og `luk()`, og begge er
+      set fejle.
+- [x] **En forsvunden sag lukkes aldrig af sig selv.** Andreas valgte »spørg mig«, og intet
+      er krydset af på forhånd: en standard er et valg, nogen har taget for én — og et
+      ændret filter i ServiceNow ville ellers lukke arbejde, der stadig løber.
+- [x] **Jeg brød repoets egen regel og skrev et rigtigt kundenavn ind i en dok-kommentar.**
+      Fanget af en grep før commit. Reglen står øverst i CLAUDE.md, jeg nævnte den selv i
+      samme svar — og skrev den alligevel. **En regel, man kender, er ikke en regel, man
+      overholder; kun et tjek er.** Der bør stå en grep i build'et.
+
 ## Efter v24 · Live-opdatering og dagens mål (2026-09-11)
 
 - [x] **SSE og ikke websockets.** Beskeden går kun én vej, og til det er `text/event-stream`

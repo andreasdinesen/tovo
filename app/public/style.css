@@ -2279,6 +2279,17 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 
 /* Stregen paa en dagssoejle i Report: hvad dagen forventedes at give.
    Samme idé som naalen paa Today - tallet faar en maalestok at staa ved. */
+/* ServiceNow-importens forhaandsvisning. */
+.snsum { margin: 14px 0; line-height: 1.9; }
+.snsum strong { font-size: 16px; }
+.snmangler { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.snmangler ul { max-height: 220px; overflow-y: auto; margin: 8px 0; }
+/* Afkrydsningen er et VALG. Rammen goer hele linjen klikbar, saa man ikke
+   skal ramme en 13 px firkant for at lukke en sag. */
+.snvalg { display: flex; gap: 9px; align-items: flex-start; padding: 5px 2px; cursor: pointer; }
+.snvalg input { margin-top: 3px; flex: none; }
+.snvalg code { font-size: 12px; color: var(--muted); }
+
 /* Soejlen og normstregen skal maale fra SAMME boks.
    Laa stregen absolut i `.dag`, ville den regne procenter af paddingboksen,
    mens soejlens hoejde regnes af indholdsboksen - 16 px ved siden af, og en

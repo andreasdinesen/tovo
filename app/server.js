@@ -299,6 +299,11 @@ const FELTER = {
   // en egen kind - de findes ikke uden for deres projekt.
   task: ['title', 'note', 'projectId', 'sectionId', 'parentTaskId', 'estimateMinutes',
     'priority', 'dueDate', 'dueTime', 'status', 'completedAt', 'plannerTaskId',
+    // `snNumber` er ServiceNow-importens matchefelt - dens svar paa
+    // `plannerTaskId`. Sagsnummeret staar OGSAA i `caseNumber`, hvor det kan
+    // ses og rettes; matchet maa aldrig hvile paa et felt, brugeren kan rette,
+    // for saa oprettes den samme sag igen ved naeste import.
+    'snNumber',
     'recurrenceRule', 'links', 'tagIds', 'caseNumber', 'position'],
   comment: ['taskId', 'text'],
   tag: ['name', 'color'],

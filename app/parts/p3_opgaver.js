@@ -344,6 +344,7 @@ async function tegnProjekter() {
       <span class="row" style="gap:8px">
         <button class="btn" id="projektVis">${somListe ? 'Cards' : 'List'}</button>
         <button class="btn" id="plannerImport">Import from Planner</button>
+        <button class="btn" id="snImport">Import from ServiceNow</button>
       </span>
     </div>
     <p class="lead">${esc(BESKRIVELSER.projects)}</p>
@@ -394,6 +395,7 @@ async function tegnProjekter() {
     tegnSide();
   });
   document.getElementById('plannerImport').addEventListener('click', () => aabnPlannerImport(null));
+  document.getElementById('snImport').addEventListener('click', () => aabnServiceNowImport());
   host.querySelectorAll('[data-projekt]').forEach((el) => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('[data-stop]')) return;      // sagslinket er sit eget maal

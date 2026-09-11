@@ -71,7 +71,20 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
-### v25 — den opdaterer sig selv, og dagen får et mål
+### v25 — den opdaterer sig selv, dagen får et mål, og ServiceNow kan importeres
+
+- **Import fra ServiceNow.** Eksportér din opgaveliste som CSV (højreklik på overskriften →
+  Export → CSV) og vælg filen under Projects. Kunden bliver et projekt, underkategorien et
+  tag, og sagsnummeret lander i tovos eget sagsnummerfelt.
+  - **En genimport opretter ikke dubletter.** Der matches på et felt, importen selv ejer —
+    ikke på sagsnummeret, som du kan rette i hånden.
+  - **Estimater, registreret tid, noter, kolonner og links røres aldrig.** Kun titel,
+    sagsnummer, projekt, forfaldsdato, status og tag opdateres.
+  - **En sag, der er forsvundet fra eksporten** (typisk løst i ServiceNow), lukkes ikke af
+    sig selv. Importruden viser dem, og du krydser af — intet er markeret på forhånd.
+  - CSV og ikke JSON: ServiceNows JSON har flere felter, men gemmer referencer som `sys_id`,
+    så kunden er en GUID. Listevisningens CSV har dem allerede opløst til navne.
+
 
 - **Live-opdatering.** Starter du en timer på telefonen, dukker den op på computeren uden
   at nogen trykker opdater. Serveren sender et vink over SSE (`text/event-stream`, nul

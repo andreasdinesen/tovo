@@ -38,7 +38,7 @@ start-links klikkes fra OneNote.
 
 ```sh
 cd ~/ClaudeMacBook/tovo
-node --test tests/*.test.mjs      # 229 tests, ~5 sek.
+node --test tests/*.test.mjs      # 250 tests, ~6 sek.
 python3 build_rune.py             # -> runes/tovo.yaml, rapporterer payload-størrelsen
 ```
 
@@ -84,6 +84,7 @@ app/qr.js              QR-koder som SVG — kopieret ORDRET fra sagu
 app/shared/beregn.js   ALLE udregninger + formatering af varigheder
 app/shared/parse.js    fangst-syntaksen og dansk datosprog (fra doda, ændrede markører)
 app/shared/planner.js  Planner-eksporten: arkvalg, kolonner, fletning (testbar uden browser)
+app/shared/servicenow.js ServiceNow-CSV: kolonner, mapning, fletning (testbar uden browser)
 app/shared/toggl.js    Toggl-CSV (testbar uden browser)
 app/shared/xlsx.js     skriver .xlsx uden pakker (zip med metode 0 + CRC32)
 app/parts/p1_core.js   skal, tema, login, indstillinger  ← APP_VERSION står her
