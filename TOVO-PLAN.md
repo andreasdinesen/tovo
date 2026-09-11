@@ -641,7 +641,7 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
-## Efter v24 · ServiceNow-import (2026-09-11)
+## Efter v25 · ServiceNow-import (2026-09-11)
 
 - [x] **CSV og ikke JSON — og det var ikke tæt løb.** JSON-eksporten har 145 felter mod
       CSV'ens 16, men gemmer referencer som `sys_id`: `company` er en GUID, `state` er `-30`.

@@ -71,7 +71,7 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
-### v25 — den opdaterer sig selv, dagen får et mål, og ServiceNow kan importeres
+### v26 — import fra ServiceNow
 
 - **Import fra ServiceNow.** Eksportér din opgaveliste som CSV (højreklik på overskriften →
   Export → CSV) og vælg filen under Projects. Kunden bliver et projekt, underkategorien et
@@ -85,6 +85,7 @@ videre panelets »Opdater tovo«.
   - CSV og ikke JSON: ServiceNows JSON har flere felter, men gemmer referencer som `sys_id`,
     så kunden er en GUID. Listevisningens CSV har dem allerede opløst til navne.
 
+### v25 — den opdaterer sig selv, og dagen får et mål
 
 - **Live-opdatering.** Starter du en timer på telefonen, dukker den op på computeren uden
   at nogen trykker opdater. Serveren sender et vink over SSE (`text/event-stream`, nul
