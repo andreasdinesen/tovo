@@ -217,7 +217,8 @@
    * @param {object} kilder
    *   items(kind)  -> array af projekter/opgaver/kommentarer/tags
    *   entries()    -> array af tidsposter {id, taskId, startedAt, stoppedAt, source}
-   *   settings()   -> {rounding, normWeekHours, timerWarnHours}
+   *   settings()   -> {rounding, timerWarnHours,
+   *                    expectedDayHours, workdayStart, workdayEnd}
    */
   function opret(kilder) {
     const items = (kind) => kilder.items(kind) || [];
@@ -225,6 +226,87 @@
     const settings = () => kilder.settings() || {};
 
     const afrunding = () => Number(settings().rounding) || 0;
+
+    /*
+     * Forventede timer pr. dag - i minutter.
+     *
+     * DAGEN er tallet, ugen regnes af den (dag x 5). Foer stod det omvendt:
+     * en ugenorm paa 37, som ugerapporten delte med 5. To tal, der kunne
+     * pege hver sin vej, er ét tal for meget - og det er dagen, man
+     * forholder sig til, naar man kigger paa klokken.
+     */
+    const forventetDag = () => Math.round((Number(settings().expectedDayHours) || 0) * 60);
+
+    /*
+     * Arbejdsdagens vindue, som klokkeslaet.
+     *
+     * Bruges KUN til at sige, hvor meget af dagen der er gaaet. Det har intet
+     * med, hvornaar man faktisk registrerer, at goere: registrerer man en
+     * time kl. 22, taeller den fuldt med.
+     */
+    function arbejdsvindue() {
+      const start = String(settings().workdayStart || '08:00');
+      const slut = String(settings().workdayEnd || '16:00');
+      return { start, slut };
+    }
+
+    /**
+     * Dagens stilling: registreret mod forventet - og mod klokken.
+     *
+     * To forskellige sammenligninger, og de svarer paa hver sit spoergsmaal:
+     *
+     *   `forventet`   hele dagens forventning. »Naar jeg det i dag?«
+     *   `forventetNu` den del af forventningen, dagen er naaet til.
+     *                 »Er jeg bagud LIGE NU?«
+     *
+     * Uden den anden ville man staa kl. 9 og vaere 6,4 timer bagud hver
+     * eneste morgen. Tallet er kun meningsfuldt, mens dagen loeber: en
+     * passeret dag er 100 % gaaet, en kommende 0 %.
+     *
+     * @param iso   datoen
+     * @param nu    unix-sekunder (en koerende timer taeller med til `nu`)
+     */
+    /**
+     * Hvor stor en del af arbejdsdagen er gaaet? 0 foer, 1 efter.
+     *
+     * Ligger for sig, fordi BAADE dagsstatus og ugerapporten skal bruge den -
+     * og to udgaver af »hvor langt er vi naaet« ville kunne komme til at
+     * svare forskelligt paa Today og i Report.
+     */
+    function andelAfDagGaaet(iso, nu) {
+      const { start: vStart, slut: vSlut } = arbejdsvindue();
+      const fra = tidspunkt(iso, vStart);
+      const til = tidspunkt(iso, vSlut);
+      /* Et vindue, der ikke giver mening (slut foer start), behandles som et
+         doegn. Saa svarer funktionen stadig - en daarlig indstilling maa ikke
+         kunne faa dagsvisningen til at forsvinde. */
+      const laengde = til > fra ? til - fra : 86400;
+      return Math.min(Math.max((nu - fra) / laengde, 0), 1);
+    }
+
+    function dagsstatus(iso, nu) {
+      const start = tidspunkt(iso, '00:00');
+      const registreret = sumPrDag(start, start + 86400, nu).get(iso) || 0;
+      const forventet = forventetDag();
+      const { start: vStart, slut: vSlut } = arbejdsvindue();
+      const gaaet = andelAfDagGaaet(iso, nu);
+
+      const forventetNu = Math.round(forventet * gaaet);
+      return {
+        iso,
+        registreret,
+        forventet,
+        forventetNu,
+        /* Negativ = bagud. Positiv = foran. */
+        diffNu: registreret - forventetNu,
+        diffDag: registreret - forventet,
+        /* Hvad der mangler for at naa dagens forventning. Aldrig negativ:
+           »minus en halv time tilbage« er ikke en rest. */
+        rest: Math.max(forventet - registreret, 0),
+        andelGaaet: gaaet,
+        vindue: { fra: vStart, til: vSlut },
+      };
+    }
 
     /** Varigheden af ÉN post. En koerende post maales mod nu. */
     function varighed(post, nu) {
@@ -358,7 +440,10 @@
     function ugerapport(fra, til, nu) {
       const s = sumPeriode(fra, til, nu);
       const dage = sumPrDag(fra, til, nu);
-      const norm = Math.round((Number(settings().normWeekHours) || 0) * 60);
+      /* Ugenormen REGNES af dagen - den er ikke sit eget tal. Fem dage,
+         fordi weekender ikke er arbejdsdage; en dagsnorm paa 0 giver en
+         ugenorm paa 0, og saa vises der ingen sammenligning. */
+      const norm = forventetDag() * 5;
 
       // Ad hoc = tid paa opgaver uden projekt. Fordelingen er hele
       // pointen for den, der skal forklare sin uge.
@@ -368,7 +453,7 @@
       // Dage med paafaldende faa timer er dét, der afsloerer glemt
       // registrering. En dag UDEN noget er ikke paafaldende - det kan vaere
       // en fridag; en dag med under en fjerdedel af en normal dag er.
-      const dagsnorm = norm ? Math.round(norm / 5) : 0;
+      const dagsnorm = forventetDag();
       const dagsliste = [];
       for (let t = fra; t < til; t += 86400) {
         const d = new Date(t * 1000);
@@ -379,9 +464,31 @@
           date: iso,
           weekday: d.getDay(),
           minutter,
+          /* Hvad dagen forventedes at give. Weekender forventer intet - saa
+             staar en tom loerdag ikke som et hul, den skal forklares. */
+          norm: hverdag ? dagsnorm : 0,
           tynd: !!(hverdag && dagsnorm && minutter > 0 && minutter < dagsnorm / 2),
           tom: hverdag && minutter === 0,
         });
+      }
+
+      /*
+       * Hvor meget af ugens norm er FORFALDEN lige nu?
+       *
+       * Midt i ugen er det misvisende at holde tre dage op mod en hel uges
+       * norm - man er »17 timer bagud« hver tirsdag. Passerede hverdage
+       * taeller fuldt, dagen i dag efter hvor langt den er naaet, og
+       * kommende dage slet ikke.
+       *
+       * Er perioden helt overstaaet, er `normTilNu` det samme som `norm`, og
+       * saa er de to sammenligninger den samme - som de skal vaere.
+       */
+      let normTilNu = 0;
+      for (const dag of dagsliste) {
+        if (!dag.norm) continue;
+        const dagStart = tidspunkt(dag.date, '00:00');
+        if (nu >= dagStart + 86400) normTilNu += dag.norm;
+        else if (nu > dagStart) normTilNu += Math.round(dag.norm * andelAfDagGaaet(dag.date, nu));
       }
 
       /*
@@ -421,6 +528,10 @@
         // Forskellen mod normtiden er et TAL, ikke en dom. Den kan vaere
         // negativ, og det er i orden.
         overNorm: norm ? s.total - norm : null,
+        /* Normen indtil nu, og forskellen mod den. Det er DET tal, der siger
+           noget midt i en uge. */
+        normTilNu,
+        overNormTilNu: norm ? s.total - normTilNu : null,
         days: dagsliste,
         // Afsluttet i perioden vs. stadig i gang - de to spoergsmaal er
         // forskellige, og rapporten skal svare paa begge.
@@ -564,6 +675,7 @@
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
       sumPeriode, sumPrDag, ugerapport, timeseddel, hullerPaaDag, sagFor, afrunding,
+      dagsstatus, forventetDag, arbejdsvindue,
     };
   }
 

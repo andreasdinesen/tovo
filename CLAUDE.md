@@ -158,6 +158,41 @@ Fire regler, som build'et håndhæver — de er alle betalt for én gang:
 `tests/opdatering.test.mjs` kører panelets **eget** script, hentet ud af den udgivne YAML.
 En afskrift ville kun bevise, at afskriften er rigtig.
 
+## Live-opdatering
+
+`app/live.js` er et SSE-nav. Serveren sender et **vink**, aldrig data; fladen henter så
+`/api/v1/state`, som den allerede gør ved opstart. Bar vinket data, skulle en opgave
+serialiseres et sted mere — og så er der to steder, der skal blive enige.
+
+- **`live.varsko(userId)` kaldes fra SKRIVEFUNKTIONERNE selv** (`gemItem`, `startTimer`,
+  `stopTimer`, `gemPost`, `sletPost`) — aldrig fra kaldsstederne. Samme regel som
+  `user_id`-filteret: én vej ind, så ingen ny rute kan glemme det.
+- **En lytter hører kun sin egen brugers ændringer.** Lytterne er grupperet på `userId`, og
+  der findes ingen vej til at sende til alle. En fælles strøm ville fortælle den ene bruger,
+  hvornår den anden møder og går hjem.
+- **Hjerteslag hvert 25. sekund.** En tunnel lukker en stille forbindelse; Cloudflare giver
+  typisk ~100 s. Uden det dør strømmen tavst, og fladen tror, den lytter.
+- `X-Accel-Buffering: no` og `no-transform`, ellers buffrer et mellemled svaret.
+- Klienten kobles til og fra i **`render()`** — det ene sted, der kører ved både login,
+  logout og opstart.
+- **En optegning venter, hvis en dialog er åben eller markøren er i et felt.** Data hentes
+  altid; det er kun siden, der kan vente. Et vink fra en anden enhed er aldrig vigtigere end
+  det, hånden er i gang med.
+
+## Forventede timer
+
+**Dagen er tallet; ugen regnes af den** (dag × 5 i `beregn.ugerapport`). Før lå sandheden i
+`norm_week_hours`, som blev delt med 5 — to tal, der kunne pege hver sin vej.
+
+`expected_day_hours` har den gamle ugenorm delt med 5 som standard, så en opgradering ikke
+ændrer nogens tal. Klokkeslættene (`workday_start` / `workday_end`) valideres i
+`forventning()` på serveren, ikke i `beregn.js`: et ugyldigt tidspunkt ville blive til NaN
+inde i udregningen og tage hele dagskortet med sig.
+
+To sammenligninger, og de svarer på hver sit: `forventet` er hele dagen, `forventetNu` er
+den del, dagen er nået til. Uden den anden står man kl. 9 og er 6,4 timer bagud hver morgen.
+Samme regel gælder ugen: `normTilNu`.
+
 ## Payload-budget
 
 Install-scriptet **henter** app-koden i stedet for at bære den (`HENT_FRA_GITHUB = True` i

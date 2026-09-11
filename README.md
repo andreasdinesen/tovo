@@ -71,6 +71,31 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v25 — den opdaterer sig selv, og dagen får et mål
+
+- **Live-opdatering.** Starter du en timer på telefonen, dukker den op på computeren uden
+  at nogen trykker opdater. Serveren sender et vink over SSE (`text/event-stream`, nul
+  pakker), og siden henter så det, den allerede henter ved opstart.
+  - **En lytter hører kun sin egen brugers ændringer.** En fælles strøm ville fortælle den
+    ene, hvornår den anden møder og går hjem.
+  - En optegning **venter**, hvis en dialog er åben eller markøren er i et felt. Data hentes
+    altid; det er kun siden, der kan vente.
+  - Forbindelsen kommer selv tilbage, når nettet blinker — `EventSource` gør det, og et
+    hjerteslag hvert 25. sekund holder den i live gennem tunnelen.
+- **Forventede timer pr. dag** under Settings, sammen med arbejdsdagens vindue (08–16 som
+  standard). Timerne er målet; klokkeslættene afgør kun, hvor meget af dagen der er gået —
+  tid registreret kl. 22 tæller fuldt med.
+- **Today** viser en bjælke, der er dagen, og en mark på den, der er klokken. »Bagud« kl. 9
+  om morgenen betyder ingenting, så tovo sammenligner mod det, der faktisk er forfaldet.
+- **Report** holder totalen op mod det forventede — og midt i ugen mod **det forfaldne**, så
+  man ikke er sytten timer bagud hver tirsdag. Hver dagssøjle har en stiplet linje ved
+  dagens forventning.
+- **Dagen er tallet; ugen regnes af den** (dag × 5). Før lå sandheden i en ugenorm, der blev
+  delt med 5 — to tal, der kunne pege hver sin vej. Standarden er den gamle ugenorm ÷ 5, så
+  opgraderingen ikke ændrer nogens tal.
+- **Rettet:** Settings lovede i sin indledning, at man kunne sætte afrunding, normaluge og
+  timer-advarsel. Der fandtes intet felt til dem. Teksten siger nu, hvad siden faktisk kan.
+
 ### v24 — »Opdater«-knappen er gjort sikker
 
 - **Rettet, alvorligt:** knappen hentede startsnoren **ubetinget og først** og kørte

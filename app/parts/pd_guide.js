@@ -189,6 +189,31 @@ const GUIDE_DELE = [
         ],
       },
       {
+        gruppe: 'Your day',
+        emner: [
+          {
+            titel: 'Expected hours',
+            lead: 'What a full day looks like for you.',
+            raekker: [
+              ['SET IT', 'Settings &rarr; Your working day. The week in the Report is that number times five, so there is only one number to keep straight.'],
+              ['TODAY', 'The bar is the day; the mark on it is the clock. Being &ldquo;behind&rdquo; at nine in the morning means nothing, so tovo compares against how far the day has actually got.'],
+              ['THE TIMES', 'Start and end only decide how much of the day has passed. Time logged at ten in the evening still counts in full.'],
+              ['REPORT', 'Mid-week, the total is held up against what has fallen due so far &mdash; not against the whole week. Otherwise you are seventeen hours behind every Tuesday.'],
+            ],
+            go: [['settings', 'Open Settings']],
+          },
+          {
+            titel: 'It updates itself',
+            lead: 'Start a timer on your phone; the computer follows.',
+            raekker: [
+              ['NO REFRESH', 'The server says when something changed, and the page fetches it. Open tovo on two devices and they stay in step.'],
+              ['WHILE YOU TYPE', 'A redraw waits if a dialog is open or the cursor is in a field &mdash; what your hand is doing is never interrupted.'],
+              ['IF THE NET DROPS', 'The connection comes back on its own. Nothing is lost in the meantime; the next update simply catches up.'],
+            ],
+          },
+        ],
+      },
+      {
         gruppe: 'Your account',
         emner: [
           {

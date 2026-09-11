@@ -67,6 +67,12 @@ async function tegnRapport() {
     return ` · ${diff > 0 ? '+' : '−'}${f(Math.abs(diff))} vs. the period before`;
   };
 
+  /* Soejlernes maalestok. `top` er den hoejeste vaerdi, listen skal rumme -
+     ogsaa forventningen, saa normstregen ikke kan ryge uden for kortet paa en
+     uge, hvor der er registreret mindre end en dag. */
+  const top = Math.max(60, ...r.days.map((x) => x.minutter), ...r.days.map((x) => x.norm || 0));
+  const pct = (v, maks) => Math.min(100, Math.round((v / maks) * 100));
+
   host.innerHTML = `<div class="page">
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Report</h1>
@@ -98,7 +104,11 @@ async function tegnRapport() {
         <div style="flex:1"><div class="meta">Ad hoc</div><div class="bigtal">${esc(f(r.adhoc))}</div></div>
         <div style="flex:1"><div class="meta">Completed</div><div class="bigtal">${r.completed}</div></div>
       </div>
-      <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No normal week set'}${esc(forskel(r.total, forrige.total))}</p>
+      <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} expected: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No expected day set'}${esc(forskel(r.total, forrige.total))}</p>
+      ${r.norm && r.normTilNu < r.norm ? `<p class="meta">The period is not over. Of the
+        ${esc(f(r.norm))} expected, ${esc(f(r.normTilNu))} has fallen due so far —
+        <strong>${r.overNormTilNu >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNormTilNu)))}</strong>
+        against that.</p>` : ''}
       ${d.rounding ? `<p class="meta">Rounded to ${d.rounding} minutes for display — the stored times are exact.</p>` : ''}
     </div>
 
@@ -107,7 +117,11 @@ async function tegnRapport() {
       ${r.days.map((dag) => `<div class="dag${dag.tynd ? ' tynd' : ''}${dag.tom ? ' tom' : ''}">
         <div class="meta">${dagsnavn[dag.weekday]} ${esc(dag.date.slice(8))}</div>
         <div class="dagsum">${esc(f(dag.minutter))}</div>
-        <div class="dagbar" style="height:${Math.min(100, Math.round((dag.minutter / Math.max(60, ...r.days.map((x) => x.minutter))) * 100))}%"></div>
+        <div class="dagspor">
+          <div class="dagbar" style="height:${pct(dag.minutter, top)}%"></div>
+          ${dag.norm ? `<div class="dagnorm" title="Expected ${esc(f(dag.norm))}"
+            style="bottom:${pct(dag.norm, top)}%"></div>` : ''}
+        </div>
       </div>`).join('')}
     </div>
     ${r.days.some((x) => x.tynd || x.tom) ? `<p class="meta warnline">${

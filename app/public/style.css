@@ -2277,6 +2277,33 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
    vaerdien ville ramme login, registrering og dubletcheck. */
 #userBtn span, .usermenu-name { text-transform: capitalize; }
 
+/* Stregen paa en dagssoejle i Report: hvad dagen forventedes at give.
+   Samme idé som naalen paa Today - tallet faar en maalestok at staa ved. */
+/* Soejlen og normstregen skal maale fra SAMME boks.
+   Laa stregen absolut i `.dag`, ville den regne procenter af paddingboksen,
+   mens soejlens hoejde regnes af indholdsboksen - 16 px ved siden af, og en
+   reference, der peger skaevt, er vaerre end ingen. Derfor et spor om begge. */
+.dagspor { position: relative; flex: 1; width: 100%; display: flex;
+  align-items: flex-end; justify-content: center; }
+.dagspor .dagbar { width: 60%; }
+.dagnorm { position: absolute; left: 0; right: 0; height: 0;
+  border-top: 1px dashed var(--muted); opacity: .75; pointer-events: none; }
+
+/* Dagens maal. Bjaelken er dagen; naalen er klokken. */
+.dagsmaal { margin: 0 0 18px; padding: 0 0 16px; border-bottom: 1px solid var(--border-soft); }
+.dagsmaal-tal { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 7px; }
+.dagsmaal-tal strong { color: var(--text); font-size: 15px; }
+.dagsmaal-stilling.bagud { color: var(--accent-text); font-weight: 600; }
+.dagsmaal-stilling.foran { color: var(--text); font-weight: 600; }
+/* Naalen skal kunne rage ud over sporet, saa den ses. Derfor to lag:
+   sporet klipper fyldet, mens naalen ligger i den ydre, uklippede boks. */
+.dagsmaal-bjaelke { position: relative; height: 9px; }
+.dagsmaal-spor { height: 100%; border-radius: var(--pill); background: var(--border); overflow: hidden; }
+.dagsmaal-fyld { height: 100%; background: var(--accent); border-radius: var(--pill); transition: width .3s ease; }
+.dagsmaal-naal { position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 2px;
+  background: var(--text); opacity: .65; }
+.dagsmaal-fod { margin: 7px 0 0; }
+
 /* Totrinsbekraeftelse: QR-koden og koderne.
    Hvid baggrund under QR'en uanset tema - en scanner vil have sort paa hvidt,
    og i moerkt tema ville modulerne ellers staa lyst paa moerkt. */

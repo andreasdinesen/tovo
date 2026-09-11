@@ -218,7 +218,8 @@
    * @param {object} kilder
    *   items(kind)  -> array af projekter/opgaver/kommentarer/tags
    *   entries()    -> array af tidsposter {id, taskId, startedAt, stoppedAt, source}
-   *   settings()   -> {rounding, normWeekHours, timerWarnHours}
+   *   settings()   -> {rounding, timerWarnHours,
+   *                    expectedDayHours, workdayStart, workdayEnd}
    */
   function opret(kilder) {
     const items = (kind) => kilder.items(kind) || [];
@@ -226,6 +227,87 @@
     const settings = () => kilder.settings() || {};
 
     const afrunding = () => Number(settings().rounding) || 0;
+
+    /*
+     * Forventede timer pr. dag - i minutter.
+     *
+     * DAGEN er tallet, ugen regnes af den (dag x 5). Foer stod det omvendt:
+     * en ugenorm paa 37, som ugerapporten delte med 5. To tal, der kunne
+     * pege hver sin vej, er ét tal for meget - og det er dagen, man
+     * forholder sig til, naar man kigger paa klokken.
+     */
+    const forventetDag = () => Math.round((Number(settings().expectedDayHours) || 0) * 60);
+
+    /*
+     * Arbejdsdagens vindue, som klokkeslaet.
+     *
+     * Bruges KUN til at sige, hvor meget af dagen der er gaaet. Det har intet
+     * med, hvornaar man faktisk registrerer, at goere: registrerer man en
+     * time kl. 22, taeller den fuldt med.
+     */
+    function arbejdsvindue() {
+      const start = String(settings().workdayStart || '08:00');
+      const slut = String(settings().workdayEnd || '16:00');
+      return { start, slut };
+    }
+
+    /**
+     * Dagens stilling: registreret mod forventet - og mod klokken.
+     *
+     * To forskellige sammenligninger, og de svarer paa hver sit spoergsmaal:
+     *
+     *   `forventet`   hele dagens forventning. »Naar jeg det i dag?«
+     *   `forventetNu` den del af forventningen, dagen er naaet til.
+     *                 »Er jeg bagud LIGE NU?«
+     *
+     * Uden den anden ville man staa kl. 9 og vaere 6,4 timer bagud hver
+     * eneste morgen. Tallet er kun meningsfuldt, mens dagen loeber: en
+     * passeret dag er 100 % gaaet, en kommende 0 %.
+     *
+     * @param iso   datoen
+     * @param nu    unix-sekunder (en koerende timer taeller med til `nu`)
+     */
+    /**
+     * Hvor stor en del af arbejdsdagen er gaaet? 0 foer, 1 efter.
+     *
+     * Ligger for sig, fordi BAADE dagsstatus og ugerapporten skal bruge den -
+     * og to udgaver af »hvor langt er vi naaet« ville kunne komme til at
+     * svare forskelligt paa Today og i Report.
+     */
+    function andelAfDagGaaet(iso, nu) {
+      const { start: vStart, slut: vSlut } = arbejdsvindue();
+      const fra = tidspunkt(iso, vStart);
+      const til = tidspunkt(iso, vSlut);
+      /* Et vindue, der ikke giver mening (slut foer start), behandles som et
+         doegn. Saa svarer funktionen stadig - en daarlig indstilling maa ikke
+         kunne faa dagsvisningen til at forsvinde. */
+      const laengde = til > fra ? til - fra : 86400;
+      return Math.min(Math.max((nu - fra) / laengde, 0), 1);
+    }
+
+    function dagsstatus(iso, nu) {
+      const start = tidspunkt(iso, '00:00');
+      const registreret = sumPrDag(start, start + 86400, nu).get(iso) || 0;
+      const forventet = forventetDag();
+      const { start: vStart, slut: vSlut } = arbejdsvindue();
+      const gaaet = andelAfDagGaaet(iso, nu);
+
+      const forventetNu = Math.round(forventet * gaaet);
+      return {
+        iso,
+        registreret,
+        forventet,
+        forventetNu,
+        /* Negativ = bagud. Positiv = foran. */
+        diffNu: registreret - forventetNu,
+        diffDag: registreret - forventet,
+        /* Hvad der mangler for at naa dagens forventning. Aldrig negativ:
+           »minus en halv time tilbage« er ikke en rest. */
+        rest: Math.max(forventet - registreret, 0),
+        andelGaaet: gaaet,
+        vindue: { fra: vStart, til: vSlut },
+      };
+    }
 
     /** Varigheden af ÉN post. En koerende post maales mod nu. */
     function varighed(post, nu) {
@@ -359,7 +441,10 @@
     function ugerapport(fra, til, nu) {
       const s = sumPeriode(fra, til, nu);
       const dage = sumPrDag(fra, til, nu);
-      const norm = Math.round((Number(settings().normWeekHours) || 0) * 60);
+      /* Ugenormen REGNES af dagen - den er ikke sit eget tal. Fem dage,
+         fordi weekender ikke er arbejdsdage; en dagsnorm paa 0 giver en
+         ugenorm paa 0, og saa vises der ingen sammenligning. */
+      const norm = forventetDag() * 5;
 
       // Ad hoc = tid paa opgaver uden projekt. Fordelingen er hele
       // pointen for den, der skal forklare sin uge.
@@ -369,7 +454,7 @@
       // Dage med paafaldende faa timer er dét, der afsloerer glemt
       // registrering. En dag UDEN noget er ikke paafaldende - det kan vaere
       // en fridag; en dag med under en fjerdedel af en normal dag er.
-      const dagsnorm = norm ? Math.round(norm / 5) : 0;
+      const dagsnorm = forventetDag();
       const dagsliste = [];
       for (let t = fra; t < til; t += 86400) {
         const d = new Date(t * 1000);
@@ -380,9 +465,31 @@
           date: iso,
           weekday: d.getDay(),
           minutter,
+          /* Hvad dagen forventedes at give. Weekender forventer intet - saa
+             staar en tom loerdag ikke som et hul, den skal forklares. */
+          norm: hverdag ? dagsnorm : 0,
           tynd: !!(hverdag && dagsnorm && minutter > 0 && minutter < dagsnorm / 2),
           tom: hverdag && minutter === 0,
         });
+      }
+
+      /*
+       * Hvor meget af ugens norm er FORFALDEN lige nu?
+       *
+       * Midt i ugen er det misvisende at holde tre dage op mod en hel uges
+       * norm - man er »17 timer bagud« hver tirsdag. Passerede hverdage
+       * taeller fuldt, dagen i dag efter hvor langt den er naaet, og
+       * kommende dage slet ikke.
+       *
+       * Er perioden helt overstaaet, er `normTilNu` det samme som `norm`, og
+       * saa er de to sammenligninger den samme - som de skal vaere.
+       */
+      let normTilNu = 0;
+      for (const dag of dagsliste) {
+        if (!dag.norm) continue;
+        const dagStart = tidspunkt(dag.date, '00:00');
+        if (nu >= dagStart + 86400) normTilNu += dag.norm;
+        else if (nu > dagStart) normTilNu += Math.round(dag.norm * andelAfDagGaaet(dag.date, nu));
       }
 
       /*
@@ -422,6 +529,10 @@
         // Forskellen mod normtiden er et TAL, ikke en dom. Den kan vaere
         // negativ, og det er i orden.
         overNorm: norm ? s.total - norm : null,
+        /* Normen indtil nu, og forskellen mod den. Det er DET tal, der siger
+           noget midt i en uge. */
+        normTilNu,
+        overNormTilNu: norm ? s.total - normTilNu : null,
         days: dagsliste,
         // Afsluttet i perioden vs. stadig i gang - de to spoergsmaal er
         // forskellige, og rapporten skal svare paa begge.
@@ -565,6 +676,7 @@
     return {
       varighed, forbrugPaaOpgave, forbrugPaaProjekt, forbrugUdenProjekt, rollupProjekt,
       sumPeriode, sumPrDag, ugerapport, timeseddel, hullerPaaDag, sagFor, afrunding,
+      dagsstatus, forventetDag, arbejdsvindue,
     };
   }
 
@@ -1925,7 +2037,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2275,7 +2387,14 @@ const BESKRIVELSER = {
 /** Fuld optegning. Kun ved login/logout - ellers mister soegefeltet fokus. */
 function render() {
   const root = document.getElementById('root');
-  if (!state.user) { root.innerHTML = gateHtml(); bindGate(); return; }
+  /*
+   * Live-stroemmen kobles til og fra HER, fordi det her er det ene sted, der
+   * koerer ved baade login, logout og opstart. Gjorde man det paa de tre
+   * kaldssteder, ville den fjerde glemme det - og en stroem, der bliver
+   * haengende efter et logud, ville lytte videre paa en fremmeds vegne.
+   */
+  if (!state.user) { stopLive(); root.innerHTML = gateHtml(); bindGate(); return; }
+  startLive();
   root.innerHTML = shellHtml();
   bindShell();
   tegnSide();
@@ -3036,6 +3155,78 @@ function gaaTil(view, opt) {
   if (skifter) tilToppen();
 }
 
+/*
+ * Live-opdatering: serveren siger til, naar noget er aendret.
+ *
+ * Starter man en timer paa telefonen, dukker den op paa computeren uden at
+ * nogen trykker opdater. Serveren sender et VINK, ikke data (se app/live.js);
+ * fladen henter saa `/api/v1/state`, praecis som ved opstart.
+ *
+ * `EventSource` genforbinder selv, naar nettet blinker eller maskinen vaagner
+ * - det er hele grunden til, at det er den og ikke en haandholdt socket.
+ */
+const liveState = { kilde: null, ventende: null, forsoeg: null };
+
+/*
+ * Maa siden tegnes om LIGE NU?
+ *
+ * Nej, hvis der staar en dialog aaben, eller markoeren er i et felt. En
+ * optegning ville kaste det, man var i gang med at skrive, vaek - og et vink
+ * fra en anden enhed er aldrig vigtigere end det, haanden er i gang med.
+ */
+function maaTegneNu() {
+  if (document.querySelector('.modal')) return false;
+  const a = document.activeElement;
+  if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+  if (a && a.isContentEditable) return false;
+  return true;
+}
+
+async function liveOpdater() {
+  /* Data hentes ALTID. Det er kun OPTEGNINGEN af siden, der kan vente:
+     timerbjaelken og taellerne staar i skallen og maa gerne rykke sig, mens
+     man skriver - det er dem, hele oevelsen handler om. */
+  await hentState();
+  tegnTimerBjaelke();
+  opdaterNav();
+
+  if (maaTegneNu()) {
+    clearTimeout(liveState.forsoeg);
+    liveState.forsoeg = null;
+    await tegnSide();
+    return;
+  }
+  /* Optaget. Proev igen om lidt - men kun én ventende gang, saa der ikke
+     hober sig et forsoeg op pr. vink. */
+  clearTimeout(liveState.forsoeg);
+  liveState.forsoeg = setTimeout(() => { liveOpdater(); }, 1500);
+}
+
+function startLive() {
+  if (liveState.kilde || !state.user || typeof EventSource === 'undefined') return;
+  const kilde = new EventSource('/api/v1/stream');
+  liveState.kilde = kilde;
+
+  kilde.addEventListener('aendring', () => {
+    /* Flere aendringer i streg (en import, en bulk) giver flere vink.
+       Vent et oejeblik og hent EN gang. */
+    clearTimeout(liveState.ventende);
+    liveState.ventende = setTimeout(() => { liveOpdater(); }, 250);
+  });
+
+  /* Ingen genforbindelse i haanden: EventSource goer det selv med den
+     `retry`, serveren sendte. At lukke og aabne her ville kappe dens egen
+     tilbagetrapning over og give et stormloeb, naar serveren er nede. */
+}
+
+function stopLive() {
+  if (liveState.kilde) { liveState.kilde.close(); liveState.kilde = null; }
+  clearTimeout(liveState.ventende);
+  clearTimeout(liveState.forsoeg);
+  liveState.ventende = null;
+  liveState.forsoeg = null;
+}
+
 async function genindlaes() {
   await hentState();
   opdaterNav();
@@ -3053,6 +3244,7 @@ async function hentState() {
     state.unassigned = d.unassigned || 0;
     state.counts = d.counts || {};
     state.todayMinutes = d.todayMinutes || 0;
+    state.dayStatus = d.dayStatus || null;
     // Den koerende timer foelger med hvert state-kald, saa bjaelken er rigtig
     // i enhver visning - ogsaa hvis timeren blev startet fra en anden fane.
     timerState.data = d.timer || null;
@@ -3177,6 +3369,25 @@ function tomHtml(view) {
   return `<div class="empty"><p>${esc(tekst || '')}</p></div>`;
 }
 
+/*
+ * De GAELDENDE vaerdier - ikke de gemte.
+ *
+ * `state.settings` indeholder kun det, brugeren selv har sat; standarderne
+ * bor paa serveren (`forventning()`). `dayStatus` er regnet MED dem, saa den
+ * er facit. Uden det ville felterne staa tomme, indtil man havde gemt én
+ * gang - og en tom formular ligner en indstilling, der er slaaet fra.
+ */
+function dagTimerNu() {
+  const s = state.dayStatus;
+  if (s && Number.isFinite(s.forventet)) return Math.round((s.forventet / 60) * 100) / 100;
+  return 7.4;
+}
+
+function vindueNu() {
+  const v = state.dayStatus && state.dayStatus.vindue;
+  return { fra: (v && v.fra) || '08:00', til: (v && v.til) || '16:00' };
+}
+
 async function settingsHtml() {
   const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
   const kal = await api('GET', '/api/v1/ical').catch(() => ({ feed: null, alarm: 15 }));
@@ -3194,8 +3405,8 @@ async function settingsHtml() {
       <h2>What you can set here</h2>
       <p class="meta">How tovo looks, who you are, and what it is connected to. The
         <button class="linkbtn" data-go-guide>Guide</button> explains how the app itself works.</p>
-      <p class="meta">Rounding, the normal week and the timer warning are yours alone —
-        another user on this server has their own.</p>
+      <p class="meta">Your working day is yours alone — another user on this server
+        has their own.</p>
     </div>
 
     <div class="card">
@@ -3212,6 +3423,27 @@ async function settingsHtml() {
         <tr><td><kbd>%</kbd></td><td>Create it and start the timer at once</td></tr>
         <tr><td><kbd>// text</kbd></td><td>Everything after becomes the description</td></tr>
       </table>
+    </div>
+
+    <div class="card">
+      <h2>Your working day</h2>
+      <p class="meta">What a full day of registered time looks like for you. Today and the
+        Report hold what you have logged up against it.</p>
+      <form id="dagForm">
+        <label class="field"><span>Expected hours per day</span>
+          <input class="input" id="dagTimer" type="number" min="0" max="24" step="0.1"
+            value="${esc(String(dagTimerNu()))}"></label>
+        <div class="row">
+          <label class="field" style="flex:1"><span>Workday starts</span>
+            <input class="input" id="dagStart" type="time" value="${esc(vindueNu().fra)}"></label>
+          <label class="field" style="flex:1"><span>ends</span>
+            <input class="input" id="dagSlut" type="time" value="${esc(vindueNu().til)}"></label>
+        </div>
+        <p class="meta">The hours are the target. The times only decide how much of the day
+          has passed — time logged at 22:00 still counts in full.</p>
+        <p class="meta">The week in the Report is this number times five.</p>
+        <button class="btn" type="submit">Save</button>
+      </form>
     </div>
 
     <div class="card">
@@ -3356,6 +3588,27 @@ function bindSettings() {
   document.querySelectorAll('[data-tema]').forEach((el) => {
     el.addEventListener('click', () => { anvendTema(el.dataset.tema); opdaterTemaKnap(); tegnSide(); });
   });
+
+  const dag = document.getElementById('dagForm');
+  if (dag) {
+    dag.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const timer = document.getElementById('dagTimer').value;
+      try {
+        await api('POST', '/api/v1/settings', {
+          expected_day_hours: String(timer),
+          workday_start: document.getElementById('dagStart').value,
+          workday_end: document.getElementById('dagSlut').value,
+        });
+        /* Hentes igen, saa felterne viser det, SERVEREN endte med - ikke det,
+           man tastede. Skriver man 99, svarer serveren med standarden, og saa
+           skal feltet sige det frem for at lade tallet blive staaende. */
+        await hentState();
+        await tegnSide();
+        toast('Your working day is saved.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
 
   const pw = document.getElementById('pwForm');
   if (pw) {
@@ -4443,6 +4696,7 @@ async function tegnIDag() {
     <p class="lead">${esc(BESKRIVELSER.today)}</p>
 
     <div class="card">
+      ${dagsmaalHtml()}
       ${dagskortHtml(p, d)}
     </div>
 
@@ -4480,6 +4734,61 @@ async function tegnIDag() {
  * (`bindOpgaveListe` binder alt med attributten), saa der ikke opstaar to
  * maader at folde paa i samme app.
  */
+/**
+ * Dagens maal: registreret mod forventet - og mod klokken.
+ *
+ * To tal, fordi de svarer paa hver sit spoergsmaal. »3t 30m af 7t 24m« er
+ * dagens regnskab; »30m bagud« er stillingen LIGE NU. Uden det andet stod man
+ * kl. 9 og var 6 timer bagud hver eneste morgen, og saa holder man op med at
+ * kigge paa tallet.
+ *
+ * Naalen paa bjaelken er dér, man burde vaere naaet til nu. Den er hele
+ * pointen: bjaelkens laengde er dagen, naalens plads er klokken.
+ *
+ * Her REGNES intet - `state.dayStatus` kommer fra beregn.js, saa webappen og
+ * MCP siger det samme (§ "Alle udregninger i beregn.js").
+ */
+function dagsmaalHtml() {
+  const s = state.dayStatus;
+  /* Forventet 0 = slaaet fra. Saa vises der ingen sammenligning i stedet for
+     en bjaelke, der altid er fuld eller altid tom. */
+  if (!s || !s.forventet) return '';
+
+  const f = (m) => esc(tovoBeregn.formatVarighed(m));
+  const andel = (m) => Math.min(Math.max((m / s.forventet) * 100, 0), 100);
+
+  /* Under et kvarter fra maalet er ikke »bagud« - det er indenfor. Et tal,
+     der raaber ved fem minutter, laerer man at overse. */
+  let stilling;
+  let klasse = '';
+  if (s.andelGaaet <= 0) {
+    stilling = `starts at ${esc(s.vindue.fra)}`;
+  } else if (Math.abs(s.diffNu) < 15) {
+    stilling = 'on track';
+  } else if (s.diffNu < 0) {
+    stilling = `${f(-s.diffNu)} behind`;
+    klasse = ' bagud';
+  } else {
+    stilling = `${f(s.diffNu)} ahead`;
+    klasse = ' foran';
+  }
+
+  return `<div class="dagsmaal">
+    <div class="dagsmaal-tal meta">
+      <span><strong>${f(s.registreret)}</strong> of ${f(s.forventet)}</span>
+      <span class="dagsmaal-stilling${klasse}">${stilling}</span>
+    </div>
+    <div class="dagsmaal-bjaelke" title="${f(s.registreret)} of ${f(s.forventet)} — the mark is where the day has got to">
+      <div class="dagsmaal-spor"><div class="dagsmaal-fyld" style="width:${andel(s.registreret)}%"></div></div>
+      ${s.andelGaaet > 0 && s.andelGaaet < 1
+        ? `<div class="dagsmaal-naal" style="left:${andel(s.forventetNu)}%"></div>` : ''}
+    </div>
+    <p class="meta dagsmaal-fod">${s.rest
+      ? `${f(s.rest)} left to reach the day · workday ${esc(s.vindue.fra)}–${esc(s.vindue.til)}`
+      : `Day\u2019s target reached · workday ${esc(s.vindue.fra)}–${esc(s.vindue.til)}`}</p>
+  </div>`;
+}
+
 function dagskortHtml(p, d) {
   const total = esc(tovoBeregn.formatVarighed(state.todayMinutes || 0));
   const huller = p.gaps || [];
@@ -6148,6 +6457,12 @@ async function tegnRapport() {
     return ` · ${diff > 0 ? '+' : '−'}${f(Math.abs(diff))} vs. the period before`;
   };
 
+  /* Soejlernes maalestok. `top` er den hoejeste vaerdi, listen skal rumme -
+     ogsaa forventningen, saa normstregen ikke kan ryge uden for kortet paa en
+     uge, hvor der er registreret mindre end en dag. */
+  const top = Math.max(60, ...r.days.map((x) => x.minutter), ...r.days.map((x) => x.norm || 0));
+  const pct = (v, maks) => Math.min(100, Math.round((v / maks) * 100));
+
   host.innerHTML = `<div class="page">
     <div class="row" style="justify-content:space-between;align-items:baseline">
       <h1>Report</h1>
@@ -6179,7 +6494,11 @@ async function tegnRapport() {
         <div style="flex:1"><div class="meta">Ad hoc</div><div class="bigtal">${esc(f(r.adhoc))}</div></div>
         <div style="flex:1"><div class="meta">Completed</div><div class="bigtal">${r.completed}</div></div>
       </div>
-      <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No normal week set'}${esc(forskel(r.total, forrige.total))}</p>
+      <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} expected: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No expected day set'}${esc(forskel(r.total, forrige.total))}</p>
+      ${r.norm && r.normTilNu < r.norm ? `<p class="meta">The period is not over. Of the
+        ${esc(f(r.norm))} expected, ${esc(f(r.normTilNu))} has fallen due so far —
+        <strong>${r.overNormTilNu >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNormTilNu)))}</strong>
+        against that.</p>` : ''}
       ${d.rounding ? `<p class="meta">Rounded to ${d.rounding} minutes for display — the stored times are exact.</p>` : ''}
     </div>
 
@@ -6188,7 +6507,11 @@ async function tegnRapport() {
       ${r.days.map((dag) => `<div class="dag${dag.tynd ? ' tynd' : ''}${dag.tom ? ' tom' : ''}">
         <div class="meta">${dagsnavn[dag.weekday]} ${esc(dag.date.slice(8))}</div>
         <div class="dagsum">${esc(f(dag.minutter))}</div>
-        <div class="dagbar" style="height:${Math.min(100, Math.round((dag.minutter / Math.max(60, ...r.days.map((x) => x.minutter))) * 100))}%"></div>
+        <div class="dagspor">
+          <div class="dagbar" style="height:${pct(dag.minutter, top)}%"></div>
+          ${dag.norm ? `<div class="dagnorm" title="Expected ${esc(f(dag.norm))}"
+            style="bottom:${pct(dag.norm, top)}%"></div>` : ''}
+        </div>
       </div>`).join('')}
     </div>
     ${r.days.some((x) => x.tynd || x.tom) ? `<p class="meta warnline">${
@@ -7776,6 +8099,31 @@ const GUIDE_DELE = [
               ['MCP', 'Claude can search, log time and read the week report — through the same functions the app itself uses, so the numbers cannot drift.'],
             ],
             go: [['settings', 'Open Settings']],
+          },
+        ],
+      },
+      {
+        gruppe: 'Your day',
+        emner: [
+          {
+            titel: 'Expected hours',
+            lead: 'What a full day looks like for you.',
+            raekker: [
+              ['SET IT', 'Settings &rarr; Your working day. The week in the Report is that number times five, so there is only one number to keep straight.'],
+              ['TODAY', 'The bar is the day; the mark on it is the clock. Being &ldquo;behind&rdquo; at nine in the morning means nothing, so tovo compares against how far the day has actually got.'],
+              ['THE TIMES', 'Start and end only decide how much of the day has passed. Time logged at ten in the evening still counts in full.'],
+              ['REPORT', 'Mid-week, the total is held up against what has fallen due so far &mdash; not against the whole week. Otherwise you are seventeen hours behind every Tuesday.'],
+            ],
+            go: [['settings', 'Open Settings']],
+          },
+          {
+            titel: 'It updates itself',
+            lead: 'Start a timer on your phone; the computer follows.',
+            raekker: [
+              ['NO REFRESH', 'The server says when something changed, and the page fetches it. Open tovo on two devices and they stay in step.'],
+              ['WHILE YOU TYPE', 'A redraw waits if a dialog is open or the cursor is in a field &mdash; what your hand is doing is never interrupted.'],
+              ['IF THE NET DROPS', 'The connection comes back on its own. Nothing is lost in the meantime; the next update simply catches up.'],
+            ],
           },
         ],
       },

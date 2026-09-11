@@ -946,6 +946,7 @@ function gemItem(userId, raa, erDelvis) {
               ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, data = excluded.data,
                                             updated_at = excluded.updated_at`)
     .run(id, userId, kind, json, t);
+  live.varsko(userId);
   return Object.assign({}, data, { id, kind, updatedAt: t });
 }
 
@@ -1313,6 +1314,7 @@ function startTimer(userId, taskId, kilde) {
                 VALUES (?,?,?,?,NULL,?,?)`)
       .run(id, userId, taskId, t, '', KILDER.has(kilde) ? kilde : 'timer');
     db.exec('COMMIT');
+    live.varsko(userId);
     return { entry: hentPost(userId, id), stopped: koerende ? hentPost(userId, koerende.id) : null };
   } catch (err) {
     db.exec('ROLLBACK');
@@ -1324,6 +1326,7 @@ function stopTimer(userId) {
   const koerende = koerendePost(userId);
   if (!koerende) return null;
   db.prepare('UPDATE time_entries SET stopped_at = ? WHERE id = ?').run(now(), koerende.id);
+  live.varsko(userId);
   return hentPost(userId, koerende.id);
 }
 
@@ -1349,11 +1352,13 @@ function gemPost(userId, felter) {
                 note = excluded.note`)
     .run(id, userId, taskId, start, stop, str(felter.note, 500),
       KILDER.has(felter.source) ? felter.source : 'manuel');
+  live.varsko(userId);
   return hentPost(userId, id);
 }
 
 function sletPost(userId, id) {
   const r = db.prepare('DELETE FROM time_entries WHERE id = ? AND user_id = ?').run(String(id || ''), userId);
+  if (r.changes > 0) live.varsko(userId);
   return r.changes > 0;
 }
 
@@ -1372,10 +1377,44 @@ function beregnFor(userId) {
     entries: () => hentPoster(userId, {}),
     settings: () => ({
       rounding: Number(getSetting(userId, 'rounding', '0')),
-      normWeekHours: Number(getSetting(userId, 'norm_week_hours', '37')),
       timerWarnHours: Number(getSetting(userId, 'timer_warn_hours', '8')),
+      ...forventning(userId),
     }),
   });
+}
+
+/**
+ * Forventede timer pr. dag og arbejdsdagens vindue.
+ *
+ * **Dagen er tallet; ugen regnes af den** (dag x 5 i `beregn.ugerapport`).
+ * Foer laa sandheden i `norm_week_hours`, som blev delt med 5.
+ *
+ * Standarden for `expected_day_hours` er derfor den GAMLE ugenorm delt med 5.
+ * Saa betyder opgraderingen ingenting for den, der havde sat 37: dagen bliver
+ * 7,4, og ugerapporten viser praecis det samme som foer. Uden det ville alle
+ * pludselig have 0 eller 8 timers forventning, uden at have rort noget.
+ *
+ * Klokkeslaettene valideres HER frem for i beregn.js: et ugyldigt tidspunkt
+ * ville blive til NaN inde i udregningen og tage hele dagsvisningen med sig.
+ * En daarlig indstilling skal give en standard, ikke en tom side.
+ */
+function forventning(userId) {
+  const gammelUge = Number(getSetting(userId, 'norm_week_hours', '37'));
+  const standardDag = Number.isFinite(gammelUge) && gammelUge > 0
+    ? Math.round((gammelUge / 5) * 100) / 100 : 7.4;
+  const raa = Number(getSetting(userId, 'expected_day_hours', String(standardDag)));
+  const dag = Number.isFinite(raa) && raa >= 0 && raa <= 24 ? raa : standardDag;
+
+  const klokkeslaet = (key, standard) => {
+    const v = String(getSetting(userId, key, standard) || '').trim();
+    if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(v)) return standard;
+    return v.length === 4 ? `0${v}` : v;
+  };
+  return {
+    expectedDayHours: dag,
+    workdayStart: klokkeslaet('workday_start', '08:00'),
+    workdayEnd: klokkeslaet('workday_end', '16:00'),
+  };
 }
 
 /** Den koerende timer med alt, en visning skal bruge - inklusive advarslen. */
@@ -2122,6 +2161,12 @@ function godkendMcp(req) {
    kraever intet. Ingen database, intet srv, ingen http (§9d). */
 const totp = require('./totp.js');
 const qr = require('./qr.js');
+/*
+ * Live-stroemmen. `varsko(userId)` kaldes fra SKRIVEFUNKTIONERNE selv - ikke
+ * fra kaldsstederne. Samme regel som `user_id`-filteret: der findes én vej
+ * ind, og saa kan ingen ny rute glemme at sige til.
+ */
+const live = require('./live.js').opret();
 
 const sagu = require('./sagu.js').opret({
   hentUrl: (userId) => getSetting(userId, 'sagu_url', ''),
@@ -2433,6 +2478,15 @@ const ROUTES = {
       // den med i det kald, skallen alligevel laver.
       timer: timerStatus(auth.user.id),
       todayMinutes: beregnFor(auth.user.id).sumPrDag(dagStart(iDag()), dagStart(iDag()) + 86400).get(iDag()) || 0,
+      /* Dagens stilling: registreret mod forventet, og mod klokken.
+         Regnet i beregn.js, saa webappen og MCP giver samme tal. Den baerer
+         ogsaa de gaeldende indstillinger (forventet, vindue), saa fladen
+         ikke skal kende standardvaerdierne. */
+      dayStatus: beregnFor(auth.user.id).dagsstatus(iDag(), now()),
+      /* Hvor mange af BRUGERENS egne faner lytter lige nu. Tallet er til at
+         kunne se, at en lukket fane faktisk ryddes - ellers ville en leak
+         foerst vise sig som en server, der aeder hukommelse over uger. */
+      liveListeners: live.antal(auth.user.id),
     });
   },
 
@@ -2858,6 +2912,22 @@ const ROUTES = {
    *
    * `user_id`-filteret ligger i forespoergslen selv, som alle andre steder.
    */
+  /*
+   * Live-stroemmen. Fladen aabner den ved login og lukker den ved logout.
+   *
+   * `godkend` med cookie: EventSource kan ikke saette headere, saa der er
+   * ingen Bearer-vej herind - og det er fint. En adgangsnoegle er til
+   * maskiner, som ikke sidder og ser paa en skaerm.
+   *
+   * Svaret slutter ALDRIG af sig selv. Derfor ingen sendJson, ingen timeout,
+   * og ingen af de saedvanlige svar-hjaelpere.
+   */
+  'GET /api/v1/stream': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    live.tilslut(req, res, auth.user.id);
+  },
+
   'GET /api/v1/changes': (req, res, ctx) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;

@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 24;
+const APP_VERSION = 25;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -355,7 +355,14 @@ const BESKRIVELSER = {
 /** Fuld optegning. Kun ved login/logout - ellers mister soegefeltet fokus. */
 function render() {
   const root = document.getElementById('root');
-  if (!state.user) { root.innerHTML = gateHtml(); bindGate(); return; }
+  /*
+   * Live-stroemmen kobles til og fra HER, fordi det her er det ene sted, der
+   * koerer ved baade login, logout og opstart. Gjorde man det paa de tre
+   * kaldssteder, ville den fjerde glemme det - og en stroem, der bliver
+   * haengende efter et logud, ville lytte videre paa en fremmeds vegne.
+   */
+  if (!state.user) { stopLive(); root.innerHTML = gateHtml(); bindGate(); return; }
+  startLive();
   root.innerHTML = shellHtml();
   bindShell();
   tegnSide();
@@ -1116,6 +1123,78 @@ function gaaTil(view, opt) {
   if (skifter) tilToppen();
 }
 
+/*
+ * Live-opdatering: serveren siger til, naar noget er aendret.
+ *
+ * Starter man en timer paa telefonen, dukker den op paa computeren uden at
+ * nogen trykker opdater. Serveren sender et VINK, ikke data (se app/live.js);
+ * fladen henter saa `/api/v1/state`, praecis som ved opstart.
+ *
+ * `EventSource` genforbinder selv, naar nettet blinker eller maskinen vaagner
+ * - det er hele grunden til, at det er den og ikke en haandholdt socket.
+ */
+const liveState = { kilde: null, ventende: null, forsoeg: null };
+
+/*
+ * Maa siden tegnes om LIGE NU?
+ *
+ * Nej, hvis der staar en dialog aaben, eller markoeren er i et felt. En
+ * optegning ville kaste det, man var i gang med at skrive, vaek - og et vink
+ * fra en anden enhed er aldrig vigtigere end det, haanden er i gang med.
+ */
+function maaTegneNu() {
+  if (document.querySelector('.modal')) return false;
+  const a = document.activeElement;
+  if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return false;
+  if (a && a.isContentEditable) return false;
+  return true;
+}
+
+async function liveOpdater() {
+  /* Data hentes ALTID. Det er kun OPTEGNINGEN af siden, der kan vente:
+     timerbjaelken og taellerne staar i skallen og maa gerne rykke sig, mens
+     man skriver - det er dem, hele oevelsen handler om. */
+  await hentState();
+  tegnTimerBjaelke();
+  opdaterNav();
+
+  if (maaTegneNu()) {
+    clearTimeout(liveState.forsoeg);
+    liveState.forsoeg = null;
+    await tegnSide();
+    return;
+  }
+  /* Optaget. Proev igen om lidt - men kun én ventende gang, saa der ikke
+     hober sig et forsoeg op pr. vink. */
+  clearTimeout(liveState.forsoeg);
+  liveState.forsoeg = setTimeout(() => { liveOpdater(); }, 1500);
+}
+
+function startLive() {
+  if (liveState.kilde || !state.user || typeof EventSource === 'undefined') return;
+  const kilde = new EventSource('/api/v1/stream');
+  liveState.kilde = kilde;
+
+  kilde.addEventListener('aendring', () => {
+    /* Flere aendringer i streg (en import, en bulk) giver flere vink.
+       Vent et oejeblik og hent EN gang. */
+    clearTimeout(liveState.ventende);
+    liveState.ventende = setTimeout(() => { liveOpdater(); }, 250);
+  });
+
+  /* Ingen genforbindelse i haanden: EventSource goer det selv med den
+     `retry`, serveren sendte. At lukke og aabne her ville kappe dens egen
+     tilbagetrapning over og give et stormloeb, naar serveren er nede. */
+}
+
+function stopLive() {
+  if (liveState.kilde) { liveState.kilde.close(); liveState.kilde = null; }
+  clearTimeout(liveState.ventende);
+  clearTimeout(liveState.forsoeg);
+  liveState.ventende = null;
+  liveState.forsoeg = null;
+}
+
 async function genindlaes() {
   await hentState();
   opdaterNav();
@@ -1133,6 +1212,7 @@ async function hentState() {
     state.unassigned = d.unassigned || 0;
     state.counts = d.counts || {};
     state.todayMinutes = d.todayMinutes || 0;
+    state.dayStatus = d.dayStatus || null;
     // Den koerende timer foelger med hvert state-kald, saa bjaelken er rigtig
     // i enhver visning - ogsaa hvis timeren blev startet fra en anden fane.
     timerState.data = d.timer || null;
@@ -1257,6 +1337,25 @@ function tomHtml(view) {
   return `<div class="empty"><p>${esc(tekst || '')}</p></div>`;
 }
 
+/*
+ * De GAELDENDE vaerdier - ikke de gemte.
+ *
+ * `state.settings` indeholder kun det, brugeren selv har sat; standarderne
+ * bor paa serveren (`forventning()`). `dayStatus` er regnet MED dem, saa den
+ * er facit. Uden det ville felterne staa tomme, indtil man havde gemt én
+ * gang - og en tom formular ligner en indstilling, der er slaaet fra.
+ */
+function dagTimerNu() {
+  const s = state.dayStatus;
+  if (s && Number.isFinite(s.forventet)) return Math.round((s.forventet / 60) * 100) / 100;
+  return 7.4;
+}
+
+function vindueNu() {
+  const v = state.dayStatus && state.dayStatus.vindue;
+  return { fra: (v && v.fra) || '08:00', til: (v && v.til) || '16:00' };
+}
+
 async function settingsHtml() {
   const pk = await api('GET', '/api/v1/passkeys').catch(() => ({ credentials: [], blocked: null }));
   const kal = await api('GET', '/api/v1/ical').catch(() => ({ feed: null, alarm: 15 }));
@@ -1274,8 +1373,8 @@ async function settingsHtml() {
       <h2>What you can set here</h2>
       <p class="meta">How tovo looks, who you are, and what it is connected to. The
         <button class="linkbtn" data-go-guide>Guide</button> explains how the app itself works.</p>
-      <p class="meta">Rounding, the normal week and the timer warning are yours alone —
-        another user on this server has their own.</p>
+      <p class="meta">Your working day is yours alone — another user on this server
+        has their own.</p>
     </div>
 
     <div class="card">
@@ -1292,6 +1391,27 @@ async function settingsHtml() {
         <tr><td><kbd>%</kbd></td><td>Create it and start the timer at once</td></tr>
         <tr><td><kbd>// text</kbd></td><td>Everything after becomes the description</td></tr>
       </table>
+    </div>
+
+    <div class="card">
+      <h2>Your working day</h2>
+      <p class="meta">What a full day of registered time looks like for you. Today and the
+        Report hold what you have logged up against it.</p>
+      <form id="dagForm">
+        <label class="field"><span>Expected hours per day</span>
+          <input class="input" id="dagTimer" type="number" min="0" max="24" step="0.1"
+            value="${esc(String(dagTimerNu()))}"></label>
+        <div class="row">
+          <label class="field" style="flex:1"><span>Workday starts</span>
+            <input class="input" id="dagStart" type="time" value="${esc(vindueNu().fra)}"></label>
+          <label class="field" style="flex:1"><span>ends</span>
+            <input class="input" id="dagSlut" type="time" value="${esc(vindueNu().til)}"></label>
+        </div>
+        <p class="meta">The hours are the target. The times only decide how much of the day
+          has passed — time logged at 22:00 still counts in full.</p>
+        <p class="meta">The week in the Report is this number times five.</p>
+        <button class="btn" type="submit">Save</button>
+      </form>
     </div>
 
     <div class="card">
@@ -1436,6 +1556,27 @@ function bindSettings() {
   document.querySelectorAll('[data-tema]').forEach((el) => {
     el.addEventListener('click', () => { anvendTema(el.dataset.tema); opdaterTemaKnap(); tegnSide(); });
   });
+
+  const dag = document.getElementById('dagForm');
+  if (dag) {
+    dag.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const timer = document.getElementById('dagTimer').value;
+      try {
+        await api('POST', '/api/v1/settings', {
+          expected_day_hours: String(timer),
+          workday_start: document.getElementById('dagStart').value,
+          workday_end: document.getElementById('dagSlut').value,
+        });
+        /* Hentes igen, saa felterne viser det, SERVEREN endte med - ikke det,
+           man tastede. Skriver man 99, svarer serveren med standarden, og saa
+           skal feltet sige det frem for at lade tallet blive staaende. */
+        await hentState();
+        await tegnSide();
+        toast('Your working day is saved.');
+      } catch (ex) { toast(ex.message); }
+    });
+  }
 
   const pw = document.getElementById('pwForm');
   if (pw) {

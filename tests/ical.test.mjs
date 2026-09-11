@@ -115,12 +115,15 @@ test('varigheden er estimatet - ellers en time', async () => {
 });
 
 test('VALARM kun paa begivenheder MED klokkeslaet', async () => {
-  await a.klient.kald('POST', '/api/v1/capture', { text: 'heldagsting !5/9' });
+  // Datoen REGNES. Haardkodet blev den roed den dag, den passerede - det er
+  // fjerde gang i projektet, at en fast dato i en test er blevet til stoej.
+  const hDato = naesteDato(5, 10);
+  await a.klient.kald('POST', '/api/v1/capture', { text: `heldagsting !${hDato.tekst}` });
   const ics = await (await fetch(feed.url)).text();
   const dele = ics.split('BEGIN:VEVENT').slice(1);
   const heldag = dele.find((d) => d.includes('heldagsting'));
   const medTid = dele.find((d) => d.includes('sommermoede'));
-  assert.match(heldag, /DTSTART;VALUE=DATE:20260905/);
+  assert.match(heldag, new RegExp(`DTSTART;VALUE=DATE:${hDato.ics}`));
   assert.doesNotMatch(heldag, /BEGIN:VALARM/, 'en heldagspost ville ringe ved midnat');
   assert.match(medTid, /BEGIN:VALARM/);
   assert.match(medTid, /TRIGGER:-PT15M/);
@@ -128,7 +131,7 @@ test('VALARM kun paa begivenheder MED klokkeslaet', async () => {
 
 test('VEVENT - ikke VTODO - og linjer foldet ved 75 oktetter paa BYTES', async () => {
   const lang = 'Migrering af telefonisystemet på hovedkontoret i Bjerringbro med æ, ø og å';
-  await a.klient.kald('POST', '/api/v1/capture', { text: `${lang} !6/9 kl 8` });
+  await a.klient.kald('POST', '/api/v1/capture', { text: `${lang} !${naesteDato(6, 10).tekst} kl 8` });
   const ics = await (await fetch(feed.url)).text();
 
   assert.match(ics, /BEGIN:VEVENT/);
@@ -171,7 +174,7 @@ test('feedet viser kun AABNE opgaver med en dato - og aldrig en andens', async (
   assert.doesNotMatch(await (await fetch(feed.url)).text(), /uden dato/);
 
   // B's opgaver kan aldrig havne i A's feed.
-  await b.klient.kald('POST', '/api/v1/capture', { text: 'bos hemmelighed !7/9' });
+  await b.klient.kald('POST', '/api/v1/capture', { text: `bos hemmelighed !${naesteDato(7, 10).tekst}` });
   assert.doesNotMatch(await (await fetch(feed.url)).text(), /hemmelighed/);
 });
 

@@ -641,6 +641,44 @@ og opfylder RFC 5545, men et rigtigt abonnement kan jeg ikke oprette herfra.
       linje siger, hvordan man tilføjer flere. Listen er lokal indtil Save, så Cancel
       fortryder en fjernelse.
 
+## Efter v24 · Live-opdatering og dagens mål (2026-09-11)
+
+- [x] **SSE og ikke websockets.** Beskeden går kun én vej, og til det er `text/event-stream`
+      det mindste, der virker: Node kan det selv, og browseren genforbinder uden kode. En
+      websocket skulle håndskrives med rammer og maskering for at kunne det samme den ene vej.
+- [x] **Vinket bærer INTET.** Der sendes »noget ændrede sig«, ikke data. Bar det data, skulle
+      en opgave serialiseres et sted mere, og så har to steder skullet blive enige om, hvad
+      en opgave er. Og et vink kan ikke lække noget.
+- [x] **`varsko(userId)` i skrivefunktionerne, ikke i kaldsstederne.** Samme regel som
+      `user_id`-filteret. Og klienten kobles til/fra i `render()` — det ene sted, der kører
+      ved både login, logout og opstart.
+- [x] **Isolationen er set fejle.** Sabotage: lad `varsko` sende til alle. Præcis den test
+      blev rød. En fælles strøm ville ikke lække opgavedata, men den ville fortælle den ene
+      bruger, hvornår den anden møder og går hjem — og det er også noget.
+- [x] **Prøvet i en rigtig browser, ikke kun i tests.** En separat klient (curl med sin egen
+      cookie, som var det telefonen) oprettede en opgave og startede en timer; fanens titel
+      i browseren skiftede til »0:18 · opgave fra telefonen« og tilbage til »tovo«, da den
+      blev stoppet udefra — uden genindlæsning. Det er dét, hele funktionen handler om.
+- [x] **Dagen er tallet, ugen regnes af den.** Før lå sandheden i `norm_week_hours` ÷ 5.
+      Standarden for `expected_day_hours` er den gamle ugenorm ÷ 5, så ingen får deres tal
+      ændret af en opgradering.
+- [x] **To sammenligninger, ikke én.** `forventet` er hele dagen; `forventetNu` er den del,
+      dagen er nået til. Uden den anden står man kl. 9 og er 6,4 timer bagud hver morgen —
+      og så holder man op med at kigge på tallet. Samme regel for ugen (`normTilNu`).
+- [x] **Sabotagen afslørede igen en fejl i min egen prøve.** Testen for »et ugyldigt vindue
+      må ikke give NaN« brugte et OMVENDT vindue (16–08) — men negativ divideret med negativ
+      er et pænt tal, så den bestod også uden værnet. Det tilfælde, der faktisk knækker, er
+      start LIG slut på selve slaget: `0/0`. Fjerde gang et selvskrevet måleredskab har løjet.
+- [x] **Normstregen og søjlen måler fra samme boks.** En absolut placeret streg i `.dag`
+      ville regne procenter af paddingboksen, mens søjlens højde regnes af indholdsboksen —
+      16 px ved siden af. En reference, der peger skævt, er værre end ingen.
+- [x] **Fjerde og femte hårdkodede dato i tests fjernet.** `!5/9`, `!6/9`, `!7/9` gik i
+      fortiden. `parse.test.mjs` er fastnaglet til en referencedato og skal IKKE røres — den
+      er stabil af den grund.
+- [ ] **Ikke verificeret: udseendet.** Panelet giver ingen viewport (`innerWidth: 0`), så
+      bjælken, nålen og den stiplede linje er kun bedømt strukturelt — tekst, klasser og
+      procenter. Skal ses på en rigtig skærm.
+
 ## Efter v23 · Redningsvejen var den farlige (2026-09-05)
 
 - [x] **Vi skrev de tre bærende valg ned, byggede hovedvejen efter dem — og lod dem stå i

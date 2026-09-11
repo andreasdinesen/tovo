@@ -146,6 +146,7 @@ async function tegnIDag() {
     <p class="lead">${esc(BESKRIVELSER.today)}</p>
 
     <div class="card">
+      ${dagsmaalHtml()}
       ${dagskortHtml(p, d)}
     </div>
 
@@ -183,6 +184,61 @@ async function tegnIDag() {
  * (`bindOpgaveListe` binder alt med attributten), saa der ikke opstaar to
  * maader at folde paa i samme app.
  */
+/**
+ * Dagens maal: registreret mod forventet - og mod klokken.
+ *
+ * To tal, fordi de svarer paa hver sit spoergsmaal. »3t 30m af 7t 24m« er
+ * dagens regnskab; »30m bagud« er stillingen LIGE NU. Uden det andet stod man
+ * kl. 9 og var 6 timer bagud hver eneste morgen, og saa holder man op med at
+ * kigge paa tallet.
+ *
+ * Naalen paa bjaelken er dér, man burde vaere naaet til nu. Den er hele
+ * pointen: bjaelkens laengde er dagen, naalens plads er klokken.
+ *
+ * Her REGNES intet - `state.dayStatus` kommer fra beregn.js, saa webappen og
+ * MCP siger det samme (§ "Alle udregninger i beregn.js").
+ */
+function dagsmaalHtml() {
+  const s = state.dayStatus;
+  /* Forventet 0 = slaaet fra. Saa vises der ingen sammenligning i stedet for
+     en bjaelke, der altid er fuld eller altid tom. */
+  if (!s || !s.forventet) return '';
+
+  const f = (m) => esc(tovoBeregn.formatVarighed(m));
+  const andel = (m) => Math.min(Math.max((m / s.forventet) * 100, 0), 100);
+
+  /* Under et kvarter fra maalet er ikke »bagud« - det er indenfor. Et tal,
+     der raaber ved fem minutter, laerer man at overse. */
+  let stilling;
+  let klasse = '';
+  if (s.andelGaaet <= 0) {
+    stilling = `starts at ${esc(s.vindue.fra)}`;
+  } else if (Math.abs(s.diffNu) < 15) {
+    stilling = 'on track';
+  } else if (s.diffNu < 0) {
+    stilling = `${f(-s.diffNu)} behind`;
+    klasse = ' bagud';
+  } else {
+    stilling = `${f(s.diffNu)} ahead`;
+    klasse = ' foran';
+  }
+
+  return `<div class="dagsmaal">
+    <div class="dagsmaal-tal meta">
+      <span><strong>${f(s.registreret)}</strong> of ${f(s.forventet)}</span>
+      <span class="dagsmaal-stilling${klasse}">${stilling}</span>
+    </div>
+    <div class="dagsmaal-bjaelke" title="${f(s.registreret)} of ${f(s.forventet)} — the mark is where the day has got to">
+      <div class="dagsmaal-spor"><div class="dagsmaal-fyld" style="width:${andel(s.registreret)}%"></div></div>
+      ${s.andelGaaet > 0 && s.andelGaaet < 1
+        ? `<div class="dagsmaal-naal" style="left:${andel(s.forventetNu)}%"></div>` : ''}
+    </div>
+    <p class="meta dagsmaal-fod">${s.rest
+      ? `${f(s.rest)} left to reach the day · workday ${esc(s.vindue.fra)}–${esc(s.vindue.til)}`
+      : `Day\u2019s target reached · workday ${esc(s.vindue.fra)}–${esc(s.vindue.til)}`}</p>
+  </div>`;
+}
+
 function dagskortHtml(p, d) {
   const total = esc(tovoBeregn.formatVarighed(state.todayMinutes || 0));
   const huller = p.gaps || [];
