@@ -2513,3 +2513,36 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
   .stjernefane { max-width: 180px; }
   .stjernefane-knap { font-size: 12.5px; padding-left: 9px; }
 }
+
+/* ------------------------------------------------- faner i indstillinger */
+
+/* Samme form som dodas og sagus (§9f). Raekken RULLER vandret paa en smal
+   skaerm frem for at ombryde: to linjer faner flytter indholdet ned og
+   ligner to raekker knapper. */
+.faner {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 22px;
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.faner::-webkit-scrollbar { display: none; }
+
+.fanebtn {
+  flex: none;
+  padding: 9px 14px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+  /* Understregningen tegnes ALTID - gennemsigtig, naar fanen ikke er valgt.
+     Ellers hopper raekken en pixel ved hvert faneskift. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.fanebtn:hover { color: var(--text); }
+.fanebtn.on { color: var(--accent-text); border-bottom-color: var(--accent); }

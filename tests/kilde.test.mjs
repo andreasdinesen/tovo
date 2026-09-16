@@ -10,9 +10,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -115,6 +116,7 @@ const HEL_APP = {
   'server.js': '', 'public/app.js': '', 'shared/parse.js': '',
   'shared/beregn.js': '', 'shared/planner.js': '', 'oauth.js': '',
   'mcp.js': '', 'webauthn.js': '', 'sagu.js': '', 'totp.js': '', 'qr.js': '',
+  'live.js': '', 'klientip.js': '', 'shared/ruter.js': '',
 };
 
 test('en hel app med det rigtige stempel godtages', () => {
@@ -135,6 +137,55 @@ test('mangler ET af de moduler, server.js require\'r, byttes der ikke', () => {
     const { rod, app } = lavApp(felter);
     assert.throws(() => kilde.tjekTrae(app, 23), new RegExp(udeladt.replace('.', '\\.')),
       `${udeladt} manglede, men traeet blev godtaget`);
+    rmSync(rod, { recursive: true, force: true });
+  }
+});
+
+/*
+ * Listen i tjekTrae() er skrevet i haanden - og en haandskrevet liste
+ * glemmer det naeste modul. `live.js` stod der ikke, og da `klientip.js`
+ * kom til, ville en hentning uden den blive godtaget, hvorefter serveren
+ * doede med MODULE_NOT_FOUND ved HVER genstart (spolen, 2026-09-16).
+ *
+ * Kravet udledes derfor af KODEN: hver require('./...') i app/*.js og
+ * app/shared/*.js. For hvert modul bygges et traee med ALT andet, og
+ * tjekTrae() skal afvise det.
+ */
+function kraevedeModuler() {
+  const appDir = fileURLToPath(new URL('../app/', import.meta.url));
+  const filer = [
+    ...readdirSync(appDir).filter((f) => f.endsWith('.js') && f !== 'kilde.js'),
+    ...readdirSync(join(appDir, 'shared')).filter((f) => f.endsWith('.js')).map((f) => `shared/${f}`),
+  ];
+  const kraevet = new Set(['server.js']);
+  for (const fil of filer) {
+    const kode = readFileSync(join(appDir, fil), 'utf8');
+    for (const m of kode.matchAll(/require\(\s*'(\.{1,2}\/[^']+)'\s*\)/g)) {
+      kraevet.add(posix.normalize(posix.join(posix.dirname(fil), m[1])));
+    }
+  }
+  return [...kraevet].sort();
+}
+
+test('listen daekker ALT, server.js og modulerne require\'r', () => {
+  const moduler = kraevedeModuler();
+  for (const m of ['klientip.js', 'live.js', 'shared/ruter.js', 'shared/beregn.js']) {
+    assert.ok(moduler.includes(m), `moensteret fandt ikke ${m} - vagten maaler intet`);
+  }
+  // shared/planner.js staar paa listen uden at blive require'et af serveren
+  // (fladen bruger den) - den skal med, for at traeet er helt.
+  const hel = { 'public/index.html': '<script src="/app.js?v=23"></script>', 'public/app.js': '',
+    'shared/planner.js': '' };
+  for (const m of moduler) hel[m] = '';
+  const { rod: r0, app: a0 } = lavApp(hel);
+  assert.doesNotThrow(() => kilde.tjekTrae(a0, 23), 'et komplet traee skal godtages');
+  rmSync(r0, { recursive: true, force: true });
+  for (const udeladt of moduler) {
+    const felter = { ...hel };
+    delete felter[udeladt];
+    const { rod, app } = lavApp(felter);
+    assert.throws(() => kilde.tjekTrae(app, 23), undefined,
+      `${udeladt} manglede, men traeet blev godtaget - serveren ville doe ved opstart`);
     rmSync(rod, { recursive: true, force: true });
   }
 });

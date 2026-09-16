@@ -231,7 +231,9 @@ def stempl_version(version):
     # Og saa DET statiske tjek, §5 peger paa: precache-listen skal indeholde
     # praecis de ?v=-adresser, index.html henter. Den fejl kan ikke ses i en
     # browser - den viser sig som en gammel version, der nagler sig fast.
-    i_html = set(re.findall(r'(?:src|href)="((?:style\.css|app\.js)\?v=\d+)"', ny))
+    # Adresserne er ABSOLUTTE (`/app.js?v=N`): paa /projects/<id> ville en
+    # relativ adresse blive slaaet op under /projects/ (§9g).
+    i_html = set(re.findall(r'(?:src|href)="/((?:style\.css|app\.js)\?v=\d+)"', ny))
     i_sw = set(re.findall(r'\./((?:style\.css|app\.js)\?v=\$\{VERSION\})', ny_sw))
     forventet = {n.replace(f'?v={version}', '?v=${VERSION}') for n in i_html}
     if not i_html:

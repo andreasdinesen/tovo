@@ -71,6 +71,16 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v31 — faner, egne adresser og »Copy table«
+
+- **Indstillingerne er delt i faner:** General, Account, Connections, Data og (for
+  administratorer) Server. tovo husker den sidst åbne, og guidens knapper åbner den rigtige.
+- **Hver side har sin egen adresse** — fx `/report`, `/projects/<id>`, `/settings/account` —
+  så den kan bogmærkes. Tilbage/frem virker, og et genindlæs lander samme sted.
+- **»Copy table«** i rapporten og i kundevisningen kopierer tabellerne, så de kan sættes ind
+  i en mail som tabel eller i et regneark som celler.
+- **Login-spærringen kan ikke længere omgås** ved at sende en opdigtet IP-adresse i `X-Forwarded-For`, og sikkerhedsloggen viser nu den adresse, forbindelsen faktisk kom fra.
+
 ### v30 — dine andre enheder logges ud, når du slår totrin til
 
 - **Slår du totrinsbekræftelse til, logges du ud på dine andre enheder.** Den enhed, du

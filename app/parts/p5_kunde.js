@@ -62,6 +62,7 @@ async function visKundevisning(projektId) {
       <div class="kundeark">${ark}</div>
       <div class="modal-foot">
         <button class="btn primary" id="kExcel">Excel</button>
+        <button class="btn" id="kKopier">Copy table</button>
         <button class="btn" id="kPrint">Print / save as PDF</button>
         <button class="btn" id="kClose">Close</button>
       </div>
@@ -71,6 +72,10 @@ async function visKundevisning(projektId) {
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('kClose').addEventListener('click', luk);
+  document.getElementById('kKopier').addEventListener('click', async () => {
+    const ok = await kopierRigTekst(kundeRigTekst(d.project, d.tasks, d.rollup, d.spent));
+    toast(ok ? 'Copied — paste it into an email or a spreadsheet.' : 'Could not reach the clipboard.');
+  });
   document.getElementById('kPrint').addEventListener('click', () => {
     printArk(ark, `tovo-${d.project.name}-${state.today}`);
   });

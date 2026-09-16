@@ -1735,6 +1735,100 @@
   };
 }));
 
+/* ---- shared/ruter.js ---- */
+/* tovo - adresser til siderne. Én liste, to brugere.
+ *
+ * Browseren skriver stien i adresselinjen, saa /report kan bogmaerkes og
+ * /projects/<id> kan laegges paa hjemmeskaermen. Serveren skal svare med
+ * index.html paa PRAECIS de samme stier, ellers giver et genindlaes en 404 paa
+ * noget, der lige stod paa skaermen. To lister ville skride fra hinanden ved
+ * den foerste nye side, saa den bor her (RUNE-ERFARINGER §9g, Beanledger v36).
+ *
+ * Kun de kendte stier peger paa appen - aldrig en catch-all. En catch-all
+ * ville ogsaa svare 200 med HTML paa /app.jsx og /styl.css, og en manglende
+ * fil, der svarer med en side, er den slags fejl man leder efter i timevis.
+ *
+ * Modulet kender hverken DOM'en eller databasen: det oversaetter mellem en
+ * sti og {view, project, tag, fane} - intet andet.
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.tovoRuter = factory();
+}(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /* [view-id, adresse, andre stavemaader der ogsaa skal virke]
+     Interfacet er engelsk, saa adresserne er det ogsaa. De danske ord er
+     med, fordi det er dem, man skriver i haanden. */
+  const SIDER = [
+    ['today', 'today', ['idag', 'i-dag', 'forside', 'start']],
+    ['week', 'week', ['uge', 'kalender', 'calendar']],
+    ['projects', 'projects', ['projekter', 'projekt', 'project']],
+    ['tags', 'tags', ['tag', 'maerkater', 'maerkat']],
+    ['report', 'report', ['rapport', 'ugerapport', 'timeseddel']],
+    ['settings', 'settings', ['indstillinger']],
+    ['guide', 'guide', ['vejledning', 'hjaelp', 'help']],
+  ];
+
+  /* Fanerne i indstillingerne (§9f). `server` er kun for administratorer -
+     serveren svarer alligevel med siden, og fladen falder tilbage til den
+     foerste fane, saa ingen staar paa en tom side. */
+  const FANER = ['general', 'account', 'connections', 'data', 'server'];
+
+  /* Sider, der kan pege paa ét element: /projects/<id>, /tags/<id>. */
+  const MED_ID = { projects: 'project', tags: 'tag' };
+  // Id'er er serverens hex, fladens uuid eller en konstant som `__uden`.
+  // Alt andet er ikke et id, og saa er stien ikke en side.
+  const ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+  /* Stien skal kunne skrives i haanden. Store bogstaver, en skraastreg til
+     sidst og æøå skal alle ramme. æøå foldes til ae/oe/aa - samme translit,
+     som aliasserne selv er skrevet i. */
+  function nogle(del) {
+    return String(del || '').toLowerCase()
+      .replace(/æ/g, 'ae').replace(/ø/g, 'oe').replace(/å/g, 'aa');
+  }
+
+  const OPSLAG = {};
+  for (const [id, sti, alias] of SIDER) {
+    OPSLAG[nogle(sti)] = id;
+    OPSLAG[nogle(id)] = id;
+    for (const a of alias || []) OPSLAG[nogle(a)] = id;
+  }
+
+  /**
+   * '/projects/abc' -> { view: 'projects', project: 'abc' }.
+   * '/' er forsiden. Ukendt sti -> null (og serveren svarer 404).
+   */
+  function laesSti(sti) {
+    let s = String(sti || '');
+    try { s = decodeURIComponent(s); } catch { return null; }
+    const dele = s.split('/').filter(Boolean);
+    if (!dele.length || (dele.length === 1 && dele[0] === 'index.html')) return { view: 'today' };
+    const view = OPSLAG[nogle(dele[0])];
+    if (!view || dele.length > 2) return null;
+    if (dele.length === 1) return { view };
+    // Andet led: et id (case-foelsomt - det er ikke en stavemaade) eller en fane.
+    if (MED_ID[view] && ID.test(dele[1])) return { view, [MED_ID[view]]: dele[1] };
+    if (view === 'settings' && FANER.includes(nogle(dele[1]))) return { view, fane: nogle(dele[1]) };
+    return null;
+  }
+
+  /** { view, project, tag, fane } -> den kanoniske sti. Ukendt view -> null. */
+  function stiFor(tilstand) {
+    const t = tilstand || {};
+    const side = SIDER.find((x) => x[0] === t.view);
+    if (!side) return null;
+    const rod = `/${side[1]}`;
+    const id = MED_ID[t.view] ? t[MED_ID[t.view]] : null;
+    if (id && ID.test(id)) return `${rod}/${encodeURIComponent(id)}`;
+    if (t.view === 'settings' && FANER.includes(t.fane)) return `${rod}/${t.fane}`;
+    return rod;
+  }
+
+  return { SIDER, FANER, laesSti, stiFor };
+}));
+
 /* ---- shared/servicenow.js ---- */
 /* tovo - ServiceNow-eksporten: kolonnegenkendelse, mapning og fletning.
  *
@@ -2348,7 +2442,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2379,6 +2473,9 @@ const state = {
   todayMinutes: 0,
   openProject: null,
   openTag: null,
+  // Fanen i indstillingerne, som ADRESSEN bad om (/settings/account). Tom =
+  // den, der sidst var aaben paa denne maskine (localStorage, §9f).
+  settingsFane: null,
 };
 
 /* ------------------------------------------------------------ hjaelpere */
@@ -3500,6 +3597,7 @@ function gaaTil(view, opt) {
    */
   state.openProject = (opt && opt.project !== undefined) ? opt.project : null;
   state.openTag = (opt && opt.tag !== undefined) ? opt.tag : (view === 'tags' ? state.openTag : null);
+  state.settingsFane = (opt && opt.fane) || null;
   document.body.classList.remove('navopen');
   opdaterNav();
   // Feltet arbejder i den side, man staar paa - og skal vise det.
@@ -3509,6 +3607,58 @@ function gaaTil(view, opt) {
   // hver gang en inline-redigering gentegner samme side (Beanledger v24).
   if (skifter) tilToppen();
 }
+
+/*
+ * Adressen foelger siden (RUNE-ERFARINGER §9g).
+ *
+ * Én ting styrer det: `tegnSide()`, som alle sider gaar igennem. De mange
+ * steder, der saetter `state.view` eller `state.openProject`, behoever saa
+ * ikke vide noget om historik.
+ *
+ * Der skrives KUN, naar stien faktisk er en anden. Ellers laver
+ * tilbage-knappens egen optegning en ny post, og man kan aldrig komme
+ * laengere tilbage end ét skridt. Den foerste optegning RETTER kun adressen
+ * (/ -> /today) - den maa ikke koste et klik at komme ud af appen igen.
+ *
+ * `erstat`: en rettelse, ikke et skridt - et projekt, der ikke fandtes, eller
+ * et faneskift i indstillingerne.
+ */
+const adresse = { klar: false };
+
+function aktuelAdresse() {
+  return tovoRuter.stiFor({
+    view: state.view,
+    project: state.openProject,
+    tag: state.openTag,
+    fane: state.view === 'settings' ? state.settingsFane : null,
+  });
+}
+
+function synkAdresse(erstat) {
+  const sti = aktuelAdresse();
+  if (!sti) return;
+  // Hjemmeskaermen laeser start_url fra manifestet - ikke adresselinjen.
+  const man = document.querySelector('link[rel="manifest"]');
+  if (man) man.setAttribute('href', `/manifest.webmanifest?start=${encodeURIComponent(sti)}`);
+  if (location.pathname !== sti) {
+    const metode = adresse.klar && !erstat ? 'pushState' : 'replaceState';
+    history[metode]({}, '', sti + location.search + location.hash);
+  }
+  adresse.klar = true;
+}
+
+/** Adressen -> state. Ved opstart (foer login) og ved tilbage/frem. */
+function tilstandFraAdresse() {
+  const t = tovoRuter.laesSti(location.pathname) || { view: 'today' };
+  return { view: t.view, opt: { project: t.project || null, tag: t.tag || null, fane: t.fane || null } };
+}
+
+window.addEventListener('popstate', () => {
+  if (!state.user) return;
+  const { view, opt } = tilstandFraAdresse();
+  // Stien staar allerede i adresselinjen, saa synkAdresse() skriver intet.
+  gaaTil(view, opt);
+});
 
 /*
  * Live-opdatering: serveren siger til, naar noget er aendret.
@@ -3696,6 +3846,14 @@ function visBrugerMenu() {
 async function tegnSide() {
   const host = document.getElementById('pageHost');
   if (!host) return;
+  synkAdresse();
+  await tegnSelveSiden(host);
+  // Siden kan have rettet sin egen tilstand undervejs (et projekt, der ikke
+  // fandtes, en admin-fane for en almindelig bruger). Den rettelse ERSTATTER.
+  synkAdresse(true);
+}
+
+async function tegnSelveSiden(host) {
   const v = viewById(state.view);
   // .page er dodas indholdsbredde (760 px). .main centrerer sine boern, saa
   // uden wrapperen bliver siden shrink-to-fit og staar midt paa skaermen.
@@ -3765,6 +3923,20 @@ async function settingsHtml() {
         has their own.</p>
     </div>
 
+    <!-- Faner (RUNE-ERFARINGER §9f). ALT tegnes, ét vises: fanerne skjuler
+         med hidden og udelader intet, saa bindSettings() finder hvert id
+         uanset hvilken fane der er aaben. Gem-knappen i »Your working day«
+         samler kun felter fra sit eget kort - ingen knap gemmer paa tvaers
+         af faner, og saa kan opdelingen ikke tabe et felt. -->
+    <div class="faner" role="tablist">
+      <button class="fanebtn" role="tab" data-fane="general">General</button>
+      <button class="fanebtn" role="tab" data-fane="account">Account</button>
+      <button class="fanebtn" role="tab" data-fane="connections">Connections</button>
+      <button class="fanebtn" role="tab" data-fane="data">Data</button>
+      ${state.user.isAdmin ? '<button class="fanebtn" role="tab" data-fane="server">Server</button>' : ''}
+    </div>
+
+    <div class="fane" data-fane="general">
     <div class="card">
       <h2>Capture syntax</h2>
       <p class="meta">What the search field understands. The same list is in the Guide, and
@@ -3808,6 +3980,20 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Case numbers</h2>
+      <p class="meta">A task can carry the number the hours are booked against in your other
+        system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
+        every task inherits it.</p>
+      <label class="field"><span>Link to open a case</span>
+        <input class="input" id="setCaseUrl" placeholder="https://firma.service-now.com/nav_to.do?uri=/task.do?sysparm_query=number={case}"
+          value="${esc((state.settings || {}).case_url || '')}"></label>
+      <p class="meta">Put <code>{case}</code> where the number goes. Then every case number in
+        tovo becomes a link straight into the case. Only http and https are accepted.</p>
+    </div>
+    </div>
+
+    <div class="fane" data-fane="account">
+    <div class="card">
       <h2>Account</h2>
       <p class="meta">${esc(state.user.username)}${state.user.isAdmin ? ' · administrator' : ''}</p>
       <form id="pwForm">
@@ -3819,6 +4005,26 @@ async function settingsHtml() {
       </form>
     </div>
 
+    <div class="card">
+      <h2>Two-factor</h2>
+      <p class="meta">A code from an authenticator app, on top of your password. Unlike a
+        passkey it works over plain http too — which is how this server is reached from
+        the panel, and where the password alone would otherwise be the only thing between
+        your data and whoever has it.</p>
+      <div id="totpKort" class="meta">Loading…</div>
+    </div>
+
+    <div class="card">
+      <h2>Passkeys</h2>
+      ${pk.blocked ? `<p class="meta">${esc(pk.blocked)}</p>` : `
+        <p class="meta">A passkey is an extra way in — it never replaces the password.</p>
+        <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
+      ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
+        <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
+    </div>
+    </div>
+
+    <div class="fane" data-fane="connections">
     <div class="card">
       <h2>Claude and other clients</h2>
       <p class="meta">tovo speaks MCP, so Claude can start timers, log time afterwards and read
@@ -3883,42 +4089,14 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
-      <h2>Two-factor</h2>
-      <p class="meta">A code from an authenticator app, on top of your password. Unlike a
-        passkey it works over plain http too — which is how this server is reached from
-        the panel, and where the password alone would otherwise be the only thing between
-        your data and whoever has it.</p>
-      <div id="totpKort" class="meta">Loading…</div>
-    </div>
-
-    <div class="card">
-      <h2>Passkeys</h2>
-      ${pk.blocked ? `<p class="meta">${esc(pk.blocked)}</p>` : `
-        <p class="meta">A passkey is an extra way in — it never replaces the password.</p>
-        <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
-      ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
-        <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
-    </div>
-
-    <div class="card">
       <h2>Sagu</h2>
       <p class="meta">Sagu is where the notes live. Connect it, and a task can point at a
         note — you read it, and answer its comments, without leaving tovo.</p>
       <div id="saguKort" class="meta">Loading…</div>
     </div>
-
-    <div class="card">
-      <h2>Case numbers</h2>
-      <p class="meta">A task can carry the number the hours are booked against in your other
-        system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
-        every task inherits it.</p>
-      <label class="field"><span>Link to open a case</span>
-        <input class="input" id="setCaseUrl" placeholder="https://firma.service-now.com/nav_to.do?uri=/task.do?sysparm_query=number={case}"
-          value="${esc((state.settings || {}).case_url || '')}"></label>
-      <p class="meta">Put <code>{case}</code> where the number goes. Then every case number in
-        tovo becomes a link straight into the case. Only http and https are accepted.</p>
     </div>
 
+    <div class="fane" data-fane="data">
     <div class="card">
       <h2>Your data</h2>
       <p class="meta">Everything you have, in one open file. Secrets are left out on purpose:
@@ -3930,17 +4108,59 @@ async function settingsHtml() {
       <p class="meta">For a real backup, use the panel's own — it covers the whole data folder,
         database and all.</p>
     </div>
+    </div>
 
     ${state.user.isAdmin ? `
+    <div class="fane" data-fane="server">
     <div class="card">
       <h2>This server</h2>
       <label class="check"><input type="checkbox" id="setReg" ${state.config.allowRegistration ? 'checked' : ''}>
         <span>Let new users sign up</span></label>
       <p class="meta">Users never see each other's data — not even the administrator.</p>
+    </div>
     </div>` : ''}`;
 }
 
+/*
+ * Fanerne i indstillingerne (RUNE-ERFARINGER §9f).
+ *
+ * Valget bor i localStorage, ikke i `settings`: det afhaenger af, hvad man
+ * sidst var i gang med paa DENNE maskine - samme begrundelse som temaet og
+ * den skjulte sidemenu. Adressen (/settings/account) vinder, naar den har et.
+ *
+ * Findes den oenskede fane ikke for brugeren - »Server« gemt af en
+ * administrator, og nu logger en almindelig bruger ind - falder vi tilbage
+ * til den foerste. Ellers aabner man indstillingerne og ser en TOM side.
+ */
+const FANE_NOEGLE = 'tovo_settings_fane';
+
+function visFane(oensket, skifter) {
+  const faner = [...document.querySelectorAll('#pageHost .fane')].map((el) => el.dataset.fane);
+  if (!faner.length) return;
+  const valgt = faner.includes(oensket) ? oensket : faner[0];
+  document.querySelectorAll('#pageHost .fane').forEach((el) => { el.hidden = el.dataset.fane !== valgt; });
+  document.querySelectorAll('#pageHost .fanebtn').forEach((el) => {
+    const paa = el.dataset.fane === valgt;
+    el.classList.toggle('on', paa);
+    el.setAttribute('aria-selected', paa ? 'true' : 'false');
+  });
+  try { localStorage.setItem(FANE_NOEGLE, valgt); } catch { /* privat vindue */ }
+  state.settingsFane = valgt;
+  // Et faneskift er ikke et skridt i historikken - adressen rettes bare.
+  synkAdresse(true);
+  // En fane, man skifter til, skal begynde ved sin foerste overskrift - ikke
+  // midt i, fordi den forrige var laengere.
+  if (skifter) tilToppen();
+}
+
 function bindSettings() {
+  let gemt = null;
+  try { gemt = localStorage.getItem(FANE_NOEGLE); } catch { /* privat vindue */ }
+  visFane(state.settingsFane || gemt);
+  document.querySelectorAll('#pageHost .fanebtn').forEach((el) => {
+    el.addEventListener('click', () => visFane(el.dataset.fane, true));
+  });
+
   document.querySelectorAll('[data-tema]').forEach((el) => {
     el.addEventListener('click', () => { anvendTema(el.dataset.tema); opdaterTemaKnap(); tegnSide(); });
   });
@@ -4170,7 +4390,8 @@ function visNoegle(noegle) {
 async function registrerSW() {
   if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
   try {
-    const reg = await navigator.serviceWorker.register('sw.js');
+    // Absolut: paa /projects/<id> ville 'sw.js' blive /projects/sw.js (§9g).
+    const reg = await navigator.serviceWorker.register('/sw.js');
 
     /*
      * En web app paa hjemmeskaermen bliver stort set ALDRIG genindlaest: den
@@ -4231,6 +4452,13 @@ function fortsaetTilConnector() {
 
 (async function start() {
   anvendTema(nuvaerendeTema());
+  /* Startsiden laeses FOER login: skulle man logge ind undervejs, lander man
+     alligevel dér, adressen pegede (§9g). */
+  const fraAdresse = tilstandFraAdresse();
+  state.view = fraAdresse.view;
+  state.openProject = fraAdresse.opt.project;
+  state.openTag = fraAdresse.opt.tag;
+  state.settingsFane = fraAdresse.opt.fane;
   try {
     state.config = await api('GET', '/api/public-config');
     document.title = state.config.appName || 'tovo';
@@ -6353,6 +6581,7 @@ async function visKundevisning(projektId) {
       <div class="kundeark">${ark}</div>
       <div class="modal-foot">
         <button class="btn primary" id="kExcel">Excel</button>
+        <button class="btn" id="kKopier">Copy table</button>
         <button class="btn" id="kPrint">Print / save as PDF</button>
         <button class="btn" id="kClose">Close</button>
       </div>
@@ -6362,6 +6591,10 @@ async function visKundevisning(projektId) {
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
   document.getElementById('kClose').addEventListener('click', luk);
+  document.getElementById('kKopier').addEventListener('click', async () => {
+    const ok = await kopierRigTekst(kundeRigTekst(d.project, d.tasks, d.rollup, d.spent));
+    toast(ok ? 'Copied — paste it into an email or a spreadsheet.' : 'Could not reach the clipboard.');
+  });
   document.getElementById('kPrint').addEventListener('click', () => {
     printArk(ark, `tovo-${d.project.name}-${state.today}`);
   });
@@ -6840,6 +7073,8 @@ async function tegnRapport() {
           title="Switch between decimal hours (3,5) and hours and minutes (3h 30m). Decimal hours are what you type into the other system."
           >Format: ${decimal ? '3,5' : '3h 30m'}</button>
         <button class="btn" id="rExcel">Excel</button>
+        <button class="btn" id="rKopier"
+          title="A table for an email, and cells for a spreadsheet — whichever you paste into.">Copy table</button>
         <button class="btn" id="rMarkdown">Copy as markdown</button>
         <button class="btn" id="rPrint">Print / PDF</button>
       </span>
@@ -6960,6 +7195,11 @@ async function tegnRapport() {
   document.getElementById('rFormat').addEventListener('click', () => {
     try { localStorage.setItem('tovo_rapport_decimal', decimal ? '0' : '1'); } catch { /* privat */ }
     tegnRapport();
+  });
+  document.getElementById('rKopier').addEventListener('click', async () => {
+    // Bygges FOER kaldet - kopierRigTekst skal naa ClipboardItem i klikket.
+    const ok = await kopierRigTekst(rapportRigTekst(d, decimal));
+    toast(ok ? 'Report copied — paste it into an email or a spreadsheet.' : 'Could not reach the clipboard.');
   });
   document.getElementById('rMarkdown').addEventListener('click', async () => {
     const md = rapportMarkdown(d);
@@ -8493,7 +8733,7 @@ const GUIDE_DELE = [
               ['ICAL', 'Tasks with a date, as a feed your calendar subscribes to. On iOS, turn &ldquo;Remove Alarms&rdquo; off, or the reminders are stripped.'],
               ['MCP', 'Claude can search, log time and read the week report — through the same functions the app itself uses, so the numbers cannot drift.'],
             ],
-            go: [['settings', 'Open Settings']],
+            go: [['settings/connections', 'Open Settings']],
           },
         ],
       },
@@ -8509,7 +8749,7 @@ const GUIDE_DELE = [
               ['THE TIMES', 'Start and end only decide how much of the day has passed. Time logged at ten in the evening still counts in full.'],
               ['REPORT', 'Mid-week, the total is held up against what has fallen due so far &mdash; not against the whole week. Otherwise you are seventeen hours behind every Tuesday.'],
             ],
-            go: [['settings', 'Open Settings']],
+            go: [['settings/general', 'Open Settings']],
           },
           {
             titel: 'It updates itself',
@@ -8534,7 +8774,7 @@ const GUIDE_DELE = [
               ['LOST THE PHONE', 'Ten recovery codes are shown once, when you turn it on. Each works a single time, in place of the six digits. Keep them somewhere that is not the phone.'],
               ['PASSKEYS', 'A passkey already proves it is your device, so it signs you straight in — no code on top.'],
             ],
-            go: [['settings', 'Open Settings']],
+            go: [['settings/account', 'Open Settings']],
           },
         ],
       },
@@ -8574,7 +8814,13 @@ function sideGuide() {
 
 function bindGuide() {
   document.querySelectorAll('[data-guide-go]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil(el.dataset.guideGo));
+    /* `settings/connections`: en knap, der peger paa et afsnit i
+       indstillingerne, skal ogsaa vaelge fanen - ellers lander man paa den,
+       der sidst var aaben, og afsnittet er skjult (§9f). */
+    el.addEventListener('click', () => {
+      const [view, fane] = el.dataset.guideGo.split('/');
+      gaaTil(view, fane ? { fane } : undefined);
+    });
   });
 }
 
@@ -8986,4 +9232,181 @@ function bindStjerneKnapper(host) {
       skiftStjerne(el.dataset.stjernemark, el.dataset.stjernepaa === '1');
     });
   });
+}
+
+/* ---- pg_rigtekst.js ---- */
+'use strict';
+/* tovo - kopiér som rig tekst (RUNE-ERFARINGER §9e).
+ *
+ * Ugerapporten og kundevisningen skal kunne saettes ind i en MAIL som en
+ * rigtig tabel - og i et REGNEARK som celler. Det er to formater paa én
+ * gang, og udklipsholderen kan baere begge:
+ *
+ *   text/html   en tabel med INLINE-stil. Mailprogrammer (Outlook, Gmail)
+ *               smider <style> og klasser vaek; kun style="" overlever.
+ *               Ingen var(--farve): temaets farver findes ikke i en mail.
+ *   text/plain  tabulator-separeret. Et regneark laegger hver vaerdi i sin
+ *               egen celle, og et tekstfelt faar noget, der kan laeses.
+ *
+ * Ingen udregninger her - tallene kommer faerdige fra serveren (beregn.js).
+ */
+
+const MAIL_SKRIFT = 'font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#222';
+const MAIL_CELLE = 'border:1px solid #c8c8c8;padding:4px 8px;vertical-align:top';
+
+/**
+ * Én tabel til en mail.
+ *
+ * `hoved` og raekkerne er TEKST (ikke HTML) - alt escapes her, ét sted.
+ * `tal` er de kolonne-indeks, der skal hoejrestilles. `fod` er en fed
+ * totalraekke. `cellpadding`/`border` er med for Outlooks Word-motor, der
+ * ikke altid laeser padding fra style.
+ */
+function mailTabelHtml(hoved, raekker, fod, tal) {
+  const hoejre = new Set(tal || []);
+  const celle = (tag, v, i, ekstra) => `<${tag} style="${MAIL_CELLE};${hoejre.has(i) ? 'text-align:right;' : 'text-align:left;'}${ekstra || ''}">${esc(v === null || v === undefined ? '' : String(v))}</${tag}>`;
+  return `<table cellpadding="4" cellspacing="0" border="1" style="border-collapse:collapse;${MAIL_SKRIFT};margin:0 0 14px">
+<thead><tr>${hoved.map((v, i) => celle('th', v, i, 'background:#f0f0f0;font-weight:bold')).join('')}</tr></thead>
+<tbody>${raekker.map((r) => `<tr>${r.map((v, i) => celle('td', v, i)).join('')}</tr>`).join('\n')}</tbody>
+${fod ? `<tfoot><tr>${fod.map((v, i) => celle('td', v, i, 'font-weight:bold;background:#f7f7f7')).join('')}</tr></tfoot>` : ''}
+</table>`;
+}
+
+/** En raekke til et regneark: tabulator og linjeskift i en vaerdi ville flytte cellerne. */
+function tsvLinje(celler) {
+  return celler.map((v) => String(v === null || v === undefined ? '' : v).replace(/[\t\r\n]+/g, ' ')).join('\t');
+}
+
+function tsvTabel(hoved, raekker, fod) {
+  return [hoved, ...raekker, ...(fod ? [fod] : [])].map(tsvLinje).join('\n');
+}
+
+function mailOverskrift(tekst, niveau) {
+  const str = niveau === 1 ? 'font-size:18px' : 'font-size:15px';
+  return `<p style="${MAIL_SKRIFT};${str};font-weight:bold;margin:14px 0 6px">${esc(tekst)}</p>`;
+}
+
+function mailAfsnit(tekst) {
+  return `<p style="${MAIL_SKRIFT};margin:0 0 10px">${esc(tekst)}</p>`;
+}
+
+/**
+ * Ugerapporten som {html, tekst}. Samme afsnit og samme raekkefoelge som
+ * skaermen og papiret: sagerne pr. dag foerst - det er dem, der skal
+ * skrives af - saa opgaverne, saa projekterne.
+ */
+function rapportRigTekst(d, decimal) {
+  const f = decimal ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
+  const r = d.report;
+  const ts = d.timesheet;
+  const html = [];
+  const tekst = [];
+  const titel = `${d.from} – ${d.to}`;
+  const resume = `${f(r.total)} in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`
+    + `${r.norm ? ` · expected ${f(r.norm)}` : ''}`;
+  html.push(mailOverskrift(titel, 1), mailAfsnit(resume));
+  tekst.push(titel, resume);
+
+  const afsnit = (navn, hoved, raekker, fod, tal) => {
+    html.push(mailOverskrift(navn, 2), mailTabelHtml(hoved, raekker, fod, tal));
+    tekst.push('', navn, tsvTabel(hoved, raekker, fod));
+  };
+  const dage = ts ? ts.dage.map((iso) => iso.slice(5)) : [];
+  const dagTal = (kort) => ts.dage.map((iso) => (kort[iso] ? f(kort[iso]) : ''));
+  const talFra = (start) => dage.map((_, i) => start + i).concat(start + dage.length);
+
+  if (ts && ts.caseRows.length) {
+    afsnit('Per case number, per day', ['Case', ...dage, 'Total'],
+      ts.caseRows.map((c) => [c.case || '(no case number)', ...dagTal(c.dage), f(c.total)]),
+      ['Total', ...dagTal(ts.perDay), f(ts.total)], talFra(1));
+  }
+  if (ts && ts.rows.length) {
+    afsnit('Per day, per task', ['Case', 'Project', 'Task', ...dage, 'Total'],
+      ts.rows.map((x) => [x.case || '', x.project || '', x.title, ...dagTal(x.dage), f(x.total)]),
+      ['Total', '', '', ...dagTal(ts.perDay), f(ts.total)], talFra(3));
+  }
+  for (const p of r.projects) {
+    afsnit(`${p.name} — ${f(p.minutter)}`, ['Task', 'Estimated', 'Spent', 'Status'],
+      p.tasks.map((t) => [t.title, t.estimateMinutes ? f(t.estimateMinutes) : '',
+        f(t.minutter), t.completedIPerioden ? 'Completed' : 'Still open']),
+      null, [1, 2]);
+  }
+  return { html: html.join('\n'), tekst: `${tekst.join('\n')}\n` };
+}
+
+/** Kundevisningen som {html, tekst} - det samme ark som paa skaermen og i print. */
+function kundeRigTekst(p, opgaver, rollup, forbrug) {
+  const f = tovoBeregn.formatVarighed;
+  const sorteret = opgaver.slice().sort((a, b) => (a.position || 0) - (b.position || 0));
+  const hoved = ['Task', 'Status', 'Estimated', 'Spent'];
+  const raekker = sorteret.map((t) => [t.title, t.status === 'done' ? 'Done' : 'In progress',
+    t.estimateMinutes ? f(t.estimateMinutes) : '—', f(forbrug[t.id] || 0)]);
+  const fod = ['Total', '', f(rollup.estimat), f(rollup.forbrugt)];
+  const html = [mailOverskrift(p.name, 1)];
+  const tekst = [p.name];
+  if (p.customer) { html.push(mailAfsnit(p.customer)); tekst.push(p.customer); }
+  html.push(mailTabelHtml(hoved, raekker, fod, [2, 3]));
+  tekst.push('', tsvTabel(hoved, raekker, fod));
+  if (rollup.ramme) {
+    const ramme = [['Agreed budget', f(rollup.ramme)], ['Spent', f(rollup.forbrugt)],
+      ['Remaining', f(Math.max(0, rollup.resterende))]];
+    html.push(mailTabelHtml(['Budget', ''], ramme, null, [1]));
+    tekst.push('', tsvTabel(['Budget', ''], ramme));
+  }
+  return { html: html.join('\n'), tekst: `${tekst.join('\n')}\n` };
+}
+
+/**
+ * Skriv begge formater til udklipsholderen.
+ *
+ * SKAL kaldes synkront fra klikket: Safari godtager kun en ClipboardItem,
+ * der er oprettet inde i brugerens handling (Sagu v24). Derfor bygges
+ * indholdet FOER kaldet, og blobbene gives som loefter.
+ *
+ * Over http (panelets IP:port) findes `navigator.clipboard` ikke. Saa
+ * bruges `copy`-haendelsen: den kraever ingen tilladelse, kun et klik - men
+ * den fyrer kun med en markering, saa den faar et skjult felt at kopiere
+ * fra (§9e). Returnerer true, hvis en af vejene lykkedes.
+ */
+async function kopierRigTekst(indhold) {
+  const { html, tekst } = indhold;
+  if (window.isSecureContext && navigator.clipboard && navigator.clipboard.write
+    && typeof ClipboardItem !== 'undefined') {
+    try {
+      const item = new ClipboardItem({
+        'text/html': Promise.resolve(new Blob([html], { type: 'text/html' })),
+        'text/plain': Promise.resolve(new Blob([tekst], { type: 'text/plain' })),
+      });
+      await navigator.clipboard.write([item]);
+      return true;
+    } catch { /* falder igennem til copy-haendelsen */ }
+  }
+  return kopierMedHaendelse(html, tekst);
+}
+
+function kopierMedHaendelse(html, tekst) {
+  let skrevet = false;
+  const lyt = (e) => {
+    e.clipboardData.setData('text/html', html);
+    e.clipboardData.setData('text/plain', tekst);
+    e.preventDefault();
+    skrevet = true;
+  };
+  const felt = document.createElement('textarea');
+  felt.value = ' ';
+  felt.setAttribute('readonly', '');
+  felt.style.position = 'fixed';
+  felt.style.top = '-1000px';
+  document.body.appendChild(felt);
+  document.addEventListener('copy', lyt, true);
+  try {
+    felt.select();
+    const ok = document.execCommand('copy');
+    return ok && skrevet;
+  } catch {
+    return false;
+  } finally {
+    document.removeEventListener('copy', lyt, true);
+    felt.remove();
+  }
 }

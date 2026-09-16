@@ -204,7 +204,7 @@ const GUIDE_DELE = [
               ['ICAL', 'Tasks with a date, as a feed your calendar subscribes to. On iOS, turn &ldquo;Remove Alarms&rdquo; off, or the reminders are stripped.'],
               ['MCP', 'Claude can search, log time and read the week report — through the same functions the app itself uses, so the numbers cannot drift.'],
             ],
-            go: [['settings', 'Open Settings']],
+            go: [['settings/connections', 'Open Settings']],
           },
         ],
       },
@@ -220,7 +220,7 @@ const GUIDE_DELE = [
               ['THE TIMES', 'Start and end only decide how much of the day has passed. Time logged at ten in the evening still counts in full.'],
               ['REPORT', 'Mid-week, the total is held up against what has fallen due so far &mdash; not against the whole week. Otherwise you are seventeen hours behind every Tuesday.'],
             ],
-            go: [['settings', 'Open Settings']],
+            go: [['settings/general', 'Open Settings']],
           },
           {
             titel: 'It updates itself',
@@ -245,7 +245,7 @@ const GUIDE_DELE = [
               ['LOST THE PHONE', 'Ten recovery codes are shown once, when you turn it on. Each works a single time, in place of the six digits. Keep them somewhere that is not the phone.'],
               ['PASSKEYS', 'A passkey already proves it is your device, so it signs you straight in — no code on top.'],
             ],
-            go: [['settings', 'Open Settings']],
+            go: [['settings/account', 'Open Settings']],
           },
         ],
       },
@@ -285,6 +285,12 @@ function sideGuide() {
 
 function bindGuide() {
   document.querySelectorAll('[data-guide-go]').forEach((el) => {
-    el.addEventListener('click', () => gaaTil(el.dataset.guideGo));
+    /* `settings/connections`: en knap, der peger paa et afsnit i
+       indstillingerne, skal ogsaa vaelge fanen - ellers lander man paa den,
+       der sidst var aaben, og afsnittet er skjult (§9f). */
+    el.addEventListener('click', () => {
+      const [view, fane] = el.dataset.guideGo.split('/');
+      gaaTil(view, fane ? { fane } : undefined);
+    });
   });
 }

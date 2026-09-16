@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 30;
+const APP_VERSION = 31;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -36,6 +36,9 @@ const state = {
   todayMinutes: 0,
   openProject: null,
   openTag: null,
+  // Fanen i indstillingerne, som ADRESSEN bad om (/settings/account). Tom =
+  // den, der sidst var aaben paa denne maskine (localStorage, §9f).
+  settingsFane: null,
 };
 
 /* ------------------------------------------------------------ hjaelpere */
@@ -1157,6 +1160,7 @@ function gaaTil(view, opt) {
    */
   state.openProject = (opt && opt.project !== undefined) ? opt.project : null;
   state.openTag = (opt && opt.tag !== undefined) ? opt.tag : (view === 'tags' ? state.openTag : null);
+  state.settingsFane = (opt && opt.fane) || null;
   document.body.classList.remove('navopen');
   opdaterNav();
   // Feltet arbejder i den side, man staar paa - og skal vise det.
@@ -1166,6 +1170,58 @@ function gaaTil(view, opt) {
   // hver gang en inline-redigering gentegner samme side (Beanledger v24).
   if (skifter) tilToppen();
 }
+
+/*
+ * Adressen foelger siden (RUNE-ERFARINGER §9g).
+ *
+ * Én ting styrer det: `tegnSide()`, som alle sider gaar igennem. De mange
+ * steder, der saetter `state.view` eller `state.openProject`, behoever saa
+ * ikke vide noget om historik.
+ *
+ * Der skrives KUN, naar stien faktisk er en anden. Ellers laver
+ * tilbage-knappens egen optegning en ny post, og man kan aldrig komme
+ * laengere tilbage end ét skridt. Den foerste optegning RETTER kun adressen
+ * (/ -> /today) - den maa ikke koste et klik at komme ud af appen igen.
+ *
+ * `erstat`: en rettelse, ikke et skridt - et projekt, der ikke fandtes, eller
+ * et faneskift i indstillingerne.
+ */
+const adresse = { klar: false };
+
+function aktuelAdresse() {
+  return tovoRuter.stiFor({
+    view: state.view,
+    project: state.openProject,
+    tag: state.openTag,
+    fane: state.view === 'settings' ? state.settingsFane : null,
+  });
+}
+
+function synkAdresse(erstat) {
+  const sti = aktuelAdresse();
+  if (!sti) return;
+  // Hjemmeskaermen laeser start_url fra manifestet - ikke adresselinjen.
+  const man = document.querySelector('link[rel="manifest"]');
+  if (man) man.setAttribute('href', `/manifest.webmanifest?start=${encodeURIComponent(sti)}`);
+  if (location.pathname !== sti) {
+    const metode = adresse.klar && !erstat ? 'pushState' : 'replaceState';
+    history[metode]({}, '', sti + location.search + location.hash);
+  }
+  adresse.klar = true;
+}
+
+/** Adressen -> state. Ved opstart (foer login) og ved tilbage/frem. */
+function tilstandFraAdresse() {
+  const t = tovoRuter.laesSti(location.pathname) || { view: 'today' };
+  return { view: t.view, opt: { project: t.project || null, tag: t.tag || null, fane: t.fane || null } };
+}
+
+window.addEventListener('popstate', () => {
+  if (!state.user) return;
+  const { view, opt } = tilstandFraAdresse();
+  // Stien staar allerede i adresselinjen, saa synkAdresse() skriver intet.
+  gaaTil(view, opt);
+});
 
 /*
  * Live-opdatering: serveren siger til, naar noget er aendret.
@@ -1353,6 +1409,14 @@ function visBrugerMenu() {
 async function tegnSide() {
   const host = document.getElementById('pageHost');
   if (!host) return;
+  synkAdresse();
+  await tegnSelveSiden(host);
+  // Siden kan have rettet sin egen tilstand undervejs (et projekt, der ikke
+  // fandtes, en admin-fane for en almindelig bruger). Den rettelse ERSTATTER.
+  synkAdresse(true);
+}
+
+async function tegnSelveSiden(host) {
   const v = viewById(state.view);
   // .page er dodas indholdsbredde (760 px). .main centrerer sine boern, saa
   // uden wrapperen bliver siden shrink-to-fit og staar midt paa skaermen.
@@ -1422,6 +1486,20 @@ async function settingsHtml() {
         has their own.</p>
     </div>
 
+    <!-- Faner (RUNE-ERFARINGER §9f). ALT tegnes, ét vises: fanerne skjuler
+         med hidden og udelader intet, saa bindSettings() finder hvert id
+         uanset hvilken fane der er aaben. Gem-knappen i »Your working day«
+         samler kun felter fra sit eget kort - ingen knap gemmer paa tvaers
+         af faner, og saa kan opdelingen ikke tabe et felt. -->
+    <div class="faner" role="tablist">
+      <button class="fanebtn" role="tab" data-fane="general">General</button>
+      <button class="fanebtn" role="tab" data-fane="account">Account</button>
+      <button class="fanebtn" role="tab" data-fane="connections">Connections</button>
+      <button class="fanebtn" role="tab" data-fane="data">Data</button>
+      ${state.user.isAdmin ? '<button class="fanebtn" role="tab" data-fane="server">Server</button>' : ''}
+    </div>
+
+    <div class="fane" data-fane="general">
     <div class="card">
       <h2>Capture syntax</h2>
       <p class="meta">What the search field understands. The same list is in the Guide, and
@@ -1465,6 +1543,20 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Case numbers</h2>
+      <p class="meta">A task can carry the number the hours are booked against in your other
+        system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
+        every task inherits it.</p>
+      <label class="field"><span>Link to open a case</span>
+        <input class="input" id="setCaseUrl" placeholder="https://firma.service-now.com/nav_to.do?uri=/task.do?sysparm_query=number={case}"
+          value="${esc((state.settings || {}).case_url || '')}"></label>
+      <p class="meta">Put <code>{case}</code> where the number goes. Then every case number in
+        tovo becomes a link straight into the case. Only http and https are accepted.</p>
+    </div>
+    </div>
+
+    <div class="fane" data-fane="account">
+    <div class="card">
       <h2>Account</h2>
       <p class="meta">${esc(state.user.username)}${state.user.isAdmin ? ' · administrator' : ''}</p>
       <form id="pwForm">
@@ -1476,6 +1568,26 @@ async function settingsHtml() {
       </form>
     </div>
 
+    <div class="card">
+      <h2>Two-factor</h2>
+      <p class="meta">A code from an authenticator app, on top of your password. Unlike a
+        passkey it works over plain http too — which is how this server is reached from
+        the panel, and where the password alone would otherwise be the only thing between
+        your data and whoever has it.</p>
+      <div id="totpKort" class="meta">Loading…</div>
+    </div>
+
+    <div class="card">
+      <h2>Passkeys</h2>
+      ${pk.blocked ? `<p class="meta">${esc(pk.blocked)}</p>` : `
+        <p class="meta">A passkey is an extra way in — it never replaces the password.</p>
+        <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
+      ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
+        <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
+    </div>
+    </div>
+
+    <div class="fane" data-fane="connections">
     <div class="card">
       <h2>Claude and other clients</h2>
       <p class="meta">tovo speaks MCP, so Claude can start timers, log time afterwards and read
@@ -1540,42 +1652,14 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
-      <h2>Two-factor</h2>
-      <p class="meta">A code from an authenticator app, on top of your password. Unlike a
-        passkey it works over plain http too — which is how this server is reached from
-        the panel, and where the password alone would otherwise be the only thing between
-        your data and whoever has it.</p>
-      <div id="totpKort" class="meta">Loading…</div>
-    </div>
-
-    <div class="card">
-      <h2>Passkeys</h2>
-      ${pk.blocked ? `<p class="meta">${esc(pk.blocked)}</p>` : `
-        <p class="meta">A passkey is an extra way in — it never replaces the password.</p>
-        <div class="row"><button class="btn" id="pkAdd">Add a passkey</button></div>`}
-      ${pk.credentials.length ? `<ul class="plain">${pk.credentials.map((c) => `
-        <li>${esc(c.name)} <button class="linkbtn" data-pk="${esc(c.id)}">remove</button></li>`).join('')}</ul>` : ''}
-    </div>
-
-    <div class="card">
       <h2>Sagu</h2>
       <p class="meta">Sagu is where the notes live. Connect it, and a task can point at a
         note — you read it, and answer its comments, without leaving tovo.</p>
       <div id="saguKort" class="meta">Loading…</div>
     </div>
-
-    <div class="card">
-      <h2>Case numbers</h2>
-      <p class="meta">A task can carry the number the hours are booked against in your other
-        system — write <code>:SAG-1234</code> when you capture it, or set one on the project so
-        every task inherits it.</p>
-      <label class="field"><span>Link to open a case</span>
-        <input class="input" id="setCaseUrl" placeholder="https://firma.service-now.com/nav_to.do?uri=/task.do?sysparm_query=number={case}"
-          value="${esc((state.settings || {}).case_url || '')}"></label>
-      <p class="meta">Put <code>{case}</code> where the number goes. Then every case number in
-        tovo becomes a link straight into the case. Only http and https are accepted.</p>
     </div>
 
+    <div class="fane" data-fane="data">
     <div class="card">
       <h2>Your data</h2>
       <p class="meta">Everything you have, in one open file. Secrets are left out on purpose:
@@ -1587,17 +1671,59 @@ async function settingsHtml() {
       <p class="meta">For a real backup, use the panel's own — it covers the whole data folder,
         database and all.</p>
     </div>
+    </div>
 
     ${state.user.isAdmin ? `
+    <div class="fane" data-fane="server">
     <div class="card">
       <h2>This server</h2>
       <label class="check"><input type="checkbox" id="setReg" ${state.config.allowRegistration ? 'checked' : ''}>
         <span>Let new users sign up</span></label>
       <p class="meta">Users never see each other's data — not even the administrator.</p>
+    </div>
     </div>` : ''}`;
 }
 
+/*
+ * Fanerne i indstillingerne (RUNE-ERFARINGER §9f).
+ *
+ * Valget bor i localStorage, ikke i `settings`: det afhaenger af, hvad man
+ * sidst var i gang med paa DENNE maskine - samme begrundelse som temaet og
+ * den skjulte sidemenu. Adressen (/settings/account) vinder, naar den har et.
+ *
+ * Findes den oenskede fane ikke for brugeren - »Server« gemt af en
+ * administrator, og nu logger en almindelig bruger ind - falder vi tilbage
+ * til den foerste. Ellers aabner man indstillingerne og ser en TOM side.
+ */
+const FANE_NOEGLE = 'tovo_settings_fane';
+
+function visFane(oensket, skifter) {
+  const faner = [...document.querySelectorAll('#pageHost .fane')].map((el) => el.dataset.fane);
+  if (!faner.length) return;
+  const valgt = faner.includes(oensket) ? oensket : faner[0];
+  document.querySelectorAll('#pageHost .fane').forEach((el) => { el.hidden = el.dataset.fane !== valgt; });
+  document.querySelectorAll('#pageHost .fanebtn').forEach((el) => {
+    const paa = el.dataset.fane === valgt;
+    el.classList.toggle('on', paa);
+    el.setAttribute('aria-selected', paa ? 'true' : 'false');
+  });
+  try { localStorage.setItem(FANE_NOEGLE, valgt); } catch { /* privat vindue */ }
+  state.settingsFane = valgt;
+  // Et faneskift er ikke et skridt i historikken - adressen rettes bare.
+  synkAdresse(true);
+  // En fane, man skifter til, skal begynde ved sin foerste overskrift - ikke
+  // midt i, fordi den forrige var laengere.
+  if (skifter) tilToppen();
+}
+
 function bindSettings() {
+  let gemt = null;
+  try { gemt = localStorage.getItem(FANE_NOEGLE); } catch { /* privat vindue */ }
+  visFane(state.settingsFane || gemt);
+  document.querySelectorAll('#pageHost .fanebtn').forEach((el) => {
+    el.addEventListener('click', () => visFane(el.dataset.fane, true));
+  });
+
   document.querySelectorAll('[data-tema]').forEach((el) => {
     el.addEventListener('click', () => { anvendTema(el.dataset.tema); opdaterTemaKnap(); tegnSide(); });
   });
@@ -1827,7 +1953,8 @@ function visNoegle(noegle) {
 async function registrerSW() {
   if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
   try {
-    const reg = await navigator.serviceWorker.register('sw.js');
+    // Absolut: paa /projects/<id> ville 'sw.js' blive /projects/sw.js (§9g).
+    const reg = await navigator.serviceWorker.register('/sw.js');
 
     /*
      * En web app paa hjemmeskaermen bliver stort set ALDRIG genindlaest: den
@@ -1888,6 +2015,13 @@ function fortsaetTilConnector() {
 
 (async function start() {
   anvendTema(nuvaerendeTema());
+  /* Startsiden laeses FOER login: skulle man logge ind undervejs, lander man
+     alligevel dér, adressen pegede (§9g). */
+  const fraAdresse = tilstandFraAdresse();
+  state.view = fraAdresse.view;
+  state.openProject = fraAdresse.opt.project;
+  state.openTag = fraAdresse.opt.tag;
+  state.settingsFane = fraAdresse.opt.fane;
   try {
     state.config = await api('GET', '/api/public-config');
     document.title = state.config.appName || 'tovo';

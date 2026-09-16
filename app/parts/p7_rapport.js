@@ -84,6 +84,8 @@ async function tegnRapport() {
           title="Switch between decimal hours (3,5) and hours and minutes (3h 30m). Decimal hours are what you type into the other system."
           >Format: ${decimal ? '3,5' : '3h 30m'}</button>
         <button class="btn" id="rExcel">Excel</button>
+        <button class="btn" id="rKopier"
+          title="A table for an email, and cells for a spreadsheet — whichever you paste into.">Copy table</button>
         <button class="btn" id="rMarkdown">Copy as markdown</button>
         <button class="btn" id="rPrint">Print / PDF</button>
       </span>
@@ -204,6 +206,11 @@ async function tegnRapport() {
   document.getElementById('rFormat').addEventListener('click', () => {
     try { localStorage.setItem('tovo_rapport_decimal', decimal ? '0' : '1'); } catch { /* privat */ }
     tegnRapport();
+  });
+  document.getElementById('rKopier').addEventListener('click', async () => {
+    // Bygges FOER kaldet - kopierRigTekst skal naa ClipboardItem i klikket.
+    const ok = await kopierRigTekst(rapportRigTekst(d, decimal));
+    toast(ok ? 'Report copied — paste it into an email or a spreadsheet.' : 'Could not reach the clipboard.');
   });
   document.getElementById('rMarkdown').addEventListener('click', async () => {
     const md = rapportMarkdown(d);

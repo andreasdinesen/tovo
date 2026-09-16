@@ -27,6 +27,9 @@ const { DatabaseSync } = require('node:sqlite');
 // et start-link eller MCP.
 const parse = require('./shared/parse.js');
 const beregn = require('./shared/beregn.js');
+// Sidernes adresser - den samme liste, som fladen skriver i adresselinjen.
+const ruter = require('./shared/ruter.js');
+const { klientIp } = require('./klientip.js');
 
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
 
@@ -538,9 +541,11 @@ function sessionCookie(req, token, maxAge) {
   return bits.join('; ');
 }
 
+// Den FOERSTE vaerdi i X-Forwarded-For vaelger klienten selv - saa kunne
+// login-spaerringen omgaas med en ny opdigtet adresse pr. forsoeg. Reglen
+// bor i app/klientip.js, som er kopieret raat til alle runerne.
 function clientIp(req) {
-  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || req.socket.remoteAddress || 'ukendt';
+  return klientIp(req);
 }
 
 /* ------------------------------------------------------------ http-svar */
@@ -727,6 +732,38 @@ function serveStatic(req, res, urlPath) {
     'Cache-Control': (isHtml || DEV) ? 'no-store' : 'public, max-age=31536000, immutable',
   });
   fs.createReadStream(full).pipe(res);
+}
+
+/*
+ * Manifestet med en startside.
+ *
+ * Laegger man appen paa hjemmeskaermen fra /report, skal ikonet aabne
+ * Report. Hjemmeskaermen laeser `start_url` fra manifestet - ikke fra
+ * adresselinjen - saa uden det her aabner enhver genvej forsiden. Fladen
+ * saetter `?start=<sti>` paa manifest-linket ved hver optegning.
+ *
+ * Stien slaas op i ruteren og skrives KANONISK tilbage: et manifest maa ikke
+ * pege paa hvad som helst, nogen har skrevet i adressen.
+ */
+function serverManifest(req, res, start) {
+  let m;
+  try {
+    m = JSON.parse(fs.readFileSync(path.join(PUBLIC_DIR, 'manifest.webmanifest'), 'utf8'));
+  } catch {
+    apiFejl(res, 404, 'not_found', 'No such file.');
+    return;
+  }
+  const side = ruter.laesSti(start);
+  m.start_url = side ? ruter.stiFor(side) : '/';
+  m.scope = '/';
+  const krop = JSON.stringify(m);
+  securityHeaders(res);
+  res.writeHead(200, {
+    'Content-Type': MIME['.webmanifest'],
+    'Content-Length': Buffer.byteLength(krop),
+    'Cache-Control': 'no-store',
+  });
+  res.end(req.method === 'HEAD' ? undefined : krop);
 }
 
 /* ------------------------------------------------- adgangsnoegler */
@@ -3767,6 +3804,20 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       apiFejl(res, 405, 'method_not_allowed', 'That method is not allowed here.');
+      return;
+    }
+    /*
+     * /report, /projects/<id>, /settings/account ... er ikke filer - de er
+     * sider INDE i appen. Browseren skal have index.html paa dem, ellers doer
+     * et genindlaes (eller et bogmaerke) i en 404. Kun de kendte stier, jf.
+     * app/shared/ruter.js - aldrig en catch-all (RUNE-ERFARINGER §9g).
+     */
+    if (urlPath !== '/' && ruter.laesSti(urlPath)) {
+      serveStatic(req, res, '/');
+      return;
+    }
+    if (urlPath === '/manifest.webmanifest' && query.has('start')) {
+      serverManifest(req, res, query.get('start'));
       return;
     }
     serveStatic(req, res, urlPath);
