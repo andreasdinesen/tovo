@@ -98,6 +98,10 @@ app/parts/p8_kalender.js ugekalenderen
 app/parts/p9_polering.js Toggl-import, genveje, Excel-download
 app/parts/pa_tavle.js  kanban-tavlen
 app/parts/pb_tags.js   mærkaterne
+app/parts/pc_sagu.js   noterne fra Sagu i opgaveruden
+app/parts/pd_guide.js  guiden
+app/parts/pe_servicenow.js ServiceNow-importruden
+app/parts/pf_stjerner.js stjernerne: afsnittet i sidebaren og båndet over søgefeltet
 ```
 
 **Delene samles alfabetisk** til `app/public/app.js`, og `app/shared/*.js` lægges FØRST.

@@ -323,7 +323,7 @@ function opret(srv) {
     {
       name: 'update_task',
       scope: 'write',
-      description: 'Change a task: title, due date, priority or project.',
+      description: 'Change a task: title, due date, priority, project or star.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -332,6 +332,11 @@ function opret(srv) {
           due: { type: 'string', description: 'YYYY-MM-DD, or "" to clear it.' },
           priority: { type: 'string', enum: ['low', 'medium', 'high'] },
           project: { type: 'string', description: 'Project id, or "" for no project.' },
+          starred: {
+            type: 'boolean',
+            description: 'Star it, so it sits in the sidebar and above the search field '
+              + 'with a one-click timer.',
+          },
         },
         required: ['id'],
       },
@@ -349,7 +354,11 @@ function opret(srv) {
           }
           felter.projectId = a.project || null;
         }
-        const ny = srv.gemItem(auth.user.id, Object.assign({}, opgave, felter));
+        let ny = srv.gemItem(auth.user.id, Object.assign({}, opgave, felter));
+        // Stjernen gaar gennem SERVERENS egen funktion, ikke gennem felterne:
+        // det er dén, der tildeler `starredSeq`, og et loebenummer, kaldsstedet
+        // skal huske, bliver glemt ét sted (samme regel som `fuldfoer`).
+        if (a.starred !== undefined) ny = srv.saetStjerne(auth.user.id, ny, !!a.starred);
         return { tekst: `Updated: ${ny.title}`, data: { item: ny } };
       },
     },

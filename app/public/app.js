@@ -2348,7 +2348,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2371,6 +2371,10 @@ const state = {
   unassigned: 0,
   tags: [],
   items: [],
+  // De stjernemarkerede opgaver, som serveren har dem: {id, title, projectId}.
+  // De skal kunne naas fra ENHVER skaerm, saa de foelger med i /state og
+  // ikke i sidernes egne kald.
+  starred: [],
   counts: {},
   todayMinutes: 0,
   openProject: null,
@@ -2658,6 +2662,10 @@ const ICONS = {
   chevron: '<path d="M9 6l6 6-6 6"/>',
   kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
   tags: '<path d="M5 9.5h14M5 14.5h14M10.5 4.5L8.5 19.5M15.5 4.5l-2 15"/>',
+  // Ordret de samme to stjerner som Sagu bruger, saa en markering ser ens ud
+  // i de to apps, der staar aabne ved siden af hinanden.
+  stjerne: '<path d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.6-5 2.6.9-5.6-4-4 5.6-.8z"/>',
+  stjerneFuld: '<path fill="currentColor" d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.6-5 2.6.9-5.6-4-4 5.6-.8z"/>',
 };
 
 function icon(name, size = 18) {
@@ -2922,6 +2930,9 @@ function shellHtml() {
         <button class="pinbtn" id="pinBtn" aria-label="Hide the menu"
           title="Hide the menu">${icon('pin', 16)}</button></div>
       <div id="navHost">${navHtml()}</div>
+      <!-- Fyldes af tegnStjerner() i bindShell - samme sted tegner OG binder,
+           saa de to ikke kan skilles ad igen (Sagu, 2026-08-21). -->
+      <div id="stjerneHost"></div>
       <div class="sidebar-foot">
         <div id="timerHost"></div>
         <button class="nav-item" id="userBtn"
@@ -2934,6 +2945,12 @@ function shellHtml() {
         <div class="toprow">
           <div class="stats meta" id="statsHost">${statsHtml()}</div>
         </div>
+        <!-- Stjernebaandet staar UNDER taellerne og OVER feltet, praecis som
+             Sagus fanelinje: taellerne folder sig vaek, naar man ruller
+             (body.rullet .toprow), og saa bliver genvejene staaende. Laa det
+             i .toprow, ville det forsvinde netop naar man er langt nede i en
+             liste og vil skifte opgave. -->
+        <div class="stjernebar" id="stjerneBar" hidden></div>
         <div class="omni-card" id="omniCard">
           <div class="omni-field">
             <span class="omni-icon">${icon('search', 22)}</span>
@@ -3410,6 +3427,9 @@ function opdaterNav() {
   const host = document.getElementById('navHost');
   if (host) host.innerHTML = navHtml();
   bindNav();
+  // Stjernerne aendrer sig ved hvert state-kald (en timer startet, en opgave
+  // lukket), og de staar i skallen, som render() kun tegner ved login.
+  tegnStjerner();
   document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
     el.setAttribute('aria-current', el.dataset.view === state.view ? 'page' : 'false');
   });
@@ -3435,6 +3455,7 @@ function bindShell() {
   document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
   document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
   bindOmni();
+  tegnStjerner();
   // Timeren tegnes IGEN her. hentState() koerer FOER skallen findes ved
   // opstart, saa #timerHost fandtes ikke, og timeren faldt tilbage til den
   // flydende bjaelke - ogsaa paa en bred skaerm. Symptomet var, at den
@@ -3552,6 +3573,7 @@ async function hentState() {
     state.settings = d.settings || {};
     state.projects = d.projects || [];
     state.tags = d.tags || [];
+    state.starred = d.starred || [];
     state.unassigned = d.unassigned || 0;
     state.counts = d.counts || {};
     state.todayMinutes = d.todayMinutes || 0;
@@ -4902,6 +4924,7 @@ function opgaveRaekke(it, opt) {
       <div class="item-title">${esc(it.title)}</div>
       ${dele.length ? `<div class="item-meta meta">${dele.join(' · ')}</div>` : ''}
     </div>
+    ${it.status === 'done' ? '' : stjerneKnapHtml(it)}
     ${it.status === 'done' ? '' : `<button class="playbtn${koerer ? ' on' : ''}" data-start="${esc(it.id)}"
       aria-label="${koerer ? 'Stop the timer' : 'Start a timer'}"
       title="${koerer ? 'Stop the timer' : 'Start a timer'}">${icon(koerer ? 'stop' : 'play', 16)}</button>`}
@@ -4910,6 +4933,7 @@ function opgaveRaekke(it, opt) {
 
 /** Binder en liste af opgaverakker. Kaldes ÉT sted pr. optegning. */
 function bindOpgaveListe(host) {
+  bindStjerneKnapper(host);
   host.querySelectorAll('[data-fold]').forEach((el) => {
     el.addEventListener('click', () => {
       saetAfsnitAabent(el.dataset.fold, el.getAttribute('aria-expanded') !== 'true');
@@ -5501,6 +5525,7 @@ async function aabnOpgave(id) {
           aria-label="${it.status === 'done' ? 'Reopen' : 'Complete'}"></button>
         <input class="detail-title input" id="dTitle" value="${esc(it.title)}"
           title="You can write #tag, @project, :case, ~estimate and !date here too">
+        ${stjerneKnapHtml(it, { stor: true })}
       </div>
 
       <div class="tagrow" id="dTags"></div>
@@ -5616,6 +5641,7 @@ function linkHtml(l) {
 
 function bindDetalje(host, it, startLink) {
   const luk = () => { host.remove(); detailState.id = null; };
+  bindStjerneKnapper(host);
 
   /*
    * Maerkaterne paa opgaven.
@@ -8326,6 +8352,16 @@ const GUIDE_DELE = [
             go: [['today', 'Open Today']],
           },
           {
+            titel: 'Starred tasks',
+            lead: 'The handful you keep coming back to, one click from every screen.',
+            raekker: [
+              ['STAR', 'The star on a task row — or in the task itself — pins it to the sidebar <em>and</em> to the band above the search field.'],
+              ['CLICK', 'The name opens the task, the triangle starts or stops the timer. Same split as any task row.'],
+              ['ORDER', 'They stay in the order you starred them, and a task drops out of both lists when you complete it. The star stays on it.'],
+            ],
+            kort: 'it is a shortcut, not a second task list — twenty is the most that will show.',
+          },
+          {
             titel: 'Logging by hand',
             lead: 'The timer and typing it in afterwards are equal ways in.',
             raekker: [
@@ -8698,4 +8734,214 @@ async function snUdfoer() {
     document.getElementById('snClose3').addEventListener('click',
       () => document.getElementById('snModal').remove());
   }
+}
+
+/* ---- pf_stjerner.js ---- */
+'use strict';
+/*
+ * tovo - stjernemarkerede opgaver.
+ *
+ * »Jeg kunne godt tænke mig muligheden for at kunne stjernemarkere opgaver
+ * som så lægger sig ude i venstre menu. Hvor man hurtigt kan starte en
+ * tidstagning på dem. Desuden måtte de også godt lægge sig oppe over
+ * søgefeltet som i sagu med noter« (Andreas, 2026-09-16).
+ *
+ * ── Ét sted tegner OG binder ──────────────────────────────────────────────
+ *
+ * `tegnStjerner()` skriver markup og saetter lytterne i samme kald. Stod
+ * markuppen i `shellHtml()` og bindingen her, ville punkterne efter hver
+ * fulde optegning se rigtige ud og ikke goere noget - praecis den fejl Sagus
+ * favoritter havde (RUNE-ERFARINGER, Sagu 2026-08-21).
+ *
+ * ── To steder, ét stykke logik ────────────────────────────────────────────
+ *
+ * Sidebaren og baandet over soegefeltet viser det samme: `state.starred`,
+ * som serveren har sorteret. Kun formen er forskellig, og de deler baade
+ * klik-handleren og spoergsmaalet om, hvorvidt timeren koerer paa raekken.
+ *
+ * Under mobilgraensen er sidebaren et overlay, man ikke kan se - der er
+ * baandet den ENESTE vej til en stjerne, og derfor vises det ogsaa dér.
+ * Sagu skjuler sine faner paa telefonen; her ville det tage funktionen vaek
+ * netop paa den skaerm, der ikke har et alternativ.
+ *
+ * ── Baandet er ikke en visning af data, det er en KNAPRAEKKE ──────────────
+ *
+ * Et klik paa navnet aabner opgaven, et klik paa trekanten starter timeren -
+ * samme fordeling som `opgaveRaekke()` har i listerne. En genvej, der gjorde
+ * noget ANDET end den raekke, den er en genvej til, skal man laere to gange.
+ */
+
+/** Samme fold-noegle som afsnittene: ét sted at rette, naeste gang de aendres. */
+function stjernerAabne() {
+  return afsnitAabent('stjerner', true);
+}
+
+/** Koerer timeren paa den her opgave lige nu? */
+function stjerneKoerer(id) {
+  return !!(timerState.data && timerState.data.entry.taskId === id);
+}
+
+function stjerneProjekt(t) {
+  const p = state.projects.find((x) => x.id === t.projectId);
+  return p ? p.name : '';
+}
+
+/** Titel-attributten paa begge former: navnet og hvor opgaven hoerer til. */
+function stjerneTitel(t) {
+  const p = stjerneProjekt(t);
+  return p ? `${t.title} — ${p}` : t.title;
+}
+
+function stjerneStartMaerke(id) {
+  return stjerneKoerer(id) ? 'Stop the timer' : 'Start a timer';
+}
+
+/* ------------------------------------------------------ sidebaren */
+
+function stjerneNavHtml() {
+  const liste = state.starred || [];
+  // Ingen stjerner: intet afsnit. En tom overskrift i sidebaren er en
+  // funktion, der ser ud til at vaere gaaet i stykker.
+  if (!liste.length) return '';
+  const aabne = stjernerAabne();
+  return `<nav class="nav">
+    <button class="nav-item stjerne-titel" data-stjernefold
+      aria-expanded="${aabne ? 'true' : 'false'}">
+      ${icon('stjerneFuld')}<span>Starred</span>
+      <span class="nav-count">${liste.length}</span>
+      <span class="stjerne-pil${aabne ? ' on' : ''}">${icon('chevron', 14)}</span>
+    </button>
+    ${aabne ? `<div class="nav-under">${liste.map((t) => {
+    const koerer = stjerneKoerer(t.id);
+    return `<div class="stjerne-raekke${koerer ? ' koerer' : ''}">
+        <button class="nav-item nav-sub stjerne-navn" data-stjerne="${esc(t.id)}"
+          title="${esc(stjerneTitel(t))}">
+          <span class="nav-prik"></span><span class="stjerne-tekst">${esc(t.title)}</span>
+        </button>
+        <button class="playbtn${koerer ? ' on' : ''}" data-stjernestart="${esc(t.id)}"
+          aria-label="${esc(stjerneStartMaerke(t.id))}"
+          title="${esc(stjerneStartMaerke(t.id))}">${icon(koerer ? 'stop' : 'play', 15)}</button>
+      </div>`;
+  }).join('')}</div>` : ''}
+  </nav>`;
+}
+
+/* --------------------------------------------- baandet over feltet */
+
+function stjerneBarHtml() {
+  return (state.starred || []).map((t) => {
+    const koerer = stjerneKoerer(t.id);
+    return `<div class="stjernefane${koerer ? ' koerer' : ''}">
+      <button class="stjernefane-knap" data-stjerne="${esc(t.id)}"
+        title="${esc(stjerneTitel(t))}">
+        ${icon('stjerneFuld', 13)}<span class="stjernefane-titel">${esc(t.title)}</span>
+      </button>
+      <button class="stjernefane-start" data-stjernestart="${esc(t.id)}"
+        aria-label="${esc(stjerneStartMaerke(t.id))}"
+        title="${esc(stjerneStartMaerke(t.id))}">${icon(koerer ? 'stop' : 'play', 14)}</button>
+    </div>`;
+  }).join('');
+}
+
+/* ------------------------------------------------------- optegning */
+
+/**
+ * Tegner BEGGE steder og binder dem. Kaldes fra `bindShell()` ved opstart og
+ * fra `opdaterNav()` ved hvert state-kald - de to steder, der i forvejen
+ * holder skallen ajour.
+ */
+function tegnStjerner() {
+  const nav = document.getElementById('stjerneHost');
+  if (nav) nav.innerHTML = stjerneNavHtml();
+
+  const bar = document.getElementById('stjerneBar');
+  if (bar) {
+    const html = stjerneBarHtml();
+    bar.innerHTML = html;
+    // `hidden` frem for en tom boks: baandet har margen, og en tom boks med
+    // margen er en stribe luft, ingen kan forklare.
+    bar.hidden = !html;
+  }
+
+  document.querySelectorAll('[data-stjerne]').forEach((el) => {
+    el.addEventListener('click', () => aabnOpgave(el.dataset.stjerne));
+  });
+  document.querySelectorAll('[data-stjernestart]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = el.dataset.stjernestart;
+      if (stjerneKoerer(id)) stopTimer();
+      else startTimerPaa(id);
+    });
+  });
+  const fold = document.querySelector('[data-stjernefold]');
+  if (fold) {
+    fold.addEventListener('click', () => {
+      saetAfsnitAabent('stjerner', !stjernerAabne());
+      // Tegner KUN sig selv. En fuld optegning ville lukke en aaben rude og
+      // flytte rullepositionen.
+      tegnStjerner();
+    });
+  }
+}
+
+/* ------------------------------------------------------- markering */
+
+/**
+ * Saetter eller fjerner stjernen.
+ *
+ * Gaar gennem serverens EGEN rute, ikke en PATCH med `starred`: det er dén,
+ * der tildeler `starredSeq`, og nummeret er listens raekkefoelge.
+ *
+ * @param {string} id opgavens id
+ * @param {boolean} paa den tilstand, stjernen skal have BAGEFTER
+ */
+async function skiftStjerne(id, paa) {
+  try {
+    await api('POST', `/api/v1/tasks/${id}/star`, { starred: !!paa });
+    await genindlaes();
+    /*
+     * Knappen i en AABEN opgaverude tegnes ikke af `genindlaes()` - ruden er
+     * et element paa `body`, som sidernes optegning ikke roerer. Uden det her
+     * ville stjernen i sidebaren skifte, mens knappen, man lige trykkede paa,
+     * blev staaende paa det gamle. Listernes egne knapper er allerede tegnet
+     * forfra og faar bare det samme svar en gang til.
+     */
+    opdaterStjerneKnapper(id, !!paa);
+    toast(paa ? 'Starred.' : 'Star removed.');
+  } catch (ex) { toast(ex.message); }
+}
+
+/** Retter hver knap for `id`, hvor den end staar, til tilstanden `paa`. */
+function opdaterStjerneKnapper(id, paa) {
+  const tekst = paa ? 'Remove the star' : 'Star it — quick access and one-click timer';
+  document.querySelectorAll(`[data-stjernemark="${CSS.escape(id)}"]`).forEach((el) => {
+    el.classList.toggle('on', paa);
+    el.dataset.stjernepaa = paa ? '0' : '1';
+    el.setAttribute('aria-pressed', paa ? 'true' : 'false');
+    el.setAttribute('aria-label', tekst);
+    el.title = tekst;
+    el.innerHTML = icon(paa ? 'stjerneFuld' : 'stjerne', el.classList.contains('stor') ? 18 : 16);
+  });
+}
+
+/** Stjerneknappen, som den ser ud paa en opgave. Samme markup begge steder. */
+function stjerneKnapHtml(it, opt) {
+  const o = opt || {};
+  const paa = !!it.starred;
+  const tekst = paa ? 'Remove the star' : 'Star it — quick access and one-click timer';
+  return `<button class="stjernebtn${paa ? ' on' : ''}${o.stor ? ' stor' : ''}"
+    data-stjernemark="${esc(it.id)}" data-stjernepaa="${paa ? '0' : '1'}"
+    aria-pressed="${paa ? 'true' : 'false'}"
+    aria-label="${esc(tekst)}" title="${esc(tekst)}">${icon(paa ? 'stjerneFuld' : 'stjerne', o.stor ? 18 : 16)}</button>`;
+}
+
+/** Binder stjerneknapperne inde i `host`. Kaldes samme sted som resten. */
+function bindStjerneKnapper(host) {
+  host.querySelectorAll('[data-stjernemark]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      skiftStjerne(el.dataset.stjernemark, el.dataset.stjernepaa === '1');
+    });
+  });
 }

@@ -2380,3 +2380,123 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
   color: inherit; font: inherit; font-size: 13px; line-height: 1; opacity: .55;
 }
 .tagx:hover { opacity: 1; }
+
+/* ------------------------------------------ stjernemarkerede opgaver
+   Tre steder deler den samme markering: knappen paa opgaven, afsnittet i
+   sidebaren og baandet over soegefeltet. */
+
+/*
+ * Knappen opfoerer sig som `.playbtn` ved siden af: usynlig, indtil man
+ * peger paa raekken - men ALTID synlig, naar stjernen er sat. En markering,
+ * man kun kan se ved at holde musen stille, er ikke en markering.
+ */
+.stjernebtn {
+  flex: none; width: 30px; height: 30px; display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: 50%;
+  background: none; color: var(--muted); cursor: pointer; opacity: 0;
+  transition: opacity .12s, color .12s;
+}
+.item-row:hover .stjernebtn, .item-row:focus-within .stjernebtn,
+.stjernebtn.on, .stjernebtn:focus-visible { opacity: 1; }
+.stjernebtn:hover { color: var(--accent); }
+.stjernebtn.on { color: var(--accent); }
+/* Uden hover er der ingen vej til at faa knappen frem. */
+@media (hover: none) { .stjernebtn { opacity: 1; } }
+/* I opgaveruden staar den altid - dér er der ingen raekke at pege paa. */
+.stjernebtn.stor { opacity: 1; width: 34px; height: 34px; margin-top: 5px; }
+
+/* --- afsnittet i sidebaren --- */
+
+.stjerne-titel { color: var(--muted); font-size: 13.5px; }
+.stjerne-titel .nav-count { margin-left: auto; }
+/* Chevronen peger NED, naar listen er foldet ud: retningen er, hvad et klik
+   goer - samme regel som `.foldbtn` over den. */
+.stjerne-pil { flex: none; display: flex; color: var(--muted); }
+.stjerne-pil svg { transition: transform .14s; }
+.stjerne-pil.on svg { transform: rotate(90deg); }
+
+.stjerne-raekke { display: flex; align-items: center; gap: 2px; }
+.stjerne-raekke .nav-item.nav-sub { flex: 1; min-width: 0; }
+.stjerne-tekst { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stjerne-raekke .playbtn { width: 26px; height: 26px; margin-right: 2px; }
+.stjerne-raekke:hover .playbtn, .stjerne-raekke:focus-within .playbtn { opacity: 1; }
+.stjerne-raekke.koerer .nav-prik { background: var(--accent); opacity: 1; }
+
+/* --- baandet over soegefeltet ---
+   Formen er Sagus fanelinje: en vandret stribe smaa kort, der kan rulles,
+   naar de ikke kan vaere der. Den ligger UNDER taellerne, saa den bliver
+   staaende, naar de folder sig vaek ved rulning. */
+
+.stjernebar {
+  /* Samme bredde som soegefeltet under den. Baandet er en genvej TIL feltets
+     verden, og to kanter, der ikke flugter, laeser oejet som to ting. */
+  width: 100%;
+  max-width: 820px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0 2px 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  min-width: 0;
+}
+
+.stjernefane {
+  flex: 0 1 auto;
+  max-width: 230px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--pill);
+  background: var(--card);
+  color: var(--muted);
+  transition: color .12s, border-color .12s;
+}
+
+.stjernefane:hover { color: var(--text); }
+/* Den, timeren koerer paa, ser ud som den koerende timer i sidebaren. */
+.stjernefane.koerer { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+
+.stjernefane-knap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px 5px 11px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* flex:none - ellers klemmer flex-foraeldren stjernen sammen (§4). */
+.stjernefane-knap svg { flex: none; color: var(--accent); }
+.stjernefane-titel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.stjernefane-start {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-right: 5px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: none; color: inherit; cursor: pointer;
+  opacity: .65; transition: opacity .12s, color .12s;
+}
+.stjernefane-start:hover, .stjernefane-start:focus-visible { opacity: 1; color: var(--accent); }
+.stjernefane.koerer .stjernefane-start { opacity: 1; }
+
+@media (max-width: 900px) {
+  /*
+   * Baandet bliver ogsaa paa telefonen. Dér er sidebaren et overlay, man
+   * ikke kan se, saa det er den ENESTE vej til en stjerne - at skjule det
+   * ville tage funktionen vaek praecis paa den skaerm, der ikke har et
+   * alternativ. Til gengaeld fylder hver fane mindre.
+   */
+  .stjernefane { max-width: 180px; }
+  .stjernefane-knap { font-size: 12.5px; padding-left: 9px; }
+}

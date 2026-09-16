@@ -71,6 +71,27 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v27 — stjernemarkerede opgaver
+
+- **Stjernemarkér en opgave, og den er ét klik væk fra enhver skærm.** Stjernen sidder på
+  opgaverækken (den dukker op, når du peger på rækken, og bliver stående, når den er sat) og
+  i opgaveruden ved siden af titlen.
+  - **I venstre menu** står de under et foldbart »Starred«-afsnit med en afspil-knap på hver
+    linje — start og stop timeren uden at åbne noget. Foldningen huskes på kontoen, ikke i
+    browseren, så den følger med til telefonen.
+  - **Over søgefeltet** ligger de som et bånd af små kort, som fanerne i Sagu. Navnet åbner
+    opgaven, trekanten starter eller stopper timeren. Båndet står under tællerne og over
+    feltet, så det bliver, når du ruller og tallene folder sig væk — og det vises også på
+    telefonen, hvor menuen er skjult og båndet derfor er den eneste vej ind.
+  - **Rækkefølgen er den, du markerede i.** Tager du stjernen af og på igen, rykker opgaven
+    bagest.
+  - **En opgave, du afslutter, falder ud af begge lister, men beholder sin stjerne.** Åbner
+    du den igen, er genvejen tilbage.
+  - Højst 20 ad gangen: over det er det ikke en genvej mere, men en opgaveliste nummer to.
+  - Stjernen følger ikke med, når du kopierer en opgave, og en genimport fra Planner eller
+    ServiceNow rører den ikke.
+  - Kan også sættes fra Claude med `update_task`.
+
 ### v26 — import fra ServiceNow
 
 - **Import fra ServiceNow.** Eksportér din opgaveliste som CSV (højreklik på overskriften →

@@ -99,6 +99,16 @@ const GUIDE_DELE = [
             go: [['today', 'Open Today']],
           },
           {
+            titel: 'Starred tasks',
+            lead: 'The handful you keep coming back to, one click from every screen.',
+            raekker: [
+              ['STAR', 'The star on a task row — or in the task itself — pins it to the sidebar <em>and</em> to the band above the search field.'],
+              ['CLICK', 'The name opens the task, the triangle starts or stops the timer. Same split as any task row.'],
+              ['ORDER', 'They stay in the order you starred them, and a task drops out of both lists when you complete it. The star stays on it.'],
+            ],
+            kort: 'it is a shortcut, not a second task list — twenty is the most that will show.',
+          },
+          {
             titel: 'Logging by hand',
             lead: 'The timer and typing it in afterwards are equal ways in.',
             raekker: [

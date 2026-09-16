@@ -41,6 +41,7 @@ function opgaveRaekke(it, opt) {
       <div class="item-title">${esc(it.title)}</div>
       ${dele.length ? `<div class="item-meta meta">${dele.join(' · ')}</div>` : ''}
     </div>
+    ${it.status === 'done' ? '' : stjerneKnapHtml(it)}
     ${it.status === 'done' ? '' : `<button class="playbtn${koerer ? ' on' : ''}" data-start="${esc(it.id)}"
       aria-label="${koerer ? 'Stop the timer' : 'Start a timer'}"
       title="${koerer ? 'Stop the timer' : 'Start a timer'}">${icon(koerer ? 'stop' : 'play', 16)}</button>`}
@@ -49,6 +50,7 @@ function opgaveRaekke(it, opt) {
 
 /** Binder en liste af opgaverakker. Kaldes ÉT sted pr. optegning. */
 function bindOpgaveListe(host) {
+  bindStjerneKnapper(host);
   host.querySelectorAll('[data-fold]').forEach((el) => {
     el.addEventListener('click', () => {
       saetAfsnitAabent(el.dataset.fold, el.getAttribute('aria-expanded') !== 'true');
@@ -640,6 +642,7 @@ async function aabnOpgave(id) {
           aria-label="${it.status === 'done' ? 'Reopen' : 'Complete'}"></button>
         <input class="detail-title input" id="dTitle" value="${esc(it.title)}"
           title="You can write #tag, @project, :case, ~estimate and !date here too">
+        ${stjerneKnapHtml(it, { stor: true })}
       </div>
 
       <div class="tagrow" id="dTags"></div>
@@ -755,6 +758,7 @@ function linkHtml(l) {
 
 function bindDetalje(host, it, startLink) {
   const luk = () => { host.remove(); detailState.id = null; };
+  bindStjerneKnapper(host);
 
   /*
    * Maerkaterne paa opgaven.

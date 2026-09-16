@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 26;
+const APP_VERSION = 27;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -28,6 +28,10 @@ const state = {
   unassigned: 0,
   tags: [],
   items: [],
+  // De stjernemarkerede opgaver, som serveren har dem: {id, title, projectId}.
+  // De skal kunne naas fra ENHVER skaerm, saa de foelger med i /state og
+  // ikke i sidernes egne kald.
+  starred: [],
   counts: {},
   todayMinutes: 0,
   openProject: null,
@@ -315,6 +319,10 @@ const ICONS = {
   chevron: '<path d="M9 6l6 6-6 6"/>',
   kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
   tags: '<path d="M5 9.5h14M5 14.5h14M10.5 4.5L8.5 19.5M15.5 4.5l-2 15"/>',
+  // Ordret de samme to stjerner som Sagu bruger, saa en markering ser ens ud
+  // i de to apps, der staar aabne ved siden af hinanden.
+  stjerne: '<path d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.6-5 2.6.9-5.6-4-4 5.6-.8z"/>',
+  stjerneFuld: '<path fill="currentColor" d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.6-5 2.6.9-5.6-4-4 5.6-.8z"/>',
 };
 
 function icon(name, size = 18) {
@@ -579,6 +587,9 @@ function shellHtml() {
         <button class="pinbtn" id="pinBtn" aria-label="Hide the menu"
           title="Hide the menu">${icon('pin', 16)}</button></div>
       <div id="navHost">${navHtml()}</div>
+      <!-- Fyldes af tegnStjerner() i bindShell - samme sted tegner OG binder,
+           saa de to ikke kan skilles ad igen (Sagu, 2026-08-21). -->
+      <div id="stjerneHost"></div>
       <div class="sidebar-foot">
         <div id="timerHost"></div>
         <button class="nav-item" id="userBtn"
@@ -591,6 +602,12 @@ function shellHtml() {
         <div class="toprow">
           <div class="stats meta" id="statsHost">${statsHtml()}</div>
         </div>
+        <!-- Stjernebaandet staar UNDER taellerne og OVER feltet, praecis som
+             Sagus fanelinje: taellerne folder sig vaek, naar man ruller
+             (body.rullet .toprow), og saa bliver genvejene staaende. Laa det
+             i .toprow, ville det forsvinde netop naar man er langt nede i en
+             liste og vil skifte opgave. -->
+        <div class="stjernebar" id="stjerneBar" hidden></div>
         <div class="omni-card" id="omniCard">
           <div class="omni-field">
             <span class="omni-icon">${icon('search', 22)}</span>
@@ -1067,6 +1084,9 @@ function opdaterNav() {
   const host = document.getElementById('navHost');
   if (host) host.innerHTML = navHtml();
   bindNav();
+  // Stjernerne aendrer sig ved hvert state-kald (en timer startet, en opgave
+  // lukket), og de staar i skallen, som render() kun tegner ved login.
+  tegnStjerner();
   document.querySelectorAll('.bottomnav-item[data-view]').forEach((el) => {
     el.setAttribute('aria-current', el.dataset.view === state.view ? 'page' : 'false');
   });
@@ -1092,6 +1112,7 @@ function bindShell() {
   document.getElementById('navToggle').addEventListener('click', () => document.body.classList.toggle('navopen'));
   document.getElementById('backdrop').addEventListener('click', () => document.body.classList.remove('navopen'));
   bindOmni();
+  tegnStjerner();
   // Timeren tegnes IGEN her. hentState() koerer FOER skallen findes ved
   // opstart, saa #timerHost fandtes ikke, og timeren faldt tilbage til den
   // flydende bjaelke - ogsaa paa en bred skaerm. Symptomet var, at den
@@ -1209,6 +1230,7 @@ async function hentState() {
     state.settings = d.settings || {};
     state.projects = d.projects || [];
     state.tags = d.tags || [];
+    state.starred = d.starred || [];
     state.unassigned = d.unassigned || 0;
     state.counts = d.counts || {};
     state.todayMinutes = d.todayMinutes || 0;

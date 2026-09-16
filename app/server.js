@@ -304,7 +304,11 @@ const FELTER = {
     // ses og rettes; matchet maa aldrig hvile paa et felt, brugeren kan rette,
     // for saa oprettes den samme sag igen ved naeste import.
     'snNumber',
-    'recurrenceRule', 'links', 'tagIds', 'caseNumber', 'position'],
+    'recurrenceRule', 'links', 'tagIds', 'caseNumber', 'position',
+    // Stjernen. `starredSeq` er IKKE pynt: den ER listens raekkefoelge, og den
+    // saettes af serveren i /star-ruten, saa to klienter ikke kan blive
+    // uenige om, hvad "sidst markeret" betyder.
+    'starred', 'starredSeq'],
   comment: ['taskId', 'text'],
   tag: ['name', 'color'],
 };
@@ -1080,6 +1084,12 @@ function renseItem(kind, raa) {
       }
       case 'position': ud[felt] = tal(v, 0, 1e9); break;
       case 'lastImportAt': case 'archivedAt': case 'completedAt': ud[felt] = tal(v, 0, 1e11); break;
+      case 'starredSeq': ud[felt] = tal(v, 0, 1e9); break;
+      // Eksplicit, selv om `default` ville lade en boolean passere uroert.
+      // Uden den ville strengen "false" fra en klient blive til true - og en
+      // stjerne, der ikke kan slaas fra, er svaerere at forstaa end en, der
+      // aldrig blev sat.
+      case 'starred': ud[felt] = (v === true || v === 1 || v === 'true'); break;
       case 'dueDate': ud[felt] = dato(v); break;
       case 'dueTime': ud[felt] = /^\d{2}:\d{2}$/.test(str(v, 5)) ? str(v, 5) : null; break;
       case 'status': ud[felt] = STATUSSER.includes(v) ? v : 'open'; break;
@@ -1751,6 +1761,79 @@ function fuldfoer(userId, item, luk = true) {
   return { item: next ? hentItem(userId, opdateret.id) : opdateret, next };
 }
 
+/*
+ * Stjernen: markér en opgave, og den kan naas fra ENHVER skaerm.
+ *
+ * ── Hvorfor et felt paa opgaven og ikke en tabel ──────────────────────────
+ *
+ * Sagu har en `favorites`-tabel, fordi en note dér kan vaere DELT: et flag
+ * paa noten ville betyde, at min stjerne dukkede op hos kollegaen. I tovo
+ * hoerer opgaven allerede til én bruger (`user_id`-filteret i `hentItems`),
+ * saa en tabel ved siden af ville vaere det samme svar, skrevet to gange.
+ *
+ * ── Et LOEBENUMMER, ikke et tidsstempel ──────────────────────────────────
+ *
+ * Foerste udgave skrev `now()` i sorteringsfeltet. Det saa rigtigt ud - et
+ * tidsstempel sorterer jo kronologisk - og var forkert: `now()` er SEKUNDER,
+ * og tre opgaver markeret i samme sekund faar det samme tal. Saa falder
+ * sorteringen tilbage paa rækkefølgen fra databasen, og listen stod i
+ * omvendt orden af den, de var markeret i. Testen fangede det foerste gang
+ * den koerte.
+ *
+ * Det er PRAECIS den samme lektie som `naestePosition()` tre skaerme
+ * herover (doda F3, hvor fejlen sad tre steder), og den gaelder aabenbart
+ * ogsaa, naar man tror, man bare gemmer et tidspunkt: **skal en raekkefoelge
+ * kunne aflaeses, skal feltet vaere et loebenummer.**
+ *
+ * Nummeret saettes af SERVEREN. Lod man klienten om det, kunne to faner
+ * blive uenige om, hvad "sidst markeret" betyder - og en liste, der bytter
+ * om paa sig selv mellem to enheder, holder man op med at stole paa. Samme
+ * grund som `completedAt` i `fuldfoer`.
+ */
+function saetStjerne(userId, item, paa) {
+  let seq = item.starredSeq || null;
+  if (paa) {
+    seq = hentItems(userId, { kind: 'task' })
+      .reduce((m, t) => Math.max(m, Number(t.starredSeq) || 0), 0) + 1;
+  }
+  return gemItem(userId, Object.assign({}, item, {
+    starred: !!paa,
+    // Nummeret fjernes IKKE, naar stjernen tages af. Saettes den paa igen,
+    // faar den et nyt - og et gammelt tal paa noget uden stjerne kan ingen
+    // liste se.
+    starredSeq: seq,
+  }));
+}
+
+/*
+ * Hvor mange stjerner foelger med i `/state`.
+ *
+ * Listen staar i sidebaren OG over soegefeltet ved hver eneste optegning.
+ * Et loft er ikke sparsommelighed: femoghalvtreds stjerner er ikke en
+ * genvej laengere, det er en anden opgaveliste - og saa er det den, man
+ * skal rydde op i, ikke listen der skal kunne baere dem.
+ */
+const STJERNE_LOFT = 20;
+
+/**
+ * De stjernemarkerede opgaver, i den raekkefoelge de blev markeret.
+ *
+ * AFSLUTTEDE opgaver falder fra. Stjernen bliver staaende paa opgaven, saa
+ * den er der igen, hvis man aabner opgaven paany - men en genvej til noget,
+ * der er gjort faerdigt, er ikke en genvej.
+ *
+ * @param {Array} opgaver alle brugerens opgaver (allerede user_id-filtreret)
+ */
+function stjerner(opgaver) {
+  return opgaver
+    .filter((t) => t.starred && t.status !== 'done')
+    .sort((a, b) => (a.starredSeq || 0) - (b.starredSeq || 0))
+    .slice(0, STJERNE_LOFT)
+    // Kun det, de to visninger bruger. Hele opgaven ville betyde, at noter
+    // og links blev sendt med ved hvert eneste state-kald.
+    .map((t) => ({ id: t.id, title: t.title, projectId: t.projectId || null }));
+}
+
 /* ------------------------------------------------------ kalenderfeed */
 
 /*
@@ -2206,7 +2289,7 @@ const mcp = require('./mcp.js').opret({
     + `resource_metadata="${oauth.base(req)}/.well-known/oauth-protected-resource/mcp"`,
   // Vaerktoejerne faar PRAECIS de funktioner, webappen selv bruger.
   fangst, soeg, hentItem, hentItems, gemItem, hentPoster, gemPost,
-  startTimer, stopTimer, timerStatus, beregnFor, fuldfoer, dupliker,
+  startTimer, stopTimer, timerStatus, beregnFor, fuldfoer, dupliker, saetStjerne,
   iDag, dagStart, ugeStart, ugeSlut,
 });
 
@@ -2473,6 +2556,11 @@ const ROUTES = {
       projects: projekter.filter((p) => !p.archivedAt),
       archivedProjects: projekter.filter((p) => p.archivedAt).length,
       tags: hentItems(auth.user.id, { kind: 'tag' }),
+      // Stjernerne foelger med her - ikke i et kald for sig. Skallen tegner
+      // dem to steder (sidebaren og baandet over soegefeltet) ved hver
+      // optegning, og et kald mere pr. side ville vaere en blokerende
+      // rundtur efter noget, man ikke kom efter (§9c, Sagu).
+      starred: stjerner(opgaver),
       unassigned: opgaver.filter((t) => !t.projectId && t.status !== 'done').length,
       counts: {
         tasks: opgaver.filter((t) => t.status !== 'done').length,
@@ -3325,6 +3413,23 @@ const MOENSTRE = [
       const item = hentItem(auth.user.id, ctx.params[0]);
       if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
       sendJson(res, 200, fuldfoer(auth.user.id, item, body.done !== false));
+    },
+  },
+  {
+    /*
+     * Stjernen er sin egen rute af samme grund som afslutningen: den goer TO
+     * ting - saetter flaget og stempler `starredAt`. Kunne den saettes med en
+     * almindelig PATCH, ville stemplet blive glemt praecis dér, hvor det
+     * ikke er webappen der kalder.
+     */
+    metode: 'POST', re: /^\/api\/v1\/tasks\/([0-9a-f-]{8,64})\/star$/,
+    kald: async (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const body = await readJsonBody(req, auth.viaToken);
+      const item = hentItem(auth.user.id, ctx.params[0]);
+      if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
+      sendJson(res, 200, { item: saetStjerne(auth.user.id, item, body.starred !== false) });
     },
   },
   {
