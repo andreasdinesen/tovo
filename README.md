@@ -71,6 +71,14 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v30 — dine andre enheder logges ud, når du slår totrin til
+
+- **Slår du totrinsbekræftelse til, logges du ud på dine andre enheder.** Den enhed, du
+  slår det til fra, forbliver logget ind — samme regel som ved skift af kodeord.
+- **Den udskrevne ugerapport har faste kolonner.** Projekttabellerne flugter nu hele vejen
+  ned, og lange projekt- og opgavenavne ombrydes i stedet for at skubbe kolonnerne.
+- **PDF-filnavnet fra kundevisningen renses** for tegn som `/` og `:`; é, ü og ø bevares.
+
 ### v29 — en adgangsnøgle kan ikke længere røre totrinsbekræftelsen
 
 - **Sikkerhedsrettelse.** En adgangsnøgle med skriveadgang kunne slå totrinsbekræftelse

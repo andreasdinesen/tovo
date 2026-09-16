@@ -2764,6 +2764,10 @@ const ROUTES = {
     }
     setSetting(user.id, 'totp_enabled', '1');
     setSetting(user.id, 'totp_last', String(vindue));
+    // Alle andre sessioner droppes, som ved kodeordsskift: en tyv, der allerede
+    // sidder inde med en cookie, skal ikke slippe uden om det nye andet trin.
+    const keep = parseCookies(req.headers.cookie)[SESSION_COOKIE] || '';
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(user.id, keep);
     const koder = nyeGenoprettelseskoder(user.id);
     audit('totp-slaaet-til', user.username, ip);
     // Koderne vises ÉN gang. De gemmes hashet og kan aldrig laeses igen.

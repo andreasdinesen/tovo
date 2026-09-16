@@ -89,9 +89,7 @@ async function visKundevisning(projektId) {
         ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
           ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
       ],
-      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa et
-      // projekt ved navn »Café Ø« blev til »Caf--« (Beanledger v68, §4).
-    }], `tovo-${d.project.name.replace(/[^\p{L}\p{N}_-]+/gu, '-')}-${state.today}.xlsx`);
+    }], `tovo-${rensFilnavn(d.project.name)}-${state.today}.xlsx`);
     toast('Excel file downloaded.');
   });
 }
@@ -102,6 +100,10 @@ async function visKundevisning(projektId) {
  * Arket laegges i #printHost, som ligger i <body> og kun vises i @media
  * print. Titlen bliver browserens forslag til filnavn ved "Gem som PDF" og
  * gendannes paa afterprint.
+ *
+ * Titlen renses HER og ikke hos kalderen: et projektnavn med `/` eller `:`
+ * er et ugyldigt filnavn, og en kalder, der glemmer det, opdager det aldrig
+ * selv - browseren skriver bare noget andet, end man troede.
  *
  * NB til den, der tester: `afterprint` fyrer ALDRIG, naar window.print er
  * stubbet - saa skal titlen saettes tilbage i haanden (Muldbog).
@@ -116,7 +118,7 @@ function printArk(html, filnavn) {
   }
   host.innerHTML = html;
   const gammelTitel = document.title;
-  document.title = filnavn;
+  document.title = rensFilnavn(filnavn);
   const gendan = () => {
     document.title = gammelTitel;
     window.removeEventListener('afterprint', gendan);

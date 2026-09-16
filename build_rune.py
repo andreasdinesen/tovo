@@ -157,6 +157,51 @@ def saml_frontend():
     return int(m.group(1))
 
 
+def tjek_mobilgraense():
+    """Mobilgraensen bor to steder - `SMAL_SKAERM` i p1_core.js og @media i
+    style.css. Er de ude af trit, folder menuknappen sidebaren sammen paa en
+    iPad, hvor CSS'en tror, den er et overlay (RUNE-ERFARINGER §4).
+
+    Afgraensningen: et BRUDPUNKT er en bredde-betingelse i en @media-
+    praelude, altsaa teksten mellem `@media` og `{`. De to `max-width: 760px`
+    i style.css er EGENSKABER inde i en regel (laesebredden paa .page og
+    .review-nudge) og staar aldrig i en praelude, saa de tages ikke med.
+
+    Hver bredde-betingelse skal vaere enten `(max-width: N px)` eller
+    `(min-width: N+1 px)`. Alt andet - et andet tal, `em`, range-syntaks som
+    `(width <= 900px)` - faelder build'et i stedet for at slippe igennem
+    ubemaerket, for en vagt, der springer over det, den ikke kender, er ingen
+    vagt.
+    """
+    with open(os.path.join(PARTS, 'p1_core.js'), encoding='utf8') as fh:
+        m = re.search(r'^const SMAL_SKAERM = (\d+);', fh.read(), re.M)
+    if not m:
+        fejl('SMAL_SKAERM mangler i app/parts/p1_core.js (forventet: const SMAL_SKAERM = N;)')
+    graense = int(m.group(1))
+    with open(os.path.join(PUBLIC, 'style.css'), encoding='utf8') as fh:
+        css = fh.read()
+    # Kommentarer ud, saa en omtale af »@media (max-width: 760px)« i en
+    # forklaring ikke taeller som et brudpunkt.
+    css = re.sub(r'/\*.*?\*/', '', css, flags=re.S)
+    tilladt = {f'(max-width: {graense}px)', f'(min-width: {graense + 1}px)'}
+    antal_max = 0
+    afvigere = []
+    for praelude in re.findall(r'@media([^{]*)\{', css):
+        for betingelse in re.findall(r'\([^()]*width[^()]*\)', praelude):
+            normal = re.sub(r'\s+', ' ', betingelse.strip())
+            if normal not in tilladt:
+                afvigere.append(f'@media{praelude.rstrip()} -> {normal}')
+            elif normal.startswith('(max-width'):
+                antal_max += 1
+    if afvigere:
+        fejl(f'style.css har brudpunkter, der ikke stemmer med SMAL_SKAERM = {graense} '
+             f'(tilladt: {" / ".join(sorted(tilladt))}):\n  ' + '\n  '.join(afvigere))
+    if not antal_max:
+        # Ellers er en omdoebt eller slettet mobilblok en groen vagt.
+        fejl(f'style.css har ingen @media (max-width: {graense}px) - vagten maaler intet')
+    print(f'  mobilgraense: {graense} px i p1_core.js = {antal_max} @media-blokke i style.css')
+
+
 def stempl_version(version):
     """Cache-bust. Resultatet SKAL skrives tilbage til disk - payloaden laeser
     filerne fra disk igen, og ellers pakkes den gamle HTML (§5)."""
@@ -827,6 +872,7 @@ def byg_yaml(version, rune_version, payload):
 
 def main():
     print('Bygger tovo-runen ...')
+    tjek_mobilgraense()
     version = saml_frontend()
     stempl_version(version)
 

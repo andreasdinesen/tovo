@@ -2348,7 +2348,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2394,6 +2394,18 @@ function nyId() {
   b[8] = (b[8] & 0x3f) | 0x80;
   const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * Goer en tekst til en del af et filnavn: alt andet end bogstaver, cifre,
+ * `_` og `-` bliver til `-`.
+ *
+ * `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa »Café« blev til
+ * »Caf« og »Ørkenen« til »rkenen« (Beanledger v68, §4). ÉN hjaelper, saa
+ * .ics, .xlsx og PDF-titlen ikke kan rense hver sin vej.
+ */
+function rensFilnavn(tekst) {
+  return String(tekst == null ? '' : tekst).replace(/[^\p{L}\p{N}_-]+/gu, '-');
 }
 
 function esc(s) {
@@ -5794,9 +5806,7 @@ function bindDetalje(host, it, startLink) {
       // aabner den i kalenderen. Ingen blob, intet at rydde op.
       const a = document.createElement('a');
       a.href = `/api/v1/tasks/${it.id}/ics`;
-      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa »Café«
-      // blev til »Caf« og »Ørkenen« til »rkenen« (Beanledger v68, §4).
-      a.download = `tovo-${it.title.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 40)}.ics`;
+      a.download = `tovo-${rensFilnavn(it.title).slice(0, 40)}.ics`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -6370,9 +6380,7 @@ async function visKundevisning(projektId) {
         ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
           ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
       ],
-      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa et
-      // projekt ved navn »Café Ø« blev til »Caf--« (Beanledger v68, §4).
-    }], `tovo-${d.project.name.replace(/[^\p{L}\p{N}_-]+/gu, '-')}-${state.today}.xlsx`);
+    }], `tovo-${rensFilnavn(d.project.name)}-${state.today}.xlsx`);
     toast('Excel file downloaded.');
   });
 }
@@ -6383,6 +6391,10 @@ async function visKundevisning(projektId) {
  * Arket laegges i #printHost, som ligger i <body> og kun vises i @media
  * print. Titlen bliver browserens forslag til filnavn ved "Gem som PDF" og
  * gendannes paa afterprint.
+ *
+ * Titlen renses HER og ikke hos kalderen: et projektnavn med `/` eller `:`
+ * er et ugyldigt filnavn, og en kalder, der glemmer det, opdager det aldrig
+ * selv - browseren skriver bare noget andet, end man troede.
  *
  * NB til den, der tester: `afterprint` fyrer ALDRIG, naar window.print er
  * stubbet - saa skal titlen saettes tilbage i haanden (Muldbog).
@@ -6397,7 +6409,7 @@ function printArk(html, filnavn) {
   }
   host.innerHTML = html;
   const gammelTitel = document.title;
-  document.title = filnavn;
+  document.title = rensFilnavn(filnavn);
   const gendan = () => {
     document.title = gammelTitel;
     window.removeEventListener('afterprint', gendan);
@@ -7046,6 +7058,15 @@ function rapportMarkdown(d) {
   return linjer.join('\n');
 }
 
+/*
+ * Én tabel pr. projekt, alle med de samme tre kolonner. Med automatisk
+ * tabel-layout faar hver tabel sine egne bredder efter sit indhold, og et
+ * langt projekt- eller opgavenavn flytter kolonnerne i DEN tabel - saa
+ * flugter Estimated og Spent ikke ned over siden (Beanledger v79). Derfor
+ * `table-layout: fixed` i style.css og de samme bredder paa dem alle her.
+ */
+const PROJEKTTABEL_KOLONNER = '<colgroup><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>';
+
 /** Samme tal, samme raekkefoelge - bare til papir. */
 function rapportArkHtml(d) {
   const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
@@ -7073,7 +7094,7 @@ function rapportArkHtml(d) {
           <td class="num">${esc(f(raekke.total))}</td></tr>`).join('')}</tbody>
       </table>` : ''}
     ${r.projects.map((p) => `
-      <table>
+      <table class="projekttabel">${PROJEKTTABEL_KOLONNER}
         <thead><tr><th>${esc(p.name)}</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>
         <tbody>${p.tasks.map((t) => `<tr>
           <td>${esc(t.title)}${t.completedIPerioden ? ' ✓' : ''}</td>

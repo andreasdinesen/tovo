@@ -1945,6 +1945,14 @@ ul.plain li:last-child { border-bottom: 0; }
   .printsheet .pramme td { background: #fff; border-bottom: 0; }
   .printsheet .pdate { color: #444; font-size: 10pt; text-align: right; }
   .printsheet tr { page-break-inside: avoid; }
+  /* Rapportens projekttabeller staar under hinanden med de samme tre
+     kolonner. `fixed` + den faelles <colgroup> i p7_rapport.js giver dem
+     de SAMME kanter; ellers regner hver tabel sine egne bredder ud fra sit
+     indhold, og et langt navn skubber kolonnerne (Beanledger v79).
+     break-word virker her, fordi fast layout ikke regner paa min-content -
+     i en automatisk tabel ville det lange ord stadig goere cellen bred. */
+  .printsheet table.projekttabel { table-layout: fixed; }
+  .printsheet table.projekttabel th, .printsheet table.projekttabel td { overflow-wrap: break-word; }
 }
 
 /* ------------------------------------------------------------ rapport */

@@ -900,9 +900,7 @@ function bindDetalje(host, it, startLink) {
       // aabner den i kalenderen. Ingen blob, intet at rydde op.
       const a = document.createElement('a');
       a.href = `/api/v1/tasks/${it.id}/ics`;
-      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa »Café«
-      // blev til »Caf« og »Ørkenen« til »rkenen« (Beanledger v68, §4).
-      a.download = `tovo-${it.title.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 40)}.ics`;
+      a.download = `tovo-${rensFilnavn(it.title).slice(0, 40)}.ics`;
       document.body.appendChild(a);
       a.click();
       a.remove();

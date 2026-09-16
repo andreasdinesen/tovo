@@ -241,6 +241,32 @@ test('HEMMELIGHEDEN forlader aldrig serveren gennem settings eller eksport', asy
     'kan den laeses ud af en eksportfil, er hele totrinsbekraeftelsen pynt');
 });
 
+/*
+ * Slaas 2FA til, skal de ANDRE sessioner doe - ligesom ved kodeordsskift.
+ * Ellers er en tyv, der allerede har en cookie, aldrig blevet spurgt om det
+ * andet trin, og han bliver ved med at vaere det. Den session, der slog det
+ * til, skal leve videre: ellers logger man sig selv ud med sit eget klik.
+ */
+test('at slaa 2FA til logger de ANDRE sessioner ud - ikke den, der gjorde det', async () => {
+  const b = await opretBruger(srv, 'toenheder');
+  const anden = srv.klient();
+  const login = await anden.kald('POST', '/api/login',
+    { username: 'toenheder', password: 'hemmeligt123' });
+  assert.equal(login.status, 200);
+  assert.ok(anden.cookie && anden.cookie !== b.klient.cookie, 'to forskellige sessioner');
+  assert.equal((await anden.kald('GET', '/api/v1/state')).status, 200,
+    'den anden session skal leve FOER - ellers beviser proeven intet');
+
+  const op = await b.klient.kald('POST', '/api/v1/totp/setup', {});
+  const kode = totp.kodeFor(op.data.secret, Math.floor(Date.now() / 1000 / 30));
+  assert.equal((await b.klient.kald('POST', '/api/v1/totp/enable', { code: kode })).status, 200);
+
+  assert.equal((await anden.kald('GET', '/api/v1/state')).status, 401,
+    'den gamle session overlevede, at 2FA blev slaaet til');
+  assert.equal((await b.klient.kald('GET', '/api/v1/state')).status, 200,
+    'den session, der slog 2FA til, maa ikke selv blive logget ud');
+});
+
 /* ── En NOEGLE paa sin EGEN konto ────────────────────────────────────────────
  *
  * Proeverne ovenfor spoerger hele vejen igennem: »kan en ANDEN bruger?«.

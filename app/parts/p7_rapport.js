@@ -302,6 +302,15 @@ function rapportMarkdown(d) {
   return linjer.join('\n');
 }
 
+/*
+ * Én tabel pr. projekt, alle med de samme tre kolonner. Med automatisk
+ * tabel-layout faar hver tabel sine egne bredder efter sit indhold, og et
+ * langt projekt- eller opgavenavn flytter kolonnerne i DEN tabel - saa
+ * flugter Estimated og Spent ikke ned over siden (Beanledger v79). Derfor
+ * `table-layout: fixed` i style.css og de samme bredder paa dem alle her.
+ */
+const PROJEKTTABEL_KOLONNER = '<colgroup><col style="width:60%"><col style="width:20%"><col style="width:20%"></colgroup>';
+
 /** Samme tal, samme raekkefoelge - bare til papir. */
 function rapportArkHtml(d) {
   const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
@@ -329,7 +338,7 @@ function rapportArkHtml(d) {
           <td class="num">${esc(f(raekke.total))}</td></tr>`).join('')}</tbody>
       </table>` : ''}
     ${r.projects.map((p) => `
-      <table>
+      <table class="projekttabel">${PROJEKTTABEL_KOLONNER}
         <thead><tr><th>${esc(p.name)}</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>
         <tbody>${p.tasks.map((t) => `<tr>
           <td>${esc(t.title)}${t.completedIPerioden ? ' ✓' : ''}</td>

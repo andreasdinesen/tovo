@@ -118,3 +118,81 @@ test('afstanden mellem taersklerne er stoerre end det, bjaelken krymper', () => 
   assert.ok(logik.RULLET_TIL - logik.RULLET_FRA > 60,
     `afstanden er kun ${logik.RULLET_TIL - logik.RULLET_FRA} px`);
 });
+
+/* ── Filnavne og print ───────────────────────────────────────────────────────
+ *
+ * Funktionerne hentes UD af den byggede fil og koeres - en afskrift ville
+ * kun bevise, at afskriften er rigtig.
+ */
+function hentFunktion(navn) {
+  const m = app.match(new RegExp(`^function ${navn}\\([\\s\\S]*?^}$`, 'm'));
+  assert.ok(m, `${navn}() findes ikke i den byggede flade`);
+  return m[0];
+}
+const css = readFileSync(join(rod, 'app/public/style.css'), 'utf8');
+const rensFilnavn = new Function(`${hentFunktion('rensFilnavn')}\nreturn rensFilnavn;`)();
+
+test('rensFilnavn beholder é, ü og ø - og fjerner det, et filnavn ikke taaler', () => {
+  assert.equal(rensFilnavn('Café Über/Ørken: 1'), 'Café-Über-Ørken-1');
+  assert.equal(rensFilnavn('tovo-report-2026-09-14'), 'tovo-report-2026-09-14', 'datoen skal staa urort');
+  assert.equal(rensFilnavn(null), '');
+});
+
+/*
+ * PDF-titlen er browserens forslag til filnavn. Et projektnavn med `/` eller
+ * `:` gik lige igennem til document.title (kundevisningen og ugerapporten),
+ * mens .xlsx og .ics blev renset. Proeven koerer den RIGTIGE printArk() med
+ * en DOM-stub og ser, hvad der landede i titlen.
+ */
+test('printArk renser titlen - uanset hvilken kalder der glemte det', () => {
+  const dok = {
+    title: 'tovo',
+    body: { appendChild() {} },
+    getElementById: () => null,
+    createElement: () => ({}),
+  };
+  const vindue = { addEventListener() {}, removeEventListener() {}, print() {} };
+  const printArk = new Function('document', 'window', 'setTimeout', 'rensFilnavn',
+    `${hentFunktion('printArk')}\nreturn printArk;`)(dok, vindue, () => {}, rensFilnavn);
+
+  printArk('<p></p>', 'tovo-Nordvind/Café: Ü-2026-09-16');
+  assert.equal(dok.title, 'tovo-Nordvind-Café-Ü-2026-09-16');
+});
+
+/*
+ * Ugerapportens projekttabeller skal have de SAMME kolonnekanter. Den
+ * egentlige maaling (getBoundingClientRect) kraever en browser; her vogtes
+ * de to dele, der tilsammen giver den: den faelles <colgroup> paa HVER
+ * projekttabel og `table-layout: fixed` i print-CSS'en.
+ */
+test('ugerapportens projekttabeller har faelles kolonnebredder og fast layout', () => {
+  const kolonner = app.match(/^const PROJEKTTABEL_KOLONNER = .*$/m);
+  assert.ok(kolonner, 'PROJEKTTABEL_KOLONNER findes ikke i den byggede flade');
+  const rapportArkHtml = new Function('esc', 'rapportDecimal', 'tovoBeregn',
+    `${kolonner[0]}\n${hentFunktion('rapportArkHtml')}\nreturn rapportArkHtml;`)(
+    (s) => String(s), () => true, { formatDecimal: String, formatVarighed: String });
+
+  const html = rapportArkHtml({
+    from: '2026-09-14',
+    to: '2026-09-20',
+    timesheet: null,
+    report: {
+      total: 120, onProjects: 120, adhoc: 0, norm: 0,
+      projects: [
+        { name: 'Nordvind', minutter: 60, tasks: [{ title: 'Kort', estimateMinutes: 30, minutter: 60 }] },
+        { name: 'N'.repeat(200), minutter: 60, tasks: [{ title: 'x'.repeat(300), minutter: 60 }] },
+      ],
+    },
+  });
+  const tabeller = html.match(/<table[^>]*>\s*<colgroup>.*?<\/colgroup>/g) || [];
+  assert.equal(tabeller.length, 2, 'hver projekttabel skal have sin <colgroup>');
+  for (const t of tabeller) {
+    assert.match(t, /class="projekttabel"/);
+    assert.deepEqual(t.match(/width:\s*\d+%/g), ['width:60%', 'width:20%', 'width:20%']);
+  }
+
+  const print = css.slice(css.indexOf('@media print'));
+  assert.match(print, /\.printsheet table\.projekttabel \{ table-layout: fixed; \}/,
+    'uden fast layout regner hver tabel sine egne bredder - colgroup alene er et forslag');
+  assert.match(print, /table\.projekttabel td \{ overflow-wrap: break-word; \}/);
+});

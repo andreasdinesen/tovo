@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 29;
+const APP_VERSION = 30;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -51,6 +51,18 @@ function nyId() {
   b[8] = (b[8] & 0x3f) | 0x80;
   const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * Goer en tekst til en del af et filnavn: alt andet end bogstaver, cifre,
+ * `_` og `-` bliver til `-`.
+ *
+ * `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa »Café« blev til
+ * »Caf« og »Ørkenen« til »rkenen« (Beanledger v68, §4). ÉN hjaelper, saa
+ * .ics, .xlsx og PDF-titlen ikke kan rense hver sin vej.
+ */
+function rensFilnavn(tekst) {
+  return String(tekst == null ? '' : tekst).replace(/[^\p{L}\p{N}_-]+/gu, '-');
 }
 
 function esc(s) {
