@@ -2719,17 +2719,17 @@ const ROUTES = {
    * ude af sin egen server.
    */
   'POST /api/v1/totp/setup': (req, res) => {
-    const auth = godkend(req, res, 'write');
-    if (!auth) return;
-    if (getSetting(auth.user.id, 'totp_enabled', '') === '1') {
+    const user = requireUser(req, res);
+    if (!user) return;
+    if (getSetting(user.id, 'totp_enabled', '') === '1') {
       apiFejl(res, 400, 'already_on', 'Two-factor is already on. Turn it off first.');
       return;
     }
     const hem = totp.nyHemmelighed();
-    setSetting(auth.user.id, 'totp_secret', hem);
-    db.prepare('DELETE FROM settings WHERE scope = ? AND key = ?').run(auth.user.id, 'totp_last');
-    audit('totp-opsaetning-startet', auth.user.username, clientIp(req));
-    const uri = totp.otpauth(hem, auth.user.username, 'tovo');
+    setSetting(user.id, 'totp_secret', hem);
+    db.prepare('DELETE FROM settings WHERE scope = ? AND key = ?').run(user.id, 'totp_last');
+    audit('totp-opsaetning-startet', user.username, clientIp(req));
+    const uri = totp.otpauth(hem, user.username, 'tovo');
     sendJson(res, 200, {
       secret: hem,
       uri,
@@ -2746,26 +2746,26 @@ const ROUTES = {
   },
 
   'POST /api/v1/totp/enable': async (req, res) => {
-    const auth = godkend(req, res, 'write');
-    if (!auth) return;
-    const hem = getSetting(auth.user.id, 'totp_secret', '');
+    const user = requireUser(req, res);
+    if (!user) return;
+    const hem = getSetting(user.id, 'totp_secret', '');
     if (!hem) { apiFejl(res, 400, 'no_setup', 'Start the setup first.'); return; }
     const ip = clientIp(req);
     if (!rateAllow(`totp:${ip}`, 15, 900)) {
       apiFejl(res, 429, 'rate_limited', 'Too many attempts — try again in a moment.');
       return;
     }
-    const body = await readJsonBody(req, auth.viaToken);
+    const body = await readJsonBody(req);
     const vindue = totp.tjek(hem, String(body.code || '').trim());
     if (vindue === null) {
       logSecurity(`totp-opsaetning-fejl ip=${ip}`);
       apiFejl(res, 400, 'bad_code', 'That code is not right. Check the clock on your phone.');
       return;
     }
-    setSetting(auth.user.id, 'totp_enabled', '1');
-    setSetting(auth.user.id, 'totp_last', String(vindue));
-    const koder = nyeGenoprettelseskoder(auth.user.id);
-    audit('totp-slaaet-til', auth.user.username, ip);
+    setSetting(user.id, 'totp_enabled', '1');
+    setSetting(user.id, 'totp_last', String(vindue));
+    const koder = nyeGenoprettelseskoder(user.id);
+    audit('totp-slaaet-til', user.username, ip);
     // Koderne vises ÉN gang. De gemmes hashet og kan aldrig laeses igen.
     sendJson(res, 200, { enabled: true, recoveryCodes: koder });
   },
@@ -2777,12 +2777,12 @@ const ROUTES = {
    * led med ét klik, og saa er det ikke et andet led.
    */
   'POST /api/v1/totp/disable': async (req, res) => {
-    const auth = godkend(req, res, 'write');
-    if (!auth) return;
-    if (getSetting(auth.user.id, 'totp_enabled', '') !== '1') {
+    const user = requireUser(req, res);
+    if (!user) return;
+    if (getSetting(user.id, 'totp_enabled', '') !== '1') {
       // Ikke slaaet til: saa er der kun en paabegyndt opsaetning at rydde op.
-      slaaTotpFra(auth.user.id);
-      sendJson(res, 200, totpStatus(auth.user.id));
+      slaaTotpFra(user.id);
+      sendJson(res, 200, totpStatus(user.id));
       return;
     }
     const ip = clientIp(req);
@@ -2790,28 +2790,28 @@ const ROUTES = {
       apiFejl(res, 429, 'rate_limited', 'Too many attempts — try again in a moment.');
       return;
     }
-    const body = await readJsonBody(req, auth.viaToken);
-    const svar = tjekAndetTrin(auth.user.id, String(body.code || '').trim());
+    const body = await readJsonBody(req);
+    const svar = tjekAndetTrin(user.id, String(body.code || '').trim());
     if (!svar.ok) {
       logSecurity(`totp-frakobling-fejl ip=${ip}`);
       apiFejl(res, 400, 'bad_code', svar.besked || 'That code is not right.');
       return;
     }
-    slaaTotpFra(auth.user.id);
-    audit('totp-slaaet-fra', auth.user.username, ip);
-    sendJson(res, 200, totpStatus(auth.user.id));
+    slaaTotpFra(user.id);
+    audit('totp-slaaet-fra', user.username, ip);
+    sendJson(res, 200, totpStatus(user.id));
   },
 
   /* Nye genoprettelseskoder. De gamle - ogsaa de ubrugte - doer samtidig. */
   'POST /api/v1/totp/recovery': (req, res) => {
-    const auth = godkend(req, res, 'write');
-    if (!auth) return;
-    if (getSetting(auth.user.id, 'totp_enabled', '') !== '1') {
+    const user = requireUser(req, res);
+    if (!user) return;
+    if (getSetting(user.id, 'totp_enabled', '') !== '1') {
       apiFejl(res, 400, 'not_on', 'Turn two-factor on first.');
       return;
     }
-    const koder = nyeGenoprettelseskoder(auth.user.id);
-    audit('totp-nye-genoprettelseskoder', auth.user.username, clientIp(req));
+    const koder = nyeGenoprettelseskoder(user.id);
+    audit('totp-nye-genoprettelseskoder', user.username, clientIp(req));
     sendJson(res, 200, { recoveryCodes: koder });
   },
 

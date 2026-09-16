@@ -240,3 +240,44 @@ test('HEMMELIGHEDEN forlader aldrig serveren gennem settings eller eksport', asy
   assert.ok(!tekst.includes('totp_secret'),
     'kan den laeses ud af en eksportfil, er hele totrinsbekraeftelsen pynt');
 });
+
+/* ── En NOEGLE paa sin EGEN konto ────────────────────────────────────────────
+ *
+ * Proeverne ovenfor spoerger hele vejen igennem: »kan en ANDEN bruger?«.
+ * De spurgte aldrig »kan en adgangsnoegle paa den konto, den tilhoerer?« —
+ * og det kunne den. Alle fire skrive-ruter stod paa godkend(…, 'write'),
+ * som accepterer en noegle, saa en laekket write-noegle kunne hente ti
+ * friske genoprettelseskoder og logge ind med dem. Var 2FA slaaet FRA,
+ * kunne noeglen slaa den TIL med en hemmelighed, kun den kendte — og
+ * ejeren stod laast ude med sit rigtige kodeord.
+ *
+ * Det er §9d's flerbruger-lektie en tak videre: spoerg ikke kun, om en
+ * FREMMED kan naa ind, men om et svagere LEGITIMATIONSMIDDEL paa den
+ * rigtige konto kan det, som kun ejeren maa.
+ */
+test('en adgangsnoegle kan ikke roere andet trin - heller ikke paa sin egen konto', async () => {
+  const b = await opretBruger(srv, 'noegleejer');
+  const n = await b.klient.kald('POST', '/api/v1/keys', { name: 'mcp', scope: 'write' });
+  assert.equal(n.status, 200);
+  const noegle = n.data.key || n.data.noegle || (n.data.created && n.data.created.key);
+  assert.equal(typeof noegle, 'string', 'testen skal have en rigtig noegle at proeve med');
+
+  const medNoegle = (metode, sti, krop) =>
+    srv.klient().kald(metode, sti, krop, { noegle, udenCookie: true });
+
+  for (const [metode, sti, krop] of [
+    ['POST', '/api/v1/totp/setup', {}],
+    ['POST', '/api/v1/totp/enable', { code: '000000' }],
+    ['POST', '/api/v1/totp/disable', { code: '000000' }],
+    ['POST', '/api/v1/totp/recovery', {}],
+  ]) {
+    const r = await medNoegle(metode, sti, krop);
+    assert.equal(r.status, 401, `${sti} maa ikke kunne naas med en adgangsnoegle`);
+    assert.equal(r.data.error, 'session_required', `${sti} skal sige HVORFOR den afviser`);
+  }
+
+  // Statusruten er harmloes og skal blive ved med at virke for en noegle,
+  // ellers kan en MCP-klient ikke vise, om 2FA er slaaet til.
+  const status = await medNoegle('GET', '/api/v1/totp');
+  assert.equal(status.status, 200, 'GET /api/v1/totp er kun status og skal stadig virke');
+});

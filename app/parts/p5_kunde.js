@@ -89,7 +89,9 @@ async function visKundevisning(projektId) {
         ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
           ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
       ],
-    }], `tovo-${d.project.name.replace(/[^\w-]+/g, '-')}-${state.today}.xlsx`);
+      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa et
+      // projekt ved navn »Café Ø« blev til »Caf--« (Beanledger v68, §4).
+    }], `tovo-${d.project.name.replace(/[^\p{L}\p{N}_-]+/gu, '-')}-${state.today}.xlsx`);
     toast('Excel file downloaded.');
   });
 }

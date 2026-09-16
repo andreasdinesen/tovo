@@ -2348,7 +2348,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 28;
+const APP_VERSION = 29;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -5794,7 +5794,9 @@ function bindDetalje(host, it, startLink) {
       // aabner den i kalenderen. Ingen blob, intet at rydde op.
       const a = document.createElement('a');
       a.href = `/api/v1/tasks/${it.id}/ics`;
-      a.download = `tovo-${it.title.replace(/[^\w-]+/g, '-').slice(0, 40)}.ics`;
+      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa »Café«
+      // blev til »Caf« og »Ørkenen« til »rkenen« (Beanledger v68, §4).
+      a.download = `tovo-${it.title.replace(/[^\p{L}\p{N}_-]+/gu, '-').slice(0, 40)}.ics`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -6368,7 +6370,9 @@ async function visKundevisning(projektId) {
         ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
           ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
       ],
-    }], `tovo-${d.project.name.replace(/[^\w-]+/g, '-')}-${state.today}.xlsx`);
+      // `\p{L}\p{N}` + u-flaget, ikke `\w`: `\w` er kun ASCII, saa et
+      // projekt ved navn »Café Ø« blev til »Caf--« (Beanledger v68, §4).
+    }], `tovo-${d.project.name.replace(/[^\p{L}\p{N}_-]+/gu, '-')}-${state.today}.xlsx`);
     toast('Excel file downloaded.');
   });
 }

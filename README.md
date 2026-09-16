@@ -71,6 +71,18 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v29 — en adgangsnøgle kan ikke længere røre totrinsbekræftelsen
+
+- **Sikkerhedsrettelse.** En adgangsnøgle med skriveadgang kunne slå totrinsbekræftelse
+  til og fra, starte opsætningen og hente nye genoprettelseskoder — på den konto, den
+  tilhørte. En lækket nøgle kunne dermed logge ind som dig, og var totrinsbekræftelsen
+  slået fra, kunne den slå den til med en hemmelighed, kun den selv kendte, så du stod
+  uden for din egen server med det rigtige kodeord. Nu kræver alt, der rører andet trin,
+  at du er logget ind i en browser — ligesom skift af kodeord altid har gjort. Nøgler kan
+  stadig **se**, om totrinsbekræftelse er slået til.
+- **Filnavne med é, ü og ø** i en kalenderfil eller et regneark bevares nu. Før blev de
+  skåret væk, så »Café Müller« blev til »Caf-M-ller«.
+
 ### v28 — stjernerne står over Projects
 
 - **»Starred« er flyttet op over Projects i venstre menu.** De to foldbare afsnit i

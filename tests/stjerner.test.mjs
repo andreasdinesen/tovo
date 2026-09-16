@@ -140,7 +140,12 @@ test('stjernen overlever en genimport fra Planner', async () => {
   const efter = (await k.kald('GET', `/api/v1/items/${id}`)).data.item;
   assert.equal(efter.title, 'fra Planner (rettet i Planner)');
   assert.equal(efter.starred, true, 'stjernen er tovos egen og maa ikke roeres af en import');
-  assert.equal(efter.starredAt, foer.starredAt, 'og stemplet - listens raekkefoelge - skal staa stille');
+  // `starredSeq`, ikke `starredAt`: feltet blev et LOEBENUMMER, da
+  // sorteringsfaelden blev rettet (2026-09-16), men proeven blev staaende paa
+  // det gamle navn. Begge sider var derfor `undefined`, og den groenne
+  // assertion sagde intet om det, den paastod at vogte.
+  assert.ok(foer.starredSeq > 0, 'loebenummeret skal findes, foer det kan staa stille');
+  assert.equal(efter.starredSeq, foer.starredSeq, 'og loebenummeret - listens raekkefoelge - skal staa stille');
   await k.kald('POST', `/api/v1/tasks/${id}/star`, { starred: false });
 });
 
