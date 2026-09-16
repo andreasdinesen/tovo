@@ -2407,6 +2407,11 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 
 /* --- afsnittet i sidebaren --- */
 
+/* Afsnittet ligger inde i navigationens spalte (gap: 2px) mellem Week og
+   Projects. Lidt luft omkring, saa det laeses som en gruppe og ikke som to
+   menupunkter mere - men ikke en streg: en streg ville dele navigationen i
+   to, og Projects hoerer sammen med Today og Week. */
+.stjernesektion { margin: 10px 0; }
 .stjerne-titel { color: var(--muted); font-size: 13.5px; }
 .stjerne-titel .nav-count { margin-left: auto; }
 /* Chevronen peger NED, naar listen er foldet ud: retningen er, hvad et klik

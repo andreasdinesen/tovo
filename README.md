@@ -71,6 +71,13 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v28 — stjernerne står over Projects
+
+- **»Starred« er flyttet op over Projects i venstre menu.** De to foldbare afsnit i
+  sidebaren står nu ved siden af hinanden, i stedet for at stjernerne lå nederst under
+  Report. Intet andet er ændret — foldningen, afspil-knapperne og båndet over søgefeltet
+  er de samme.
+
 ### v27 — stjernemarkerede opgaver
 
 - **Stjernemarkér en opgave, og den er ét klik væk fra enhver skærm.** Stjernen sidder på

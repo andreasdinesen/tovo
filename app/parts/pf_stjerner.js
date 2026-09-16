@@ -65,7 +65,13 @@ function stjerneNavHtml() {
   // funktion, der ser ud til at vaere gaaet i stykker.
   if (!liste.length) return '';
   const aabne = stjernerAabne();
-  return `<nav class="nav">
+  /*
+   * En `div`, ikke en `nav`. Afsnittet ligger INDE i navigationens egen
+   * `<nav>` (lige over Projects), og en `nav` i en `nav` er to landemaerker
+   * i hinanden - en skaermlaeser melder dem begge. `.nav`-klassen giver den
+   * samme spalte og afstand uden den bivirkning.
+   */
+  return `<div class="nav stjernesektion">
     <button class="nav-item stjerne-titel" data-stjernefold
       aria-expanded="${aabne ? 'true' : 'false'}">
       ${icon('stjerneFuld')}<span>Starred</span>
@@ -84,7 +90,7 @@ function stjerneNavHtml() {
           title="${esc(stjerneStartMaerke(t.id))}">${icon(koerer ? 'stop' : 'play', 15)}</button>
       </div>`;
   }).join('')}</div>` : ''}
-  </nav>`;
+  </div>`;
 }
 
 /* --------------------------------------------- baandet over feltet */

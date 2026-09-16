@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 27;
+const APP_VERSION = 28;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -555,9 +555,19 @@ function navHtml() {
       return `<button class="nav-item" data-view="${v.id}" ${paaSiden}>
         ${icon(v.icon)}<span>${esc(v.label)}</span></button>`;
     }
+    /*
+     * Stjernerne staar HER - lige over Projects (Andreas, 2026-09-16).
+     *
+     * Vaerten tegnes med navigationen, saa de to foldbare afsnit i sidebaren
+     * staar ved siden af hinanden. `tegnStjerner()` fylder den bagefter; den
+     * kaldes til sidst i `opdaterNav()`, som lige har skiftet HELE
+     * `#navHost` ud - laa kaldet foer, ville stjernerne blive tegnet og
+     * straks overskrevet.
+     */
     // Selve raekken navigerer; chevronen folder ud. To ting i én raekke, men
     // to forskellige maal - derfor to knapper og ikke én.
-    return `<div class="nav-med-fold">
+    return `<div id="stjerneHost"></div>
+      <div class="nav-med-fold">
         <button class="nav-item" data-view="projects" ${paaSiden}>
           ${icon(v.icon)}<span>${esc(v.label)}</span>
           ${state.projects.length ? `<span class="nav-count">${state.projects.length}</span>` : ''}
@@ -586,10 +596,11 @@ function shellHtml() {
       <div class="brand">${icon('logo', 24)} <span style="flex:1">tovo</span>
         <button class="pinbtn" id="pinBtn" aria-label="Hide the menu"
           title="Hide the menu">${icon('pin', 16)}</button></div>
+      <!-- #stjerneHost staar INDE i navigationen, lige over Projects - se
+           navHtml(). Fyldes af tegnStjerner(), som ogsaa binder den: samme
+           sted tegner OG binder, saa de to ikke kan skilles ad igen
+           (Sagu, 2026-08-21). -->
       <div id="navHost">${navHtml()}</div>
-      <!-- Fyldes af tegnStjerner() i bindShell - samme sted tegner OG binder,
-           saa de to ikke kan skilles ad igen (Sagu, 2026-08-21). -->
-      <div id="stjerneHost"></div>
       <div class="sidebar-foot">
         <div id="timerHost"></div>
         <button class="nav-item" id="userBtn"
