@@ -206,6 +206,17 @@ const GUIDE_DELE = [
             ],
             go: [['settings/connections', 'Open Settings']],
           },
+          {
+            titel: 'Right-click in Edge',
+            lead: 'Select text on any page and start the timer on it.',
+            raekker: [
+              ['INSTALL', 'Download the <code>udvidelse</code> folder from the tovo repository on GitHub. In Edge: <code>edge://extensions</code>, turn on Developer mode, Load unpacked, pick the folder.'],
+              ['KEY', 'Create a key with the <b>capture only</b> scope and paste it with the address of this tovo. It can create tasks and start the timer — it cannot read anything.'],
+              ['AS WRITTEN', 'The selection becomes the title exactly as it is. <code>#</code>, <code>@</code> and <code>~</code> mean nothing here — page text is not tovo syntax.'],
+              ['NO DUPLICATES', 'If an open task already has that exact title, the timer starts on it instead of making a new one. A running timer is stopped first, as always.'],
+            ],
+            go: [['settings/connections', 'Create a key']],
+          },
         ],
       },
       {

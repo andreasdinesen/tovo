@@ -71,6 +71,17 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v32 — højreklik i Edge starter uret
+
+- **Browserudvidelsen i `udvidelse/`:** markér en tekst på en hvilken som helst side,
+  højreklik, og vælg »Start tovo timer«. Markeringen bliver opgavens titel ordret, og uret
+  starter. Findes der allerede en åben opgave med præcis samme titel, starter uret på den i
+  stedet — og kører det allerede dér, får det lov at køre videre.
+- Udvidelsen bruger en nøgle med scope **capture only**: den kan oprette og starte, men
+  ikke læse noget. Installation: `edge://extensions` → Developer mode → Load unpacked.
+- `POST /api/v1/capture` tager nu `{"raw": true, "start": true}` — teksten tolkes ikke som
+  syntaks, så `#`, `@` og `~` i en webside bliver stående i titlen.
+
 ### v31 — faner, egne adresser og »Copy table«
 
 - **Indstillingerne er delt i faner:** General, Account, Connections, Data og (for

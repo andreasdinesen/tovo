@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "tovo — start timer",
+  "version": "1.0.0",
+  "description": "Select text on any page, right-click, and start a tovo timer on it.",
+  "icons": {
+    "16": "ikoner/ikon-16.png",
+    "32": "ikoner/ikon-32.png",
+    "48": "ikoner/ikon-48.png",
+    "128": "ikoner/ikon-128.png"
+  },
+  "permissions": ["contextMenus", "storage", "notifications"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": { "service_worker": "baggrund.js" },
+  "action": { "default_title": "Open tovo" },
+  "options_ui": { "page": "indstillinger.html", "open_in_tab": true }
+}

@@ -1266,6 +1266,54 @@ function fangst(userId, tekst, opts) {
 }
 
 /**
+ * Fangst af tekst, der IKKE er skrevet til tovo - en markering paa en
+ * webside, sendt fra browserudvidelsen (`udvidelse/`).
+ *
+ * Parseren springes over med vilje: "Incident #4512 @ kunden" er en titel,
+ * ikke et mærkat og et projekt. Samme grund som doda-broen gaar uden om
+ * fangsten (CLAUDE.md, »Broen fra doda«).
+ *
+ * Findes der allerede en AABEN opgave med praecis samme titel, genbruges den.
+ * Man markerer typisk den samme sag igen, naar man vender tilbage til den,
+ * og en ny dublet hver gang ville splitte tiden paa flere opgaver.
+ *
+ * @param {object} [opts] {start} - start timeren (stopper en koerende).
+ */
+function fangstOrdret(userId, tekst, opts) {
+  const o = opts || {};
+  const titel = String(tekst || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+  if (!titel) {
+    throw Object.assign(new Error('there is no text to capture'), { status: 400 });
+  }
+  const noegle = titel.toLowerCase();
+  let item = hentItems(userId, { kind: 'task' })
+    .find((t) => t.status !== 'done' && String(t.title || '').trim().toLowerCase() === noegle) || null;
+  const oprettet = !item;
+  if (!item) {
+    item = gemItem(userId, {
+      kind: 'task',
+      title: titel,
+      caseNumber: '',
+      note: '',
+      projectId: null,
+      sectionId: null,
+      tagIds: [],
+      status: 'open',
+      position: naestePosition(userId, 'task'),
+    });
+  }
+  let timer = null;
+  if (o.start) {
+    // Koerer uret allerede paa opgaven, lades det koere. En genstart ville
+    // hugge posten i to og efterlade et stykke paa 0 minutter.
+    const koerende = koerendePost(userId);
+    if (!koerende || koerende.taskId !== item.id) startTimer(userId, item.id, 'timer');
+    timer = timerStatus(userId);
+  }
+  return { item, created: oprettet, nye: [], warnings: [], timer };
+}
+
+/**
  * Soegning i opgaver og projekter.
  *
  * Simpel delstrengs-match paa titel/navn. Datamaengden er én persons
@@ -2630,6 +2678,13 @@ const ROUTES = {
     // en ambient legitimation - en Bearer-noegle sendes aktivt (doda F2).
     const body = await readJsonBody(req, auth.viaToken);
     const tekst = typeof body.text === 'string' ? body.text : '';
+    // `raw` er browserudvidelsens vej: teksten er en markering fra en
+    // webside, ikke tovo-syntaks. Capture-scope er nok - `%` kan allerede
+    // starte timeren gennem den almindelige fangst.
+    if (body.raw === true) {
+      sendJson(res, 200, fangstOrdret(auth.user.id, tekst, { start: body.start === true }));
+      return;
+    }
     const r = fangst(auth.user.id, tekst, {
       projectId: str(body.projectId, 64) || null,
       sectionId: str(body.sectionId, 64) || null,
