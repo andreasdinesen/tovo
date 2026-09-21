@@ -29,6 +29,8 @@ const parse = require('./shared/parse.js');
 const beregn = require('./shared/beregn.js');
 // Sidernes adresser - den samme liste, som fladen skriver i adresselinjen.
 const ruter = require('./shared/ruter.js');
+// Zip-skriveren fra Excel-eksporten - den pakker browserudvidelsen til download.
+const xlsx = require('./shared/xlsx.js');
 const { klientIp } = require('./klientip.js');
 
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
@@ -50,6 +52,7 @@ const APP_NAME = process.env.APP_NAME || 'tovo';
 const DEV = process.env.TOVO_DEV === '1';
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const UDVIDELSE_DIR = path.join(__dirname, 'udvidelse');
 const SESSION_COOKIE = 'tovo_session';
 const SESSION_DAYS = 90;
 
@@ -1267,7 +1270,7 @@ function fangst(userId, tekst, opts) {
 
 /**
  * Fangst af tekst, der IKKE er skrevet til tovo - en markering paa en
- * webside, sendt fra browserudvidelsen (`udvidelse/`).
+ * webside, sendt fra browserudvidelsen (`app/udvidelse/`).
  *
  * Parseren springes over med vilje: "Incident #4512 @ kunden" er en titel,
  * ikke et mærkat og et projekt. Samme grund som doda-broen gaar uden om
@@ -1303,14 +1306,16 @@ function fangstOrdret(userId, tekst, opts) {
     });
   }
   let timer = null;
+  let alleredeIGang = false;
   if (o.start) {
     // Koerer uret allerede paa opgaven, lades det koere. En genstart ville
     // hugge posten i to og efterlade et stykke paa 0 minutter.
     const koerende = koerendePost(userId);
-    if (!koerende || koerende.taskId !== item.id) startTimer(userId, item.id, 'timer');
+    alleredeIGang = !!koerende && koerende.taskId === item.id;
+    if (!alleredeIGang) startTimer(userId, item.id, 'timer');
     timer = timerStatus(userId);
   }
-  return { item, created: oprettet, nye: [], warnings: [], timer };
+  return { item, created: oprettet, alreadyRunning: alleredeIGang, nye: [], warnings: [], timer };
 }
 
 /**
@@ -3162,6 +3167,39 @@ const ROUTES = {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': `attachment; filename="tovo-${iDag()}.json"`,
       'Content-Length': Buffer.byteLength(data),
+      'Cache-Control': 'no-store',
+    });
+    res.end(data);
+  },
+
+  /*
+   * Browserudvidelsen som zip, pakket her og nu af app/udvidelse/.
+   *
+   * Filerne ligger i en mappe i zip'en, fordi Edges »Load unpacked« vil have
+   * en MAPPE. `forvalg.json` baerer denne tovos adresse, saa indstillings-
+   * siden kan udfylde den - ALDRIG en noegle: en zip i Overfoersler er ikke
+   * et sted, en hemmelighed skal ligge.
+   */
+  'GET /api/v1/extension.zip': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    const MAPPE = 'tovo-udvidelse';
+    const filer = [];
+    const saml = (dir, rel) => {
+      for (const navn of fs.readdirSync(dir).sort()) {
+        if (navn.startsWith('.')) continue;
+        const sti = path.join(dir, navn);
+        if (fs.statSync(sti).isDirectory()) saml(sti, `${rel}${navn}/`);
+        else filer.push([`${MAPPE}/${rel}${navn}`, fs.readFileSync(sti)]);
+      }
+    };
+    saml(UDVIDELSE_DIR, '');
+    filer.push([`${MAPPE}/forvalg.json`, JSON.stringify({ url: basisUrl(req) }, null, 2)]);
+    const data = Buffer.from(xlsx.zip(filer));
+    res.writeHead(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${MAPPE}.zip"`,
+      'Content-Length': data.length,
       'Cache-Control': 'no-store',
     });
     res.end(data);

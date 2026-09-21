@@ -116,7 +116,7 @@ const HEL_APP = {
   'server.js': '', 'public/app.js': '', 'shared/parse.js': '',
   'shared/beregn.js': '', 'shared/planner.js': '', 'oauth.js': '',
   'mcp.js': '', 'webauthn.js': '', 'sagu.js': '', 'totp.js': '', 'qr.js': '',
-  'live.js': '', 'klientip.js': '', 'shared/ruter.js': '',
+  'live.js': '', 'klientip.js': '', 'shared/ruter.js': '', 'shared/xlsx.js': '',
 };
 
 test('en hel app med det rigtige stempel godtages', () => {
@@ -169,7 +169,7 @@ function kraevedeModuler() {
 
 test('listen daekker ALT, server.js og modulerne require\'r', () => {
   const moduler = kraevedeModuler();
-  for (const m of ['klientip.js', 'live.js', 'shared/ruter.js', 'shared/beregn.js']) {
+  for (const m of ['klientip.js', 'live.js', 'shared/ruter.js', 'shared/beregn.js', 'shared/xlsx.js']) {
     assert.ok(moduler.includes(m), `moensteret fandt ikke ${m} - vagten maaler intet`);
   }
   // shared/planner.js staar paa listen uden at blive require'et af serveren

@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 32;
+const APP_VERSION = 33;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1627,6 +1627,24 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Edge extension</h2>
+      <p class="meta">Select text on any page, right-click, and start the timer on it.</p>
+      <div class="row">
+        <button class="btn" id="extDownload">Download the extension</button>
+        <button class="btn" id="extKey">Create a key for it</button>
+      </div>
+      <ol class="meta" style="margin:10px 0 0;padding-left:20px">
+        <li>Unzip the file. You get a folder called <code>tovo-udvidelse</code>.</li>
+        <li>In Edge: <code>edge://extensions</code> → turn on <strong>Developer mode</strong> →
+          <strong>Load unpacked</strong> → pick the folder.</li>
+        <li>The extension's settings open with this tovo's address filled in. Paste the key and
+          press <strong>Save and test</strong>.</li>
+      </ol>
+      <p class="meta">The key has the <strong>capture only</strong> scope: it can create tasks and
+        start the timer, and cannot read anything.</p>
+    </div>
+
+    <div class="card">
       <h2>Calendar</h2>
       <p class="meta">Tasks with a date become appointments in your own calendar. The address
         is the secret — anyone who has it can read the feed, and revoking it kills every copy.</p>
@@ -1827,6 +1845,28 @@ function bindSettings() {
       const url = document.getElementById('mcpUrl').textContent;
       const ok = await kopier(url);
       toast(ok ? 'Address copied.' : `Copy it by hand: ${url}`);
+    });
+  }
+  const extDownload = document.getElementById('extDownload');
+  if (extDownload) {
+    extDownload.addEventListener('click', () => {
+      // En almindelig <a download>: browseren henter filen med cookien.
+      const a = document.createElement('a');
+      a.href = '/api/v1/extension.zip';
+      a.download = 'tovo-udvidelse.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
+  const extKey = document.getElementById('extKey');
+  if (extKey) {
+    // Samme vej som en noegle, man laver i haanden - bare med navn og scope
+    // udfyldt, saa man ikke kan komme til at give udvidelsen en full-noegle.
+    extKey.addEventListener('click', () => {
+      document.getElementById('keyName').value = 'Edge extension';
+      document.getElementById('keyScope').value = 'capture';
+      document.getElementById('keyAdd').click();
     });
   }
   const keyAdd = document.getElementById('keyAdd');

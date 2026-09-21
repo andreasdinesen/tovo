@@ -71,6 +71,18 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v33 — hent Edge-udvidelsen direkte fra tovo
+
+- **Settings → Connections → Edge extension:** »Download the extension« henter en zip med
+  udvidelsen — man skal ikke længere omkring GitHub. Pak den ud, og indlæs mappen med
+  *Load unpacked*. Udvidelsens indstillinger er udfyldt med adressen på den tovo, den kom fra.
+- **»Create a key for it«** laver en nøgle med scope *capture only* i ét klik.
+- **Udvidelsen siger fra, når tovo er for gammel.** En tovo før v32 oprettede opgaven og
+  startede intet, mens udvidelsen meldte »Timer started«. Nu viser den en fejl, og
+  »Save and test« tjekker versionen.
+- **Tydeligere notifikation:** »Timer started« med *New task* eller *Continued on your
+  existing task*, og »Timer already running«, når uret allerede kørte på opgaven.
+
 ### v32 — højreklik i Edge starter uret
 
 - **Browserudvidelsen i `udvidelse/`:** markér en tekst på en hvilken som helst side,

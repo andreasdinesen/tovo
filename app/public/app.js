@@ -2371,16 +2371,25 @@
       ...dele.map((a, i) => [`xl/worksheets/sheet${i + 1}.xml`, arkXml(a.rows || [])]),
     ];
 
-    /* Zip'en skrives UDEN komprimering (metode 0). En regnearksfil paa nogle
-       kilobyte har intet at hente ved deflate, og saa slipper vi for at gaa
-       gennem CompressionStream - som er asynkron og ikke findes alle steder. */
+    return zip(filer);
+  }
+
+  /**
+   * [navn, indhold][] -> zip-bytes. Indholdet er tekst ELLER bytes (ikonerne
+   * i browserudvidelsen, som serveren pakker til download).
+   *
+   * Zip'en skrives UDEN komprimering (metode 0). En regnearksfil paa nogle
+   * kilobyte har intet at hente ved deflate, og saa slipper vi for at gaa
+   * gennem CompressionStream - som er asynkron og ikke findes alle steder.
+   */
+  function zip(filer) {
     const lokale = [];
     const centrale = [];
     let offset = 0;
 
     for (const [navn, indhold] of filer) {
       const navnBytes = tekst(navn);
-      const data = tekst(indhold);
+      const data = typeof indhold === 'string' ? tekst(indhold) : new Uint8Array(indhold);
       const crc = crc32(data);
 
       const lokal = new Uint8Array(30 + navnBytes.length + data.length);
@@ -2431,7 +2440,7 @@
     return samlet;
   }
 
-  return { byg, crc32, celleRef };
+  return { byg, zip, crc32, celleRef };
 }));
 
 /* ---- p1_core.js ---- */
@@ -2442,7 +2451,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 32;
+const APP_VERSION = 33;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -4064,6 +4073,24 @@ async function settingsHtml() {
     </div>
 
     <div class="card">
+      <h2>Edge extension</h2>
+      <p class="meta">Select text on any page, right-click, and start the timer on it.</p>
+      <div class="row">
+        <button class="btn" id="extDownload">Download the extension</button>
+        <button class="btn" id="extKey">Create a key for it</button>
+      </div>
+      <ol class="meta" style="margin:10px 0 0;padding-left:20px">
+        <li>Unzip the file. You get a folder called <code>tovo-udvidelse</code>.</li>
+        <li>In Edge: <code>edge://extensions</code> → turn on <strong>Developer mode</strong> →
+          <strong>Load unpacked</strong> → pick the folder.</li>
+        <li>The extension's settings open with this tovo's address filled in. Paste the key and
+          press <strong>Save and test</strong>.</li>
+      </ol>
+      <p class="meta">The key has the <strong>capture only</strong> scope: it can create tasks and
+        start the timer, and cannot read anything.</p>
+    </div>
+
+    <div class="card">
       <h2>Calendar</h2>
       <p class="meta">Tasks with a date become appointments in your own calendar. The address
         is the secret — anyone who has it can read the feed, and revoking it kills every copy.</p>
@@ -4264,6 +4291,28 @@ function bindSettings() {
       const url = document.getElementById('mcpUrl').textContent;
       const ok = await kopier(url);
       toast(ok ? 'Address copied.' : `Copy it by hand: ${url}`);
+    });
+  }
+  const extDownload = document.getElementById('extDownload');
+  if (extDownload) {
+    extDownload.addEventListener('click', () => {
+      // En almindelig <a download>: browseren henter filen med cookien.
+      const a = document.createElement('a');
+      a.href = '/api/v1/extension.zip';
+      a.download = 'tovo-udvidelse.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
+  const extKey = document.getElementById('extKey');
+  if (extKey) {
+    // Samme vej som en noegle, man laver i haanden - bare med navn og scope
+    // udfyldt, saa man ikke kan komme til at give udvidelsen en full-noegle.
+    extKey.addEventListener('click', () => {
+      document.getElementById('keyName').value = 'Edge extension';
+      document.getElementById('keyScope').value = 'capture';
+      document.getElementById('keyAdd').click();
     });
   }
   const keyAdd = document.getElementById('keyAdd');
@@ -8739,12 +8788,12 @@ const GUIDE_DELE = [
             titel: 'Right-click in Edge',
             lead: 'Select text on any page and start the timer on it.',
             raekker: [
-              ['INSTALL', 'Download the <code>udvidelse</code> folder from the tovo repository on GitHub. In Edge: <code>edge://extensions</code>, turn on Developer mode, Load unpacked, pick the folder.'],
+              ['INSTALL', 'Settings &rarr; Connections &rarr; <b>Download the extension</b>, and unzip it. In Edge: <code>edge://extensions</code>, turn on Developer mode, Load unpacked, pick the folder.'],
               ['KEY', 'Create a key with the <b>capture only</b> scope and paste it with the address of this tovo. It can create tasks and start the timer — it cannot read anything.'],
               ['AS WRITTEN', 'The selection becomes the title exactly as it is. <code>#</code>, <code>@</code> and <code>~</code> mean nothing here — page text is not tovo syntax.'],
               ['NO DUPLICATES', 'If an open task already has that exact title, the timer starts on it instead of making a new one. A running timer is stopped first, as always.'],
             ],
-            go: [['settings/connections', 'Create a key']],
+            go: [['settings/connections', 'Get the extension']],
           },
         ],
       },

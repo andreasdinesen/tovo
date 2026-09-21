@@ -43,6 +43,8 @@ test('samme markering igen genbruger den aabne opgave - ingen dublet', async () 
   const foer = await send('SAG-1001 Opsaetning af server');
   const igen = await send('sag-1001   opsaetning af SERVER');
   assert.equal(igen.data.created, false);
+  assert.equal(foer.data.alreadyRunning, false);
+  assert.equal(igen.data.alreadyRunning, true, 'udvidelsen skal kunne sige »already running«');
   assert.equal(igen.data.item.id, foer.data.item.id);
   const s = await a.kald('GET', '/api/v1/items?kind=task');
   const ens = s.data.items.filter((t) => t.title.toLowerCase() === 'sag-1001 opsaetning af server');
@@ -97,4 +99,89 @@ test('en anden brugers noegle genbruger ALDRIG andreas\' opgave', async () => {
   assert.equal(r.data.created, true, 'bente faar sin egen opgave');
   const aState = await a.kald('GET', '/api/v1/items?kind=task');
   assert.ok(!aState.data.items.some((t) => t.id === r.data.item.id));
+});
+
+/* --- download fra Settings ------------------------------------------------ */
+
+/* Laeser en stored-zip (metode 0) - det er den eneste slags, tovo skriver. */
+function laesZip(buf) {
+  const filer = new Map();
+  let p = 0;
+  while (buf.readUInt32LE(p) === 0x04034b50) {
+    assert.equal(buf.readUInt16LE(p + 8), 0, 'metode 0');
+    const stoerrelse = buf.readUInt32LE(p + 18);
+    const navnLaengde = buf.readUInt16LE(p + 26);
+    const ekstra = buf.readUInt16LE(p + 28);
+    const navn = buf.subarray(p + 30, p + 30 + navnLaengde).toString('utf8');
+    const start = p + 30 + navnLaengde + ekstra;
+    filer.set(navn, buf.subarray(start, start + stoerrelse));
+    p = start + stoerrelse;
+  }
+  return filer;
+}
+
+test('udvidelsen kan hentes som zip - med denne tovos adresse, men ALDRIG en noegle', async () => {
+  const res = await fetch(`${srv.base}/api/v1/extension.zip`, {
+    headers: { Cookie: a.cookie, 'X-Forwarded-Host': 'tovo.example.com', 'X-Forwarded-Proto': 'https' },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'application/zip');
+  const filer = laesZip(Buffer.from(await res.arrayBuffer()));
+
+  const { readFileSync } = await import('node:fs');
+  const rod = new URL('../app/udvidelse/', import.meta.url);
+  for (const navn of ['manifest.json', 'baggrund.js', 'faelles.js', 'indstillinger.html',
+    'indstillinger.js', 'ikoner/ikon-16.png', 'ikoner/ikon-128.png']) {
+    const i = filer.get(`tovo-udvidelse/${navn}`);
+    assert.ok(i, `${navn} mangler i zip'en`);
+    assert.ok(i.equals(readFileSync(new URL(navn, rod))), `${navn} er ikke byte-identisk`);
+  }
+  const forvalg = JSON.parse(filer.get('tovo-udvidelse/forvalg.json').toString('utf8'));
+  assert.deepEqual(forvalg, { url: 'https://tovo.example.com' });
+  for (const [navn, indhold] of filer) {
+    assert.ok(!indhold.toString('latin1').includes('tovo_'.concat(noegle.slice(5))),
+      `${navn} indeholder en noegle`);
+  }
+});
+
+test('zip\'en kraever login', async () => {
+  const res = await fetch(`${srv.base}/api/v1/extension.zip`);
+  assert.equal(res.status, 401);
+});
+
+/* --- udvidelsens egen kode mod en for gammel tovo ---------------------------
+ *
+ * v31 paa Hjorten svarede 200 paa {raw, start}, oprettede opgaven gennem den
+ * almindelige fangst og startede INTET. Udvidelsen meldte »Timer started«.
+ * Her koeres faelles.js selv - i en vm med en falsk fetch - mod de to svar.
+ */
+async function faelles(svar) {
+  const { readFileSync } = await import('node:fs');
+  const vm = await import('node:vm');
+  const kode = readFileSync(new URL('../app/udvidelse/faelles.js', import.meta.url), 'utf8');
+  const ctx = vm.createContext({
+    URL,
+    fetch: async (u) => ({
+      ok: true, status: 200,
+      json: async () => (u.endsWith('/api/public-config') ? svar.config : svar.capture),
+    }),
+  });
+  vm.runInContext(kode, ctx);
+  return ctx;
+}
+
+test('udvidelsen siger fra, naar tovo er for gammel til at starte uret', async () => {
+  const gammel = await faelles({
+    config: { version: 31 },
+    // Praecis hvad v31 svarer: en fangst uden `created`, uden timer.
+    capture: { item: { title: 'Track 1C' }, nye: [], warnings: [], timer: null },
+  });
+  await assert.rejects(gammel.kaldCapture('https://x', 'tovo_k', { text: 'Track 1C', start: true }),
+    /too old/);
+  await assert.rejects(gammel.tjekVersion('https://x'), /too old/);
+
+  const ny = await faelles({ config: { version: 32 }, capture: { item: {}, created: true, timer: {} } });
+  await ny.tjekVersion('https://x');
+  const r = await ny.kaldCapture('https://x', 'tovo_k', { text: 'Track 1C', start: true });
+  assert.equal(r.created, true);
 });

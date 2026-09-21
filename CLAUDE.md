@@ -342,11 +342,20 @@ Det, du skal vide, hvis du retter i tovo:
 
 Dodas side er skrevet ned i `../doda/DESIGN.md` under »tovo-broen«.
 
-## Browserudvidelsen (`udvidelse/`)
+## Browserudvidelsen (`app/udvidelse/`)
 
-En Edge/Chrome-udvidelse (MV3): markér tekst → højreklik → »Start tovo timer«. Den ligger
-UDEN FOR `app/` og kommer derfor ikke med i runen; man henter mappen fra GitHub og
-indlæser den med »Load unpacked«. Ingen byggetrin, ingen pakker.
+En Edge/Chrome-udvidelse (MV3): markér tekst → højreklik → »Start tovo timer«. Ingen
+byggetrin, ingen pakker. Siden v33 ligger den **i `app/`**, så den følger med koden, som
+`kilde.js` henter, og serveren pakker den som zip på `GET /api/v1/extension.zip`
+(Settings → Connections → »Download the extension«).
+
+- **Zip'en bygges ved hvert kald** med `xlsx.zip()` — den samme stored-zip-skriver som
+  Excel-eksporten. Ingen genereret zip i repoet, der kan komme ud af trit med kilderne.
+- **`forvalg.json` i zip'en bærer tovos adresse** (`basisUrl(req)`), så indstillingssiden er
+  udfyldt. **Aldrig en nøgle i zip'en** — den havner i Overførsler. »Create a key for it«
+  laver i stedet en `capture`-nøgle gennem den almindelige nøglerude, der viser den én gang.
+- `server.js` require'r nu `shared/xlsx.js` på modulniveau, så den står på `kilde.js`'
+  liste over moduler, en hentet udgave skal have (og i `tests/kilde.test.mjs`).
 
 - **Én rute: `POST /api/v1/capture` med `raw: true`** (`fangstOrdret()` i server.js).
   Parseren springes over med vilje — sidetekst er ikke tovo-syntaks, samme grund som

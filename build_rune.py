@@ -31,6 +31,7 @@ APP = os.path.join(ROOT, 'app')
 PARTS = os.path.join(APP, 'parts')
 PUBLIC = os.path.join(APP, 'public')
 SHARED = os.path.join(APP, 'shared')
+UDVIDELSE = os.path.join(APP, 'udvidelse')
 OUT = os.path.join(ROOT, 'runes', 'tovo.yaml')
 
 # Install-scriptet koeres som ET sh -c-argument -> Linux' MAX_ARG_STRLEN
@@ -258,6 +259,15 @@ def indsaml_filer():
         sti = os.path.join(PUBLIC, navn)
         if os.path.isfile(sti) and not navn.startswith('.'):
             filer.append((f'app/public/{navn}', sti))
+    # Browserudvidelsen (ikoner i en undermappe). Serveren pakker den som zip
+    # til download fra Settings, saa den skal med - ogsaa i den indlejrede rune.
+    for rod, mapper, navne in os.walk(UDVIDELSE):
+        mapper.sort()
+        for navn in sorted(navne):
+            if navn.startswith('.'):
+                continue
+            sti = os.path.join(rod, navn)
+            filer.append(('app/' + os.path.relpath(sti, APP).replace(os.sep, '/'), sti))
     return filer
 
 

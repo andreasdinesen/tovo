@@ -10,6 +10,14 @@ function status(tekst, klasse) {
   const { url, noegle } = await chrome.storage.local.get(['url', 'noegle']);
   if (url) $('url').value = url;
   if (noegle) $('noegle').value = noegle;
+  /* Hentet fra tovos Settings, har zip'en en forvalg.json med tovos adresse.
+     Hentet fra GitHub findes den ikke - saa skriver man selv adressen. */
+  if (!url) {
+    try {
+      const f = await (await fetch(chrome.runtime.getURL('forvalg.json'))).json();
+      if (f && f.url) $('url').value = f.url;
+    } catch { /* ingen forvalg */ }
+  }
 })();
 
 $('form').addEventListener('submit', async (e) => {
@@ -35,6 +43,7 @@ $('form').addEventListener('submit', async (e) => {
   try {
     /* En tom tekst er en proeve uden sideeffekter: en gyldig noegle med ret
        scope faar 400 "there is no text to capture" - intet oprettes. */
+    await tjekVersion(url);
     await kaldCapture(url, noegle, { text: '', start: false });
     status('Unexpected answer from tovo — nothing was saved.', 'fejl');
   } catch (err) {

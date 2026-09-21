@@ -26,10 +26,10 @@ function hent(navn) {
 /* Siden foer fanerne: 15 overskrifter og 24 id'er (med en forbundet app og
    som administrator - saa er alle de betingede afsnit med). */
 const AFSNIT_FOER = ['What you can set here', 'Capture syntax', 'Your working day', 'Appearance',
-  'Account', 'Claude and other clients', 'Access keys', 'Connected apps', 'Calendar',
+  'Account', 'Claude and other clients', 'Access keys', 'Connected apps', 'Edge extension', 'Calendar',
   'Two-factor', 'Passkeys', 'Sagu', 'Case numbers', 'Your data', 'This server'];
 const IDER_FOER = ['dagForm', 'dagSlut', 'dagStart', 'dagTimer', 'dataEksport', 'dataToggl',
-  'icalAlarm', 'icalCopy', 'icalCreate', 'icalRevoke', 'icalUrl', 'keyAdd', 'keyName',
+  'extDownload', 'extKey', 'icalAlarm', 'icalCopy', 'icalCreate', 'icalRevoke', 'icalUrl', 'keyAdd', 'keyName',
   'keyScope', 'mcpCopy', 'mcpUrl', 'pkAdd', 'pwCur', 'pwForm', 'pwNew', 'saguKort',
   'setCaseUrl', 'setReg', 'totpKort'];
 

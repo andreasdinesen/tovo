@@ -114,16 +114,25 @@
       ...dele.map((a, i) => [`xl/worksheets/sheet${i + 1}.xml`, arkXml(a.rows || [])]),
     ];
 
-    /* Zip'en skrives UDEN komprimering (metode 0). En regnearksfil paa nogle
-       kilobyte har intet at hente ved deflate, og saa slipper vi for at gaa
-       gennem CompressionStream - som er asynkron og ikke findes alle steder. */
+    return zip(filer);
+  }
+
+  /**
+   * [navn, indhold][] -> zip-bytes. Indholdet er tekst ELLER bytes (ikonerne
+   * i browserudvidelsen, som serveren pakker til download).
+   *
+   * Zip'en skrives UDEN komprimering (metode 0). En regnearksfil paa nogle
+   * kilobyte har intet at hente ved deflate, og saa slipper vi for at gaa
+   * gennem CompressionStream - som er asynkron og ikke findes alle steder.
+   */
+  function zip(filer) {
     const lokale = [];
     const centrale = [];
     let offset = 0;
 
     for (const [navn, indhold] of filer) {
       const navnBytes = tekst(navn);
-      const data = tekst(indhold);
+      const data = typeof indhold === 'string' ? tekst(indhold) : new Uint8Array(indhold);
       const crc = crc32(data);
 
       const lokal = new Uint8Array(30 + navnBytes.length + data.length);
@@ -174,5 +183,5 @@
     return samlet;
   }
 
-  return { byg, crc32, celleRef };
+  return { byg, zip, crc32, celleRef };
 }));

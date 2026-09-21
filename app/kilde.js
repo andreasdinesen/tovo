@@ -243,7 +243,7 @@ function tjekTrae(mappe, version) {
    * dens liste ville se rigtig ud og daekke for lidt.
    */
   for (const kraevet of ['server.js', 'public/index.html', 'public/app.js',
-    'shared/parse.js', 'shared/beregn.js', 'shared/planner.js', 'shared/ruter.js',
+    'shared/parse.js', 'shared/beregn.js', 'shared/planner.js', 'shared/ruter.js', 'shared/xlsx.js',
     'oauth.js', 'mcp.js', 'webauthn.js', 'sagu.js', 'totp.js', 'qr.js', 'live.js',
     'klientip.js']) {
     if (!fs.existsSync(path.join(mappe, ...kraevet.split('/')))) {

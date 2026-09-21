@@ -54,8 +54,11 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   try {
     const r = await kaldCapture(url, noegle, { text: tekst, start: true });
     maerke('▶', '#2f9e44');
-    besked(r.created ? 'Timer started on a new task' : 'Timer started',
-      r.item.title + (r.created ? '' : '\n(an open task with this title already existed)'));
+    /* Tre udfald, og alle tre er et JA. Den foerste udgave skrev »(an open
+       task with this title already existed)« i parentes - det blev laest som
+       en fejlbesked, selv om uret koerte (Andreas, 2026-09-21). */
+    if (r.alreadyRunning) besked('Timer already running', r.item.title);
+    else besked('Timer started', `${r.item.title}\n${r.created ? 'New task' : 'Continued on your existing task'}`);
   } catch (err) {
     maerke('!', '#c92a2a');
     besked('tovo could not start the timer', err.message);
