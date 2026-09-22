@@ -2451,7 +2451,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 34;
+const APP_VERSION = 35;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2566,13 +2566,16 @@ function isoDato(d) {
  * Kun http(s) tages imod: en skabelon er brugerens egen tekst, men den bliver
  * til et href, og dér maa javascript: aldrig kunne slippe igennem.
  */
+function sagUrl(sag) {
+  const skabelon = (state.settings || {}).case_url || '';
+  if (!sag || !/^https?:\/\//i.test(skabelon) || !skabelon.includes('{case}')) return '';
+  return skabelon.replace('{case}', encodeURIComponent(sag));
+}
+
 function sagHtml(sag) {
   if (!sag) return '';
-  const skabelon = (state.settings || {}).case_url || '';
-  if (!/^https?:\/\//i.test(skabelon) || !skabelon.includes('{case}')) {
-    return `<span class="sagchip">${esc(sag)}</span>`;
-  }
-  const url = skabelon.replace('{case}', encodeURIComponent(sag));
+  const url = sagUrl(sag);
+  if (!url) return `<span class="sagchip">${esc(sag)}</span>`;
   return `<a class="sagchip saglink" href="${esc(url)}" target="_blank" rel="noopener noreferrer"
     title="Open ${esc(sag)}" data-stop>${esc(sag)}</a>`;
 }
@@ -5839,9 +5842,12 @@ async function aabnOpgave(id) {
             value="${esc(it.estimateMinutes ? tovoBeregn.formatVarighed(it.estimateMinutes) : '')}"></label>
         <label class="field" style="flex:1"><span>Due</span>
           <input class="input" id="dDue" type="date" value="${esc(it.dueDate || '')}"></label>
-        <label class="field" style="flex:1"><span>Case number</span>
-          <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
-            value="${esc(it.caseNumber || '')}"></label>
+        <div class="sagfelt">
+          <label class="field"><span>Case number</span>
+            <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
+              value="${esc(it.caseNumber || '')}"></label>
+          <a class="sagaaben" id="dSagLink" target="_blank" rel="noopener noreferrer" hidden>Open in ServiceNow ↗</a>
+        </div>
         ${kolonneFeltHtml(projekt, it)}
       </div>
 
@@ -6074,6 +6080,28 @@ function bindDetalje(host, it, startLink) {
   tegnSaguIRude(it);
 
   document.getElementById('dSave').addEventListener('click', gemOpgaven);
+
+  /*
+   * Sagsnummeret som link - samme sagUrl() som chippen i oversigten, saa de
+   * to aldrig kan pege forskellige steder hen. Linket foelger feltet, mens
+   * man skriver, og falder tilbage paa projektets nummer, som feltet ogsaa
+   * viser som pladsholder.
+   */
+  // Samme regel som i aabnOpgave: tomt felt -> projektets nummer. Den
+  // variabel lever dér, ikke her; uden sin egen kastede et tomt felt en
+  // ReferenceError, og linket blev staaende.
+  const sagProjekt = state.projects.find((p) => p.id === it.projectId);
+  const sagArvet = (sagProjekt && sagProjekt.caseNumber) || '';
+  const sagFelt = document.getElementById('dSag');
+  const sagLink = document.getElementById('dSagLink');
+  const opdaterSagLink = () => {
+    const sag = sagFelt.value.trim() || sagArvet;
+    const url = sagUrl(sag);
+    sagLink.hidden = !url;
+    if (url) { sagLink.href = url; sagLink.title = `Open ${sag}`; }
+  };
+  sagFelt.addEventListener('input', opdaterSagLink);
+  opdaterSagLink();
   bindGemGenvej(host, gemOpgaven);
 
   const ics = document.getElementById('dIcs');
@@ -6392,7 +6420,10 @@ async function aabnManuel(forvalgtOpgave, opt) {
       <label class="field"><span>Project</span>
         <select class="input" id="mProject">${projektValg(opgaver, forvalgtProjekt)}</select></label>
       <label class="field"><span>Task</span>
-        <select class="input" id="mTask">${opgaveValg(opgaver, forvalgtProjekt, forvalgtOpgave)}</select></label>
+        <select class="input" id="mTask">${opgaveValg(opgaver, forvalgtProjekt, forvalgtOpgave)}${NY_OPGAVE}</select></label>
+      <label class="field" id="mNewField" hidden><span>New task</span>
+        <input class="input" id="mNewTask" placeholder="What is it called? — lands in the project above"
+          autocomplete="off"></label>
       <div class="row">
         <label class="field" style="flex:1"><span>Date</span>
           <input class="input" id="mDate" type="date" value="${esc(forvalgtDato)}"></label>
@@ -6419,18 +6450,69 @@ async function aabnManuel(forvalgtOpgave, opt) {
   // Projektet filtrerer opgavelisten. Med tredive opgaver paa tvaers af
   // projekter er en flad liste ubrugelig - man kan ikke se, hvad man vaelger.
   const projektFelt = document.getElementById('mProject');
-  projektFelt.addEventListener('change', () => {
-    const opgaveFelt = document.getElementById('mTask');
-    const valgt = opgaveFelt.value;
-    opgaveFelt.innerHTML = opgaveValg(opgaver, projektFelt.value, valgt);
+  const opgaveFelt = document.getElementById('mTask');
+  const nyFelt = document.getElementById('mNewField');
+  const nyTitel = document.getElementById('mNewTask');
+  const visNyFelt = () => {
+    nyFelt.hidden = opgaveFelt.value !== '__ny';
+    if (!nyFelt.hidden) nyTitel.focus();
+  };
+  const tegnOpgaver = (valgt) => {
+    opgaveFelt.innerHTML = opgaveValg(opgaver, projektFelt.value, valgt) + NY_OPGAVE;
+    // Kun hvis den findes i det nye projekt. Ellers giver `.value = ...` et
+    // TOMT valg - og i et tomt projekt skal »+ New task« vaelges af sig selv.
+    if (valgt && [...opgaveFelt.options].some((x) => x.value === valgt)) opgaveFelt.value = valgt;
+    visNyFelt();
+  };
+  projektFelt.addEventListener('change', () => tegnOpgaver(opgaveFelt.value));
+  opgaveFelt.addEventListener('change', visNyFelt);
+  nyTitel.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); gem(); }
   });
 
   const gem = async () => {
-    const taskId = document.getElementById('mTask').value;
-    if (!taskId) { toast('Create a task first — time is always logged on something.'); return; }
+    let taskId = opgaveFelt.value;
+    if (!taskId) { toast('Pick a task, or choose "+ New task" — time is always logged on something.'); return; }
     const dato = document.getElementById('mDate').value;
     const tekst = document.getElementById('mText').value;
     try {
+      if (taskId === '__ny') {
+        const titel = nyTitel.value.trim();
+        if (!titel) { toast('Give the new task a name.'); nyTitel.focus(); return; }
+        /*
+         * Tiden tjekkes FOER opgaven oprettes - med den samme parseTidsrum,
+         * serveren bruger. Ellers efterlod en tastefejl i tiden en opgave
+         * uden tid, og et nyt forsoeg lavede en til.
+         */
+        if (!tovoBeregn.parseTidsrum(tekst, dato)) {
+          toast(`I did not understand "${tekst}". Try 9-11.30, 1,5t or 90m.`);
+          return;
+        }
+        // Gennem fangsten: titlen er skrevet i tovo, saa #tag, ~estimat og
+        // @projekt virker som i soegefeltet. Uden @ lander den i projektet
+        // ovenfor - samme regel som konteksten paa en projektside.
+        const valgtProjekt = projektFelt.value;
+        const r = await api('POST', '/api/v1/capture', {
+          text: titel,
+          projectId: valgtProjekt && valgtProjekt !== '__ingen' ? valgtProjekt : null,
+        });
+        opgaver.push(r.item);
+        taskId = r.item.id;
+        // `@Nyt projekt` i titlen opretter projektet. state.projects kender det
+        // foerst efter genindlaesningen, og uden det kan listerne ikke vise
+        // den nye opgave, hvis registreringen herunder fejler.
+        const nytProjekt = (r.nye || []).find((n) => n.kind === 'project');
+        if (r.item.projectId && nytProjekt && !state.projects.some((p) => p.id === r.item.projectId)) {
+          state.projects.push({ id: r.item.projectId, name: nytProjekt.name });
+        }
+        // Opgaven FINDES nu. Fejler registreringen herunder, staar den valgt,
+        // saa et nyt tryk ikke opretter den igen.
+        if (r.item.projectId && projektFelt.value !== r.item.projectId) {
+          projektFelt.innerHTML = projektValg(opgaver, r.item.projectId);
+        }
+        nyTitel.value = '';
+        tegnOpgaver(taskId);
+      }
       if (post) {
         // Tidsrummet tolkes af beregn.js - samme funktion som serveren
         // bruger ved oprettelse. To tolkninger ville vaere to sandheder.
@@ -6482,12 +6564,20 @@ async function aabnManuel(forvalgtOpgave, opt) {
   document.getElementById('mText').focus();
 }
 
-/** Projekterne, der FAKTISK har opgaver at registrere paa - plus "alle". */
+/* Sidst i opgavelisten - staar den foerst, bliver den valgt af sig selv. */
+const NY_OPGAVE = '<option value="__ny">+ New task…</option>';
+
+/**
+ * Alle projekter - plus "alle" og "No project".
+ *
+ * Foer v35 kun dem, der HAVDE opgaver: der var intet at registrere paa i et
+ * tomt projekt. Med »+ New task« er der, og et nyt projekt fra ServiceNow-
+ * importen er netop tomt, indtil man opretter den foerste opgave.
+ */
 function projektValg(opgaver, valgt) {
   const medOpgaver = new Set(opgaver.map((t) => t.projectId || '__ingen'));
   const dele = [`<option value=""${valgt === '' ? ' selected' : ''}>All projects</option>`];
   for (const p of state.projects) {
-    if (!medOpgaver.has(p.id)) continue;
     dele.push(`<option value="${esc(p.id)}"${valgt === p.id ? ' selected' : ''}>${esc(p.name)}</option>`);
   }
   if (medOpgaver.has('__ingen')) {
@@ -6509,7 +6599,9 @@ function opgaveValg(opgaver, projektId, valgtOpgave) {
   const sorter = (a, b) => (a.position || 0) - (b.position || 0);
   const punkt = (t) => `<option value="${esc(t.id)}"${t.id === valgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`;
 
-  if (!filtreret.length) return '<option value="">No tasks in this project</option>';
+  // Tomt projekt: intet her, saa »+ New task« er det eneste valg - og bliver
+  // valgt af sig selv.
+  if (!filtreret.length) return '';
   if (projektId) return filtreret.slice().sort(sorter).map(punkt).join('');
 
   const grupper = [];
@@ -8717,6 +8809,7 @@ const GUIDE_DELE = [
             lead: 'The timer and typing it in afterwards are equal ways in.',
             raekker: [
               ['⌘⇧M', 'Opens the form on any screen.'],
+              ['+ NEW TASK', 'Last in the task list. Name it and the task is created in the project above — <code>#tag</code>, <code>~2t</code> and <code>@project</code> work as in the search field.'],
               ['9-11.30', 'A span. <code>1,5t</code>, <code>90m</code> and <code>1t30m</code> are durations, and a bare duration lands after the day&rsquo;s last entry.'],
               ['GAPS', 'Today shows the holes <em>between</em> what you registered. A click opens the form filled in with that span — that is where forgotten time hides.'],
             ],

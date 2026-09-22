@@ -71,6 +71,18 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v35 — opret en opgave fra »Log time«, og sagen åbnes fra opgaven
+
+- **»+ New task…«** står sidst i opgavelisten. Vælg den, skriv et navn, og opgaven oprettes
+  i projektet ovenfor, når tiden logges. `#tag`, `~2t` og `@projekt` virker som i søgefeltet.
+- **Tiden tjekkes først:** en tid, tovo ikke forstår, stopper det hele, før opgaven oprettes
+  — så en tastefejl efterlader ikke en tom opgave.
+- **Alle projekter står i listen,** også dem uden opgaver endnu (fx nye fra ServiceNow). Et
+  tomt projekt vælger »+ New task« af sig selv.
+- **»Open in ServiceNow ↗« under sagsnummeret i opgaveruden** — samme adresse som chippen i
+  oversigten. Feltet kan stadig rettes, og linket følger det, man skriver; står feltet tomt,
+  bruges projektets sagsnummer.
+
 ### v34 — »Log time« og ugen kender alle opgaver igen
 
 - **»Log time« viser alle projekter.** Ruden tog sine opgaver fra den side, man kom fra, så

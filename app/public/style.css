@@ -2546,3 +2546,12 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 }
 .fanebtn:hover { color: var(--text); }
 .fanebtn.on { color: var(--accent-text); border-bottom-color: var(--accent); }
+
+/* Sagsnummerets link i opgaveruden - lille, under feltet, som stadig kan rettes. */
+/* Linket ligger i feltets bundmargen (position: absolute), saa kolonnen er
+   lige saa hoej som Estimate og Due. .row centrerer lodret, og en hoejere
+   kolonne ville skubbe »Case number« op over de andre overskrifter. */
+.sagfelt { flex: 1; min-width: 140px; position: relative; }
+.sagaaben { position: absolute; left: 0; top: calc(100% - 12px); font-size: 12px; line-height: 14px;
+  color: var(--accent); text-decoration: none; white-space: nowrap; }
+.sagaaben:hover { text-decoration: underline; }

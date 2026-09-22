@@ -113,6 +113,7 @@ const GUIDE_DELE = [
             lead: 'The timer and typing it in afterwards are equal ways in.',
             raekker: [
               ['⌘⇧M', 'Opens the form on any screen.'],
+              ['+ NEW TASK', 'Last in the task list. Name it and the task is created in the project above — <code>#tag</code>, <code>~2t</code> and <code>@project</code> work as in the search field.'],
               ['9-11.30', 'A span. <code>1,5t</code>, <code>90m</code> and <code>1t30m</code> are durations, and a bare duration lands after the day&rsquo;s last entry.'],
               ['GAPS', 'Today shows the holes <em>between</em> what you registered. A click opens the form filled in with that span — that is where forgotten time hides.'],
             ],

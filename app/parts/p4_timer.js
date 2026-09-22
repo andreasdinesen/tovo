@@ -197,7 +197,10 @@ async function aabnManuel(forvalgtOpgave, opt) {
       <label class="field"><span>Project</span>
         <select class="input" id="mProject">${projektValg(opgaver, forvalgtProjekt)}</select></label>
       <label class="field"><span>Task</span>
-        <select class="input" id="mTask">${opgaveValg(opgaver, forvalgtProjekt, forvalgtOpgave)}</select></label>
+        <select class="input" id="mTask">${opgaveValg(opgaver, forvalgtProjekt, forvalgtOpgave)}${NY_OPGAVE}</select></label>
+      <label class="field" id="mNewField" hidden><span>New task</span>
+        <input class="input" id="mNewTask" placeholder="What is it called? — lands in the project above"
+          autocomplete="off"></label>
       <div class="row">
         <label class="field" style="flex:1"><span>Date</span>
           <input class="input" id="mDate" type="date" value="${esc(forvalgtDato)}"></label>
@@ -224,18 +227,69 @@ async function aabnManuel(forvalgtOpgave, opt) {
   // Projektet filtrerer opgavelisten. Med tredive opgaver paa tvaers af
   // projekter er en flad liste ubrugelig - man kan ikke se, hvad man vaelger.
   const projektFelt = document.getElementById('mProject');
-  projektFelt.addEventListener('change', () => {
-    const opgaveFelt = document.getElementById('mTask');
-    const valgt = opgaveFelt.value;
-    opgaveFelt.innerHTML = opgaveValg(opgaver, projektFelt.value, valgt);
+  const opgaveFelt = document.getElementById('mTask');
+  const nyFelt = document.getElementById('mNewField');
+  const nyTitel = document.getElementById('mNewTask');
+  const visNyFelt = () => {
+    nyFelt.hidden = opgaveFelt.value !== '__ny';
+    if (!nyFelt.hidden) nyTitel.focus();
+  };
+  const tegnOpgaver = (valgt) => {
+    opgaveFelt.innerHTML = opgaveValg(opgaver, projektFelt.value, valgt) + NY_OPGAVE;
+    // Kun hvis den findes i det nye projekt. Ellers giver `.value = ...` et
+    // TOMT valg - og i et tomt projekt skal »+ New task« vaelges af sig selv.
+    if (valgt && [...opgaveFelt.options].some((x) => x.value === valgt)) opgaveFelt.value = valgt;
+    visNyFelt();
+  };
+  projektFelt.addEventListener('change', () => tegnOpgaver(opgaveFelt.value));
+  opgaveFelt.addEventListener('change', visNyFelt);
+  nyTitel.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); gem(); }
   });
 
   const gem = async () => {
-    const taskId = document.getElementById('mTask').value;
-    if (!taskId) { toast('Create a task first — time is always logged on something.'); return; }
+    let taskId = opgaveFelt.value;
+    if (!taskId) { toast('Pick a task, or choose "+ New task" — time is always logged on something.'); return; }
     const dato = document.getElementById('mDate').value;
     const tekst = document.getElementById('mText').value;
     try {
+      if (taskId === '__ny') {
+        const titel = nyTitel.value.trim();
+        if (!titel) { toast('Give the new task a name.'); nyTitel.focus(); return; }
+        /*
+         * Tiden tjekkes FOER opgaven oprettes - med den samme parseTidsrum,
+         * serveren bruger. Ellers efterlod en tastefejl i tiden en opgave
+         * uden tid, og et nyt forsoeg lavede en til.
+         */
+        if (!tovoBeregn.parseTidsrum(tekst, dato)) {
+          toast(`I did not understand "${tekst}". Try 9-11.30, 1,5t or 90m.`);
+          return;
+        }
+        // Gennem fangsten: titlen er skrevet i tovo, saa #tag, ~estimat og
+        // @projekt virker som i soegefeltet. Uden @ lander den i projektet
+        // ovenfor - samme regel som konteksten paa en projektside.
+        const valgtProjekt = projektFelt.value;
+        const r = await api('POST', '/api/v1/capture', {
+          text: titel,
+          projectId: valgtProjekt && valgtProjekt !== '__ingen' ? valgtProjekt : null,
+        });
+        opgaver.push(r.item);
+        taskId = r.item.id;
+        // `@Nyt projekt` i titlen opretter projektet. state.projects kender det
+        // foerst efter genindlaesningen, og uden det kan listerne ikke vise
+        // den nye opgave, hvis registreringen herunder fejler.
+        const nytProjekt = (r.nye || []).find((n) => n.kind === 'project');
+        if (r.item.projectId && nytProjekt && !state.projects.some((p) => p.id === r.item.projectId)) {
+          state.projects.push({ id: r.item.projectId, name: nytProjekt.name });
+        }
+        // Opgaven FINDES nu. Fejler registreringen herunder, staar den valgt,
+        // saa et nyt tryk ikke opretter den igen.
+        if (r.item.projectId && projektFelt.value !== r.item.projectId) {
+          projektFelt.innerHTML = projektValg(opgaver, r.item.projectId);
+        }
+        nyTitel.value = '';
+        tegnOpgaver(taskId);
+      }
       if (post) {
         // Tidsrummet tolkes af beregn.js - samme funktion som serveren
         // bruger ved oprettelse. To tolkninger ville vaere to sandheder.
@@ -287,12 +341,20 @@ async function aabnManuel(forvalgtOpgave, opt) {
   document.getElementById('mText').focus();
 }
 
-/** Projekterne, der FAKTISK har opgaver at registrere paa - plus "alle". */
+/* Sidst i opgavelisten - staar den foerst, bliver den valgt af sig selv. */
+const NY_OPGAVE = '<option value="__ny">+ New task…</option>';
+
+/**
+ * Alle projekter - plus "alle" og "No project".
+ *
+ * Foer v35 kun dem, der HAVDE opgaver: der var intet at registrere paa i et
+ * tomt projekt. Med »+ New task« er der, og et nyt projekt fra ServiceNow-
+ * importen er netop tomt, indtil man opretter den foerste opgave.
+ */
 function projektValg(opgaver, valgt) {
   const medOpgaver = new Set(opgaver.map((t) => t.projectId || '__ingen'));
   const dele = [`<option value=""${valgt === '' ? ' selected' : ''}>All projects</option>`];
   for (const p of state.projects) {
-    if (!medOpgaver.has(p.id)) continue;
     dele.push(`<option value="${esc(p.id)}"${valgt === p.id ? ' selected' : ''}>${esc(p.name)}</option>`);
   }
   if (medOpgaver.has('__ingen')) {
@@ -314,7 +376,9 @@ function opgaveValg(opgaver, projektId, valgtOpgave) {
   const sorter = (a, b) => (a.position || 0) - (b.position || 0);
   const punkt = (t) => `<option value="${esc(t.id)}"${t.id === valgtOpgave ? ' selected' : ''}>${esc(t.title)}</option>`;
 
-  if (!filtreret.length) return '<option value="">No tasks in this project</option>';
+  // Tomt projekt: intet her, saa »+ New task« er det eneste valg - og bliver
+  // valgt af sig selv.
+  if (!filtreret.length) return '';
   if (projektId) return filtreret.slice().sort(sorter).map(punkt).join('');
 
   const grupper = [];

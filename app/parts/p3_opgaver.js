@@ -656,9 +656,12 @@ async function aabnOpgave(id) {
             value="${esc(it.estimateMinutes ? tovoBeregn.formatVarighed(it.estimateMinutes) : '')}"></label>
         <label class="field" style="flex:1"><span>Due</span>
           <input class="input" id="dDue" type="date" value="${esc(it.dueDate || '')}"></label>
-        <label class="field" style="flex:1"><span>Case number</span>
-          <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
-            value="${esc(it.caseNumber || '')}"></label>
+        <div class="sagfelt">
+          <label class="field"><span>Case number</span>
+            <input class="input" id="dSag" placeholder="${esc(sagArvet ? `${sagArvet} (from the project)` : 'SAG-1234')}"
+              value="${esc(it.caseNumber || '')}"></label>
+          <a class="sagaaben" id="dSagLink" target="_blank" rel="noopener noreferrer" hidden>Open in ServiceNow ↗</a>
+        </div>
         ${kolonneFeltHtml(projekt, it)}
       </div>
 
@@ -891,6 +894,28 @@ function bindDetalje(host, it, startLink) {
   tegnSaguIRude(it);
 
   document.getElementById('dSave').addEventListener('click', gemOpgaven);
+
+  /*
+   * Sagsnummeret som link - samme sagUrl() som chippen i oversigten, saa de
+   * to aldrig kan pege forskellige steder hen. Linket foelger feltet, mens
+   * man skriver, og falder tilbage paa projektets nummer, som feltet ogsaa
+   * viser som pladsholder.
+   */
+  // Samme regel som i aabnOpgave: tomt felt -> projektets nummer. Den
+  // variabel lever dér, ikke her; uden sin egen kastede et tomt felt en
+  // ReferenceError, og linket blev staaende.
+  const sagProjekt = state.projects.find((p) => p.id === it.projectId);
+  const sagArvet = (sagProjekt && sagProjekt.caseNumber) || '';
+  const sagFelt = document.getElementById('dSag');
+  const sagLink = document.getElementById('dSagLink');
+  const opdaterSagLink = () => {
+    const sag = sagFelt.value.trim() || sagArvet;
+    const url = sagUrl(sag);
+    sagLink.hidden = !url;
+    if (url) { sagLink.href = url; sagLink.title = `Open ${sag}`; }
+  };
+  sagFelt.addEventListener('input', opdaterSagLink);
+  opdaterSagLink();
   bindGemGenvej(host, gemOpgaven);
 
   const ics = document.getElementById('dIcs');

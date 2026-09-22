@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 34;
+const APP_VERSION = 35;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -120,13 +120,16 @@ function isoDato(d) {
  * Kun http(s) tages imod: en skabelon er brugerens egen tekst, men den bliver
  * til et href, og dér maa javascript: aldrig kunne slippe igennem.
  */
+function sagUrl(sag) {
+  const skabelon = (state.settings || {}).case_url || '';
+  if (!sag || !/^https?:\/\//i.test(skabelon) || !skabelon.includes('{case}')) return '';
+  return skabelon.replace('{case}', encodeURIComponent(sag));
+}
+
 function sagHtml(sag) {
   if (!sag) return '';
-  const skabelon = (state.settings || {}).case_url || '';
-  if (!/^https?:\/\//i.test(skabelon) || !skabelon.includes('{case}')) {
-    return `<span class="sagchip">${esc(sag)}</span>`;
-  }
-  const url = skabelon.replace('{case}', encodeURIComponent(sag));
+  const url = sagUrl(sag);
+  if (!url) return `<span class="sagchip">${esc(sag)}</span>`;
   return `<a class="sagchip saglink" href="${esc(url)}" target="_blank" rel="noopener noreferrer"
     title="Open ${esc(sag)}" data-stop>${esc(sag)}</a>`;
 }
