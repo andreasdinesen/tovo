@@ -2451,7 +2451,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 33;
+const APP_VERSION = 34;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -6344,14 +6344,30 @@ async function stopTimer() {
  * @param {object} [opt] {date, text} til at udfylde forud (kalenderen), eller
  *   {entry} for at RETTE en post, der allerede findes.
  */
-function aabnManuel(forvalgtOpgave, opt) {
+let manuelAabner = false;
+
+async function aabnManuel(forvalgtOpgave, opt) {
+  /*
+   * Opgaverne hentes HVER gang ruden aabnes. state.items er kun den aktuelle
+   * sides udsnit (et projekt, et tag, ugen ...), og ruden stod med det: aabnet
+   * efter et projekt kunne man kun registrere paa det projekt (2026-09-22).
+   * Laasen forhindrer, at ⌘⇧M to gange under hentningen giver to ruder.
+   */
+  if (manuelAabner) return;
+  manuelAabner = true;
+  let alle;
+  try {
+    alle = (await api('GET', '/api/v1/items?kind=task')).items;
+  } catch (ex) { toast(ex.message); return; } finally { manuelAabner = false; }
+  if (document.querySelector('.modal')) return;
+
   const o = opt || {};
   const post = o.entry || null;
   const host = document.createElement('div');
   host.className = 'modal';
   // Ved redigering skal opgaven kunne vaere en, der er afsluttet - ellers
   // kan man ikke rette en tidspost paa noget, man lige har lukket.
-  const opgaver = (state.items || []).filter((t) => t.status !== 'done'
+  const opgaver = alle.filter((t) => t.status !== 'done'
     || (post && t.id === post.taskId) || t.id === forvalgtOpgave);
   const start = post ? new Date(post.startedAt * 1000) : null;
   const slut = post && post.stoppedAt ? new Date(post.stoppedAt * 1000) : null;
@@ -7446,13 +7462,23 @@ async function tegnKalender() {
 
   host.innerHTML = '<div class="page"><h1>Week</h1><p class="lead skeleton">Laying out the week…</p></div>';
   let d;
+  let alle;
   try {
-    d = await api('GET', `/api/v1/entries?from=${kalState.fra}&to=${til}`);
+    /*
+     * ALTID alle opgaver - ikke kun hvis listen er tom.
+     *
+     * Her stod `if (!state.items.length)`, og state.items er den FORRIGE sides
+     * udsnit (et projekts opgaver, en tags ...). Kom man fra Grundfos, kendte
+     * ugen kun Grundfos: alle andre blokke hed »Deleted task«, og »Log time«
+     * havde kun det ene projekt (Andreas, 2026-09-22).
+     */
+    [d, alle] = await Promise.all([
+      api('GET', `/api/v1/entries?from=${kalState.fra}&to=${til}`),
+      api('GET', '/api/v1/items?kind=task'),
+    ]);
   } catch (ex) { toast(ex.message); return; }
   kalState.poster = d.entries;
-  if (!state.items.length) {
-    state.items = (await api('GET', '/api/v1/items?kind=task')).items;
-  }
+  state.items = alle.items;
 
   // Gitterets hoejde faelger indholdet: normalt 7-18, men en post kl. 5 eller
   // 22 maa aldrig ligge uden for det, man kan se.

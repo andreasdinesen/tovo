@@ -283,6 +283,10 @@ og som selvstændige filer serveren kan `require`.
 - Bind aldrig til `PORT_KODA` / `KODA_PORT` — det er host-porten.
 - Netværksfejl oversættes i den fælles `api()`-indpakning; `ex.message` må aldrig nå en toast.
 - `Object.assign({headers}, opts)` er shallow — sæt headers **efter** merge.
+- **`state.items` er den AKTUELLE SIDES udsnit** (et projekt, et tag, en søgning) — aldrig
+  »alle opgaver«. Skal noget bruge alle (ugekalenderen, »Log time«), henter det selv
+  `/api/v1/items?kind=task`. En `if (!state.items.length)`-genvej er den samme fejl: listen er
+  sjældent tom, bare forkert. Den gav »Deleted task« i ugen og et projekt i »Log time« (v34).
 - Cache-bust: `app.js?v=N` stemplet i `index.html` af build'et, og **skriv HTML'en tilbage
   til disk**, ellers pakker tar'en den gamle. HTML serveres `no-store`.
 

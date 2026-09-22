@@ -48,13 +48,23 @@ async function tegnKalender() {
 
   host.innerHTML = '<div class="page"><h1>Week</h1><p class="lead skeleton">Laying out the week…</p></div>';
   let d;
+  let alle;
   try {
-    d = await api('GET', `/api/v1/entries?from=${kalState.fra}&to=${til}`);
+    /*
+     * ALTID alle opgaver - ikke kun hvis listen er tom.
+     *
+     * Her stod `if (!state.items.length)`, og state.items er den FORRIGE sides
+     * udsnit (et projekts opgaver, en tags ...). Kom man fra Grundfos, kendte
+     * ugen kun Grundfos: alle andre blokke hed »Deleted task«, og »Log time«
+     * havde kun det ene projekt (Andreas, 2026-09-22).
+     */
+    [d, alle] = await Promise.all([
+      api('GET', `/api/v1/entries?from=${kalState.fra}&to=${til}`),
+      api('GET', '/api/v1/items?kind=task'),
+    ]);
   } catch (ex) { toast(ex.message); return; }
   kalState.poster = d.entries;
-  if (!state.items.length) {
-    state.items = (await api('GET', '/api/v1/items?kind=task')).items;
-  }
+  state.items = alle.items;
 
   // Gitterets hoejde faelger indholdet: normalt 7-18, men en post kl. 5 eller
   // 22 maa aldrig ligge uden for det, man kan se.

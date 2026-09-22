@@ -149,14 +149,30 @@ async function stopTimer() {
  * @param {object} [opt] {date, text} til at udfylde forud (kalenderen), eller
  *   {entry} for at RETTE en post, der allerede findes.
  */
-function aabnManuel(forvalgtOpgave, opt) {
+let manuelAabner = false;
+
+async function aabnManuel(forvalgtOpgave, opt) {
+  /*
+   * Opgaverne hentes HVER gang ruden aabnes. state.items er kun den aktuelle
+   * sides udsnit (et projekt, et tag, ugen ...), og ruden stod med det: aabnet
+   * efter et projekt kunne man kun registrere paa det projekt (2026-09-22).
+   * Laasen forhindrer, at ⌘⇧M to gange under hentningen giver to ruder.
+   */
+  if (manuelAabner) return;
+  manuelAabner = true;
+  let alle;
+  try {
+    alle = (await api('GET', '/api/v1/items?kind=task')).items;
+  } catch (ex) { toast(ex.message); return; } finally { manuelAabner = false; }
+  if (document.querySelector('.modal')) return;
+
   const o = opt || {};
   const post = o.entry || null;
   const host = document.createElement('div');
   host.className = 'modal';
   // Ved redigering skal opgaven kunne vaere en, der er afsluttet - ellers
   // kan man ikke rette en tidspost paa noget, man lige har lukket.
-  const opgaver = (state.items || []).filter((t) => t.status !== 'done'
+  const opgaver = alle.filter((t) => t.status !== 'done'
     || (post && t.id === post.taskId) || t.id === forvalgtOpgave);
   const start = post ? new Date(post.startedAt * 1000) : null;
   const slut = post && post.stoppedAt ? new Date(post.stoppedAt * 1000) : null;

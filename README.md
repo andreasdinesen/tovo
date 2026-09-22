@@ -71,6 +71,14 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v34 — »Log time« og ugen kender alle opgaver igen
+
+- **»Log time« viser alle projekter.** Ruden tog sine opgaver fra den side, man kom fra, så
+  efter et besøg på ét projekt kunne man kun registrere på det. Nu henter den selv alle
+  opgaver, hver gang den åbnes.
+- **Ugen viser de rigtige navne.** Samme årsag: blokke fra andre projekter stod som
+  »Deleted task«, selv om opgaven fandtes.
+
 ### v33 — hent Edge-udvidelsen direkte fra tovo
 
 - **Settings → Connections → Edge extension:** »Download the extension« henter en zip med
