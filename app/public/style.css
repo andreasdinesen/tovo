@@ -2557,3 +2557,14 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 .sagaaben { position: absolute; left: 0; top: calc(100% - 12px); font-size: 12px; line-height: 14px;
   color: var(--accent); text-decoration: none; white-space: nowrap; }
 .sagaaben:hover { text-decoration: underline; }
+
+/* »Why the name?« under login-kortet. Et <details> uden JS: det folder ud af
+   sig selv og står ikke i vejen for login. */
+.gate-name { margin: 18px 0 0; font-size: 13px; color: var(--muted); }
+.gate-name > summary { cursor: pointer; text-align: center; list-style: none; color: var(--muted); font-weight: inherit; }
+.gate-name > summary::-webkit-details-marker { display: none; }
+.gate-name > summary:hover { color: var(--text); }
+.gate-name p { margin: 10px 0 0; line-height: 1.5; }
+.gate-name ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.5; }
+.gate-name li + li { margin-top: 4px; }
+.gate-name b { color: var(--text); font-weight: 600; }

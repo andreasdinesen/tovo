@@ -6,6 +6,25 @@ Ren Node ≥22 (`node:http` + `node:sqlite` + `node:crypto`) — nul npm-pakker,
 tovo er en tvilling til [doda](https://github.com/andreasdinesen/doda): samme stak, samme
 udseende, men separate apps med hver sin database og ingen synkronisering.
 
+## Navnet
+
+Navnet **tovo** handler om det, appen gør: holder styr på tiden.
+
+- **to**: som i *nine to five*. En registrering er altid et tidsrum fra ét klokkeslæt
+  *til* et andet, og arbejdsdagen er det samme i stort.
+- **ovo**: se på bogstaverne som et billede. O'erne er urskiver, og V'et er viserne
+  på 10:10, den stilling ure altid står i på reklamebilleder, fordi viserne danner
+  et smil.
+- **Time On, Value Out**: tiden går ind, og ud kommer det, den er værd: ugerapporten,
+  kundevisningen og de timer, der kan faktureres.
+
+Navnene doda, tovo og sagu hører sammen. De har fire bogstaver og er bygget som
+konsonant–vokal–konsonant–vokal. De er hurtige at taste
+på en telefon, lyder ens på dansk og engelsk og har ingen æ, ø eller å.
+Det er samme hensyn, der gør dodas interface engelsk.
+
+Den samme forklaring står kort på engelsk på login-siden under »Why “tovo”?«.
+
 ## Hvad den skal kunne
 
 | Fase | Indhold | Status |
@@ -70,6 +89,12 @@ Låser du til en version før v23, kan den udgave ikke hente sin egen kode. Så 
 videre panelets »Opdater tovo«.
 
 ## Versionshistorik
+
+### v37 — hvorfor hedder den tovo?
+
+- Under login-knappen står nu et lille link, *Why “tovo”?*, der folder en kort forklaring
+  på navnet ud. Det er et `<details>` uden JavaScript, så det står ikke i vejen for login.
+  Den samme forklaring står i README'en under »Navnet«.
 
 ### v36 — timer fra andre på projektets budget
 

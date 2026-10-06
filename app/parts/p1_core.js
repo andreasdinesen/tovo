@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 36;
+const APP_VERSION = 37;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -394,6 +394,22 @@ function render() {
   tegnSide();
 }
 
+/* Hvad navnet betyder - samme forklaring som afsnittet Navnet i README'en, kort og
+   paa engelsk, fordi interfacet er engelsk. */
+function navnHtml() {
+  return `
+      <details class="gate-name">
+        <summary>Why “tovo”?</summary>
+        <p><b>tovo</b> is about what the app does: keeping track of time.</p>
+        <ul>
+        <li><b>to</b>: as in <i>nine to five</i>. Every entry is a span from one time to another, and a workday is the same thing writ large.</li>
+        <li><b>ovo</b>: read the letters as a picture: the o’s are clock faces and the V is the hands at 10:10, the smile every watch ad shows.</li>
+        <li><b>Time On, Value Out</b>: time goes in, and out comes what it is worth: the weekly report, the customer view and the hours you can bill.</li>
+        </ul>
+        <p>Its siblings are doda and Sagu: four letters each, easy to type on a phone, no æ, ø or å.</p>
+      </details>`;
+}
+
 function gateHtml() {
   const setup = state.config.needsSetup;
   return `
@@ -420,6 +436,7 @@ function gateHtml() {
         <div class="gate-or"><span>or</span></div>
         <button class="btn" id="gatePasskey" style="width:100%">Sign in with a passkey</button>` : ''}
       ${gateSkiftHtml(setup)}
+      ${navnHtml()}
     </div>
   </div>`;
 }
