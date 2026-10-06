@@ -71,6 +71,19 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v36 — timer fra andre på projektets budget
+
+- **»Hours from others«** under de fire tal på projektsiden. Læg timer ind, som en kollega
+  eller underleverandør har leveret på det samme budget: dato, antal timer (`7,5` · `7t30m`
+  · `450m`), hvem og en note. Linjer kan slettes igen.
+- **De tæller i Spent og Left — og ingen andre steder.** Din dag, uge, rapport og timeseddel
+  viser kun dine egne timer. Under Spent står fordelingen: »you 2h + others 10h 45m«.
+- Projektlisten, kundevisningen, »Copy table« og Excel-filen tager dem med; kundearket får
+  en række »Delivered by others«, så Total stadig er summen af kolonnen.
+- **MCP:** nyt værktøj `log_other_hours`, og `project_status` viser fordelingen.
+- API: `POST /api/v1/projects/:id/other-hours` og `DELETE …/other-hours/:linje`. Listen
+  skrives én linje ad gangen på serveren, så to faner ikke overskriver hinanden.
+
 ### v35 — opret en opgave fra »Log time«, og sagen åbnes fra opgaven
 
 - **»+ New task…«** står sidst i opgavelisten. Vælg den, skriv et navn, og opgaven oprettes

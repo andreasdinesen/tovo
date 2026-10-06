@@ -139,6 +139,7 @@ const GUIDE_DELE = [
               ['ESTIMATED', 'The task estimates, added up.'],
               ['BUDGET', 'What you agreed with the customer. You set it under Edit project.'],
               ['SPENT', 'Logged so far. When the estimates pass the budget, you have found more work than was sold.'],
+              ['HOURS FROM OTHERS', 'Colleagues often deliver on the same budget. Add their hours under &ldquo;Hours from others&rdquo; on the project: they count in Spent and Left, but never in your own week, day or timesheet.'],
               ['BOARD', 'The columns are the project&rsquo;s own, so two projects can run through different phases. A Planner import brings its buckets in as columns.'],
             ],
             go: [['projects', 'Open Projects']],

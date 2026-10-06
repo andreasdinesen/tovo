@@ -300,7 +300,9 @@ const KINDS = new Set(['project', 'task', 'comment', 'tag']);
  */
 const FELTER = {
   project: ['name', 'color', 'icon', 'customer', 'caseNumber', 'plannerPlanId', 'plannerPlanName',
-    'lastImportAt', 'budgetHours', 'archivedAt', 'sections', 'position'],
+    'lastImportAt', 'budgetHours', 'archivedAt', 'sections', 'position', 'otherHours'],
+  // `otherHours` er timer, ANDRE har leveret paa projektets budget - en
+  // liste paa projektet, ikke tidsposter. Se `minutterFraAndre` i beregn.js.
   // Sektioner er et FELT paa projektet (array af {id, name, position}), ikke
   // en egen kind - de findes ikke uden for deres projekt.
   task: ['title', 'note', 'projectId', 'sectionId', 'parentTaskId', 'estimateMinutes',
@@ -1088,6 +1090,30 @@ function dato(v) {
   return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
 }
 
+/*
+ * Hoejst saa mange linjer med andres timer pr. projekt. En linje er ~150
+ * bytes, saa loftet holder projektet et godt stykke under MAX_ITEM_JSON -
+ * og 500 leverancer er et regnskab, ikke en liste paa en projektside.
+ */
+const ANDRES_TIMER_LOFT = 500;
+
+/**
+ * Én linje med timer fra en anden. Uden et positivt antal minutter er der
+ * intet at laegge til budgettet, og linjen falder fra.
+ */
+function renAndresTimer(raa) {
+  if (!raa || typeof raa !== 'object') return null;
+  const minutes = tal(raa.minutes, 0, 365 * 24 * 60);
+  if (!minutes) return null;
+  return {
+    id: str(raa.id, 64) || newId(),
+    date: dato(raa.date),
+    minutes,
+    who: str(raa.who, 200),
+    note: str(raa.note, 500),
+  };
+}
+
 /**
  * Skaerer et indkommet objekt ned til felterne for sin slags.
  *
@@ -1146,6 +1172,9 @@ function renseItem(kind, raa) {
           name: str(sek && sek.name, 200),
           position: tal(sek && sek.position, 0, 1e9) || i,
         })).filter((sek) => sek.name) : [];
+        break;
+      case 'otherHours':
+        ud[felt] = Array.isArray(v) ? v.slice(0, ANDRES_TIMER_LOFT).map(renAndresTimer).filter(Boolean) : [];
         break;
       // recurrenceRule kommer fra parse.tolkGentagelse. Den gemmes som den er
       // - motoren i fase 7 er den eneste, der kan bedoemme indholdet.
@@ -1895,6 +1924,52 @@ function saetStjerne(userId, item, paa) {
   }));
 }
 
+/**
+ * Laeg timer fra en anden paa et projekt.
+ *
+ * Listen skrives paa SERVEREN, ikke som en hel liste fra klienten: to faner,
+ * der hver tilfoejer en linje, ville ellers overskrive hinanden, og den ene
+ * leverance ville forsvinde uden et ord. Webappen og MCP gaar begge denne vej.
+ *
+ * @param {object} ind {date, time | minutes, who, note} - `time` tolkes af
+ *   beregn.parseVarighed, saa "7,5", "7t30m" og "450m" betyder det samme her
+ *   som i feltet.
+ * @returns {{projekt, linje}} eller kaster med status 400/404.
+ */
+function tilfoejAndresTimer(userId, projektId, ind) {
+  const projekt = hentItem(userId, projektId);
+  if (!projekt || projekt.kind !== 'project') {
+    throw Object.assign(new Error('No such project.'), { status: 404 });
+  }
+  const minutter = ind.minutes != null && ind.minutes !== ''
+    ? tal(ind.minutes, 0, 365 * 24 * 60)
+    : beregn.parseVarighed(ind.time);
+  if (!minutter) {
+    throw Object.assign(new Error(`"${str(ind.time != null ? ind.time : ind.minutes, 40)}" is not a number of hours.`),
+      { status: 400 });
+  }
+  const liste = Array.isArray(projekt.otherHours) ? projekt.otherHours : [];
+  if (liste.length >= ANDRES_TIMER_LOFT) {
+    throw Object.assign(new Error(`A project can hold at most ${ANDRES_TIMER_LOFT} lines of hours from others.`),
+      { status: 400 });
+  }
+  const linje = renAndresTimer({
+    id: newId(), date: dato(ind.date) || iDag(), minutes: minutter, who: ind.who, note: ind.note,
+  });
+  const gemt = gemItem(userId, Object.assign({}, projekt, { otherHours: liste.concat([linje]) }));
+  return { projekt: gemt, linje };
+}
+
+/** Fjern én linje. `false`, hvis linjen (eller projektet) ikke findes. */
+function fjernAndresTimer(userId, projektId, linjeId) {
+  const projekt = hentItem(userId, projektId);
+  if (!projekt || projekt.kind !== 'project') return false;
+  const liste = Array.isArray(projekt.otherHours) ? projekt.otherHours : [];
+  const rest = liste.filter((x) => x.id !== linjeId);
+  if (rest.length === liste.length) return false;
+  return gemItem(userId, Object.assign({}, projekt, { otherHours: rest }));
+}
+
 /*
  * Hvor mange stjerner foelger med i `/state`.
  *
@@ -2380,6 +2455,7 @@ const mcp = require('./mcp.js').opret({
   // Vaerktoejerne faar PRAECIS de funktioner, webappen selv bruger.
   fangst, soeg, hentItem, hentItems, gemItem, hentPoster, gemPost,
   startTimer, stopTimer, timerStatus, beregnFor, fuldfoer, dupliker, saetStjerne,
+  tilfoejAndresTimer,
   iDag, dagStart, ugeStart, ugeSlut,
 });
 
@@ -3455,6 +3531,29 @@ const MOENSTRE = [
         rollup: b.rollupProjekt(projekt.id),
         spent: Object.fromEntries(opgaver.map((t) => [t.id, b.forbrugPaaOpgave(t.id)])),
       });
+    },
+  },
+  {
+    // Timer fra andre paa projektets budget. Én linje ad gangen - se
+    // tilfoejAndresTimer om, hvorfor klienten ikke sender hele listen.
+    metode: 'POST', re: /^\/api\/v1\/projects\/([0-9a-f-]{8,64})\/other-hours$/,
+    kald: async (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const body = await readJsonBody(req, auth.viaToken);
+      // 400 og 404 kastes med status og bliver til API-fejl i den faelles fanger.
+      const { projekt, linje } = tilfoejAndresTimer(auth.user.id, ctx.params[0], body || {});
+      sendJson(res, 201, { project: projekt, line: linje });
+    },
+  },
+  {
+    metode: 'DELETE', re: /^\/api\/v1\/projects\/([0-9a-f-]{8,64})\/other-hours\/([0-9a-f-]{8,64})$/,
+    kald: (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const projekt = fjernAndresTimer(auth.user.id, ctx.params[0], ctx.params[1]);
+      if (!projekt) { apiFejl(res, 404, 'not_found', 'No such line.'); return; }
+      sendJson(res, 200, { project: projekt });
     },
   },
   {

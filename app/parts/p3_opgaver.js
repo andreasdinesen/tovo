@@ -338,6 +338,12 @@ async function tegnProjekter() {
     const minutter = Math.round(((e.stoppedAt || Math.floor(Date.now() / 1000)) - e.startedAt) / 60);
     forbrugPrProjekt[pid] = (forbrugPrProjekt[pid] || 0) + tovoBeregn.afrund(minutter, poster.rounding);
   }
+  // Timer fra andre hoerer med i projektets forbrug - ellers viser listen et
+  // andet tal end projektsiden, man klikker sig ind paa.
+  for (const p of state.projects) {
+    const andre = tovoBeregn.minutterFraAndre(p);
+    if (andre) forbrugPrProjekt[p.id] = (forbrugPrProjekt[p.id] || 0) + andre;
+  }
 
   const somListe = projektListeTilstand();
   host.innerHTML = `<div class="page">
@@ -483,10 +489,12 @@ async function tegnProjekt(id) {
           <div class="meta">Budget</div>
           <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div>
           <div class="meta talforklaring">${r.ramme ? 'what was agreed' : 'not set — Edit project'}</div></div>
-        <div style="flex:1" title="Time actually logged on the tasks in this project.">
+        <div style="flex:1" title="Time logged on the tasks in this project — plus hours others delivered on it.">
           <div class="meta">Spent</div>
           <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div>
-          <div class="meta talforklaring">logged so far</div></div>
+          <div class="meta talforklaring">${r.andre
+    ? `you ${esc(tovoBeregn.formatVarighed(r.egne))} + others ${esc(tovoBeregn.formatVarighed(r.andre))}`
+    : 'logged so far'}</div></div>
         <div style="flex:1" title="Budget minus spent.">
           <div class="meta">Left</div>
           <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div>
@@ -497,6 +505,11 @@ async function tegnProjekt(id) {
       ${r.procent === null ? '' : (r.procent >= 100
     ? `<p class="meta warnline">The budget is used up — ${r.procent}% of it is spent.</p>`
     : (r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''))}
+      <p class="meta andrelinje"><button class="linkbtn" id="andreTimer">${(p.otherHours || []).length
+    ? `Hours from others — ${(p.otherHours || []).length} ${(p.otherHours || []).length === 1 ? 'line' : 'lines'}, `
+      + `${esc(tovoBeregn.formatVarighed(r.andre))}`
+    : '+ Hours from others'}</button>
+        <span>— time colleagues delivered on this budget. It counts here, never in your own week.</span></p>
     </div>
 
     ${paaTavle ? `<div class="row" style="margin-bottom:10px">
@@ -526,6 +539,7 @@ async function tegnProjekt(id) {
     tegnSide();
   });
   document.getElementById('projektRet').addEventListener('click', () => aabnProjektRuden(p));
+  document.getElementById('andreTimer').addEventListener('click', () => aabnAndresTimer(p));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
   document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
   document.getElementById('bulkLinks').addEventListener('click', async () => {
@@ -613,6 +627,114 @@ function aabnProjektRuden(p) {
   });
 
   document.getElementById('pjName').focus();
+}
+
+/**
+ * Timer fra andre paa projektets budget.
+ *
+ * De er IKKE tidsposter: en tidspost er dit eget arbejde og ville havne i din
+ * uge, din dag og din timeseddel. Her tilfoejes og slettes én linje ad gangen
+ * gennem serveren - ruden sender aldrig hele listen, saa to faner ikke kan
+ * overskrive hinandens linjer.
+ */
+function aabnAndresTimer(p) {
+  let projekt = p;
+  let aendret = false;
+  const f = tovoBeregn.formatVarighed;
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="Hours from others">
+      <h2>Hours from others</h2>
+      <p class="meta">Hours a colleague or subcontractor delivered on <strong>${esc(p.name)}</strong>.
+        They count against the budget — Spent and Left — but never in your own week,
+        day or timesheet.</p>
+      <div id="aListe"></div>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Date</span>
+          <input class="input" id="aDato" type="date" value="${esc(state.today)}"></label>
+        <label class="field" style="flex:1"><span>Hours</span>
+          <input class="input" id="aTid" placeholder="7,5 · 7t30m · 450m" autocomplete="off"></label>
+      </div>
+      <label class="field"><span>Who</span>
+        <input class="input" id="aHvem" placeholder="Who delivered them?" autocomplete="off"></label>
+      <label class="field"><span>Note (optional)</span>
+        <input class="input" id="aNote" placeholder="What was it?" autocomplete="off"></label>
+      <div class="modal-foot">
+        <button class="btn primary" id="aGem" title="⌘↵ / Ctrl+↵">Add <span class="genvejstip">⌘↵</span></button>
+        <button class="btn" id="aLuk">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+
+  const tegnListe = () => {
+    const linjer = (projekt.otherHours || []).slice()
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const liste = document.getElementById('aListe');
+    if (!linjer.length) {
+      liste.innerHTML = '<p class="meta">Nothing yet.</p>';
+      return;
+    }
+    liste.innerHTML = `<ul class="plain posts">${linjer.map((x) => `<li>
+        <span class="post-tid meta">${esc(x.date || '—')}</span>
+        <span class="post-main"><span>${esc(x.who || 'Someone else')}</span>
+          ${x.note ? `<span class="meta">${esc(x.note)}</span>` : ''}</span>
+        <span class="post-sum">${esc(f(x.minutes))}</span>
+        <button class="linkbtn" data-aslet="${esc(x.id)}">delete</button>
+      </li>`).join('')}</ul>
+      <p class="meta">Total: <strong>${esc(f(tovoBeregn.minutterFraAndre(projekt)))}</strong></p>`;
+    liste.querySelectorAll('[data-aslet]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        try {
+          const d = await api('DELETE', `/api/v1/projects/${p.id}/other-hours/${el.dataset.aslet}`);
+          projekt = d.project;
+          aendret = true;
+          tegnListe();
+        } catch (ex) { toast(ex.message); }
+      });
+    });
+  };
+  tegnListe();
+
+  // Siden bag ruden tegnes foerst, naar ruden lukkes: en optegning venter
+  // alligevel, mens en dialog er aaben (live-reglen i CLAUDE.md).
+  const luk = async () => {
+    host.remove();
+    if (aendret) await genindlaes();
+  };
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('aLuk').addEventListener('click', luk);
+
+  const tilfoej = async () => {
+    const tid = document.getElementById('aTid').value.trim();
+    // Samme parser som serveren - saa siger ruden nej, foer den spoerger.
+    if (!tovoBeregn.parseVarighed(tid)) {
+      toast(tid ? `"${tid}" is not a number of hours.` : 'How many hours?');
+      document.getElementById('aTid').focus();
+      return;
+    }
+    try {
+      const d = await api('POST', `/api/v1/projects/${p.id}/other-hours`, {
+        date: document.getElementById('aDato').value,
+        time: tid,
+        who: document.getElementById('aHvem').value.trim(),
+        note: document.getElementById('aNote').value.trim(),
+      });
+      projekt = d.project;
+      aendret = true;
+      tegnListe();
+      // Hvem og dato bliver staaende - typisk laegger man flere uger fra den
+      // samme kollega ind i traek.
+      document.getElementById('aTid').value = '';
+      document.getElementById('aNote').value = '';
+      document.getElementById('aTid').focus();
+      toast(`Added ${f(d.line.minutes)}.`);
+    } catch (ex) { toast(ex.message); }
+  };
+  document.getElementById('aGem').addEventListener('click', tilfoej);
+  bindGemGenvej(host, tilfoej);
+  document.getElementById('aTid').focus();
 }
 
 /* ---------------------------------------------------------- detaljeruden */

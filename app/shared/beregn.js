@@ -66,6 +66,22 @@
   }
 
   /**
+   * Timer fra ANDRE paa et projekt, i minutter.
+   *
+   * Andre konsulenter leverer timer paa det samme budget, men de har ingen
+   * tidsposter i tovo - og skal heller ikke have det: en tidspost er DIT
+   * arbejde og ville havne i din uge, din dag og din timeseddel. Derfor er
+   * de en liste paa projektet (`otherHours`), som KUN rollup'en laegger til.
+   *
+   * Ligger uden for `opret()`, fordi den kun skal bruge projektet selv -
+   * projektlisten kan saa kalde den uden at have hele modellen.
+   */
+  function minutterFraAndre(projekt) {
+    const liste = projekt && Array.isArray(projekt.otherHours) ? projekt.otherHours : [];
+    return liste.reduce((n, x) => n + (Math.round(Number(x && x.minutes)) || 0), 0);
+  }
+
+  /**
    * Minutter -> laesbar tekst. Interfacet er engelsk, saa udskriften er det.
    *
    * @param {object} [opt] {lang: 'kort'|'decimal'} - decimal giver "1.5 h",
@@ -355,11 +371,18 @@
       const projekt = items('project').find((p) => p.id === projectId) || {};
       const estimat = opgaver.reduce((n, t) => n + (Number(t.estimateMinutes) || 0), 0);
       const ramme = Math.round((Number(projekt.budgetHours) || 0) * 60);
-      const forbrugt = forbrugPaaProjekt(projectId, nu);
+      // `forbrugt` er HELE forbruget mod rammen - dine egne timer og dem,
+      // andre har leveret. Det er det tal, budgettet skal maales paa; de to
+      // dele staar ved siden af, saa siden kan vise, hvor timerne kom fra.
+      const egne = forbrugPaaProjekt(projectId, nu);
+      const andre = minutterFraAndre(projekt);
+      const forbrugt = egne + andre;
       return {
         estimat,
         ramme,
         forbrugt,
+        egne,
+        andre,
         // Uden en ramme er der intet at vaere over eller under - saa er
         // resten null frem for et tal, der ligner en sandhed.
         resterende: ramme ? ramme - forbrugt : null,
@@ -681,6 +704,6 @@
 
   return {
     parseVarighed, formatVarighed, formatDecimal, formatUr, parseTidsrum, placerVarighed,
-    tidspunkt, afrund, opret,
+    tidspunkt, afrund, minutterFraAndre, opret,
   };
 }));

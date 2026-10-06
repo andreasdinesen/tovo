@@ -74,7 +74,7 @@ Bryder man en af dem, opstår der to sandheder, og fejlen opdages først i en ra
 
 ```
 app/server.js          hele backenden (~2900 linjer)
-app/mcp.js             MCP-server, tretten værktøjer
+app/mcp.js             MCP-server, fjorten værktøjer
 app/oauth.js           OAuth 2.1 (kopieret fra doda, motoren er ordret den samme)
 app/webauthn.js        passkeys (kopieret fra doda)
 app/kilde.js           henter app-koden ved opstart — en genstart ER opdateringen

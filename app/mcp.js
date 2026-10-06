@@ -119,7 +119,7 @@ function opret(srv) {
           `${p.name}${p.customer ? ` — ${p.customer}` : ''}`,
           `Estimated: ${f(r.estimat)} (${r.opgaver} tasks)`,
           `Budget: ${r.ramme ? f(r.ramme) : 'not set'}`,
-          `Spent: ${f(r.forbrugt)}`,
+          r.andre ? `Spent: ${f(r.forbrugt)} (you ${f(r.egne)}, others ${f(r.andre)})` : `Spent: ${f(r.forbrugt)}`,
           r.resterende === null ? 'Left: no budget set' : `Left: ${f(Math.max(0, r.resterende))} (${r.procent}% used)`,
         ];
         if (r.estimatOverRamme) linjer.push('The estimates add up to more than the budget.');
@@ -225,6 +225,44 @@ function opret(srv) {
           tekst: `Logged ${f(tidsrum.minutter)} on ${dato}: ${opgave.title}`,
           data: { entry: post },
         };
+      },
+    },
+
+    {
+      name: 'log_other_hours',
+      scope: 'write',
+      description:
+        'Add hours that SOMEONE ELSE delivered on a project, so they count against its budget. '
+        + 'They are not your time: they never show up in your week, your day or your timesheet — '
+        + 'only in the project\'s spent and left. Use log_time for your own work.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'Project id (from list_projects).' },
+          time: { type: 'string', description: '"7,5", "7t30m" or "450m". A bare number is hours.' },
+          who: { type: 'string', description: 'Who delivered them.' },
+          date: { type: 'string', description: 'YYYY-MM-DD. Defaults to today.' },
+          note: { type: 'string' },
+        },
+        required: ['id', 'time'],
+      },
+      kald(a, auth) {
+        let svar;
+        try {
+          // Samme funktion som webappens rute - ingen saerlig MCP-vej ind.
+          svar = srv.tilfoejAndresTimer(auth.user.id, String(a.id || ''), {
+            time: String(a.time || ''), who: a.who, date: a.date, note: a.note,
+          });
+        } catch (ex) {
+          if (!ex.status) throw ex;
+          return { fejl: ex.status === 404 ? `No project with id ${a.id}.` : ex.message };
+        }
+        const r = srv.beregnFor(auth.user.id).rollupProjekt(svar.projekt.id);
+        const linjer = [`Added ${f(svar.linje.minutes)}${svar.linje.who ? ` from ${svar.linje.who}` : ''} `
+          + `on ${svar.linje.date}: ${svar.projekt.name}`,
+        `Spent: ${f(r.forbrugt)} (you ${f(r.egne)}, others ${f(r.andre)})`];
+        if (r.resterende !== null) linjer.push(`Left: ${f(Math.max(0, r.resterende))} (${r.procent}% used)`);
+        return { tekst: linjer.join('\n'), data: { line: svar.linje, rollup: r } };
       },
     },
 

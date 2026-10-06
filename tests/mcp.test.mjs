@@ -239,7 +239,7 @@ test('scopes: en laesenoegle kan hverken se eller kalde skrive-vaerktoejer', asy
   assert.match(forsoeg.data.result.content[0].text, /cannot write/);
 
   const alle = await rpc('tools/list', {});
-  assert.equal(alle.data.result.tools.length, 13);
+  assert.equal(alle.data.result.tools.length, 14);
   assert.ok(!navne.includes('duplicate_task'), 'en kopi er en skrivning');
 });
 

@@ -67,6 +67,22 @@
   }
 
   /**
+   * Timer fra ANDRE paa et projekt, i minutter.
+   *
+   * Andre konsulenter leverer timer paa det samme budget, men de har ingen
+   * tidsposter i tovo - og skal heller ikke have det: en tidspost er DIT
+   * arbejde og ville havne i din uge, din dag og din timeseddel. Derfor er
+   * de en liste paa projektet (`otherHours`), som KUN rollup'en laegger til.
+   *
+   * Ligger uden for `opret()`, fordi den kun skal bruge projektet selv -
+   * projektlisten kan saa kalde den uden at have hele modellen.
+   */
+  function minutterFraAndre(projekt) {
+    const liste = projekt && Array.isArray(projekt.otherHours) ? projekt.otherHours : [];
+    return liste.reduce((n, x) => n + (Math.round(Number(x && x.minutes)) || 0), 0);
+  }
+
+  /**
    * Minutter -> laesbar tekst. Interfacet er engelsk, saa udskriften er det.
    *
    * @param {object} [opt] {lang: 'kort'|'decimal'} - decimal giver "1.5 h",
@@ -356,11 +372,18 @@
       const projekt = items('project').find((p) => p.id === projectId) || {};
       const estimat = opgaver.reduce((n, t) => n + (Number(t.estimateMinutes) || 0), 0);
       const ramme = Math.round((Number(projekt.budgetHours) || 0) * 60);
-      const forbrugt = forbrugPaaProjekt(projectId, nu);
+      // `forbrugt` er HELE forbruget mod rammen - dine egne timer og dem,
+      // andre har leveret. Det er det tal, budgettet skal maales paa; de to
+      // dele staar ved siden af, saa siden kan vise, hvor timerne kom fra.
+      const egne = forbrugPaaProjekt(projectId, nu);
+      const andre = minutterFraAndre(projekt);
+      const forbrugt = egne + andre;
       return {
         estimat,
         ramme,
         forbrugt,
+        egne,
+        andre,
         // Uden en ramme er der intet at vaere over eller under - saa er
         // resten null frem for et tal, der ligner en sandhed.
         resterende: ramme ? ramme - forbrugt : null,
@@ -682,7 +705,7 @@
 
   return {
     parseVarighed, formatVarighed, formatDecimal, formatUr, parseTidsrum, placerVarighed,
-    tidspunkt, afrund, opret,
+    tidspunkt, afrund, minutterFraAndre, opret,
   };
 }));
 
@@ -2451,7 +2474,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 35;
+const APP_VERSION = 36;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -5524,6 +5547,12 @@ async function tegnProjekter() {
     const minutter = Math.round(((e.stoppedAt || Math.floor(Date.now() / 1000)) - e.startedAt) / 60);
     forbrugPrProjekt[pid] = (forbrugPrProjekt[pid] || 0) + tovoBeregn.afrund(minutter, poster.rounding);
   }
+  // Timer fra andre hoerer med i projektets forbrug - ellers viser listen et
+  // andet tal end projektsiden, man klikker sig ind paa.
+  for (const p of state.projects) {
+    const andre = tovoBeregn.minutterFraAndre(p);
+    if (andre) forbrugPrProjekt[p.id] = (forbrugPrProjekt[p.id] || 0) + andre;
+  }
 
   const somListe = projektListeTilstand();
   host.innerHTML = `<div class="page">
@@ -5669,10 +5698,12 @@ async function tegnProjekt(id) {
           <div class="meta">Budget</div>
           <div class="bigtal">${r.ramme ? esc(tovoBeregn.formatVarighed(r.ramme)) : '—'}</div>
           <div class="meta talforklaring">${r.ramme ? 'what was agreed' : 'not set — Edit project'}</div></div>
-        <div style="flex:1" title="Time actually logged on the tasks in this project.">
+        <div style="flex:1" title="Time logged on the tasks in this project — plus hours others delivered on it.">
           <div class="meta">Spent</div>
           <div class="bigtal">${esc(tovoBeregn.formatVarighed(r.forbrugt))}</div>
-          <div class="meta talforklaring">logged so far</div></div>
+          <div class="meta talforklaring">${r.andre
+    ? `you ${esc(tovoBeregn.formatVarighed(r.egne))} + others ${esc(tovoBeregn.formatVarighed(r.andre))}`
+    : 'logged so far'}</div></div>
         <div style="flex:1" title="Budget minus spent.">
           <div class="meta">Left</div>
           <div class="bigtal">${r.resterende === null ? '—' : esc(tovoBeregn.formatVarighed(Math.max(0, r.resterende)))}</div>
@@ -5683,6 +5714,11 @@ async function tegnProjekt(id) {
       ${r.procent === null ? '' : (r.procent >= 100
     ? `<p class="meta warnline">The budget is used up — ${r.procent}% of it is spent.</p>`
     : (r.procent >= 80 ? `<p class="meta warnline">${r.procent}% of the budget is used.</p>` : ''))}
+      <p class="meta andrelinje"><button class="linkbtn" id="andreTimer">${(p.otherHours || []).length
+    ? `Hours from others — ${(p.otherHours || []).length} ${(p.otherHours || []).length === 1 ? 'line' : 'lines'}, `
+      + `${esc(tovoBeregn.formatVarighed(r.andre))}`
+    : '+ Hours from others'}</button>
+        <span>— time colleagues delivered on this budget. It counts here, never in your own week.</span></p>
     </div>
 
     ${paaTavle ? `<div class="row" style="margin-bottom:10px">
@@ -5712,6 +5748,7 @@ async function tegnProjekt(id) {
     tegnSide();
   });
   document.getElementById('projektRet').addEventListener('click', () => aabnProjektRuden(p));
+  document.getElementById('andreTimer').addEventListener('click', () => aabnAndresTimer(p));
   document.getElementById('plannerRe').addEventListener('click', () => aabnPlannerImport(p.id));
   document.getElementById('kundeVis').addEventListener('click', () => visKundevisning(p.id));
   document.getElementById('bulkLinks').addEventListener('click', async () => {
@@ -5799,6 +5836,114 @@ function aabnProjektRuden(p) {
   });
 
   document.getElementById('pjName').focus();
+}
+
+/**
+ * Timer fra andre paa projektets budget.
+ *
+ * De er IKKE tidsposter: en tidspost er dit eget arbejde og ville havne i din
+ * uge, din dag og din timeseddel. Her tilfoejes og slettes én linje ad gangen
+ * gennem serveren - ruden sender aldrig hele listen, saa to faner ikke kan
+ * overskrive hinandens linjer.
+ */
+function aabnAndresTimer(p) {
+  let projekt = p;
+  let aendret = false;
+  const f = tovoBeregn.formatVarighed;
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="Hours from others">
+      <h2>Hours from others</h2>
+      <p class="meta">Hours a colleague or subcontractor delivered on <strong>${esc(p.name)}</strong>.
+        They count against the budget — Spent and Left — but never in your own week,
+        day or timesheet.</p>
+      <div id="aListe"></div>
+      <div class="row">
+        <label class="field" style="flex:1"><span>Date</span>
+          <input class="input" id="aDato" type="date" value="${esc(state.today)}"></label>
+        <label class="field" style="flex:1"><span>Hours</span>
+          <input class="input" id="aTid" placeholder="7,5 · 7t30m · 450m" autocomplete="off"></label>
+      </div>
+      <label class="field"><span>Who</span>
+        <input class="input" id="aHvem" placeholder="Who delivered them?" autocomplete="off"></label>
+      <label class="field"><span>Note (optional)</span>
+        <input class="input" id="aNote" placeholder="What was it?" autocomplete="off"></label>
+      <div class="modal-foot">
+        <button class="btn primary" id="aGem" title="⌘↵ / Ctrl+↵">Add <span class="genvejstip">⌘↵</span></button>
+        <button class="btn" id="aLuk">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+
+  const tegnListe = () => {
+    const linjer = (projekt.otherHours || []).slice()
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    const liste = document.getElementById('aListe');
+    if (!linjer.length) {
+      liste.innerHTML = '<p class="meta">Nothing yet.</p>';
+      return;
+    }
+    liste.innerHTML = `<ul class="plain posts">${linjer.map((x) => `<li>
+        <span class="post-tid meta">${esc(x.date || '—')}</span>
+        <span class="post-main"><span>${esc(x.who || 'Someone else')}</span>
+          ${x.note ? `<span class="meta">${esc(x.note)}</span>` : ''}</span>
+        <span class="post-sum">${esc(f(x.minutes))}</span>
+        <button class="linkbtn" data-aslet="${esc(x.id)}">delete</button>
+      </li>`).join('')}</ul>
+      <p class="meta">Total: <strong>${esc(f(tovoBeregn.minutterFraAndre(projekt)))}</strong></p>`;
+    liste.querySelectorAll('[data-aslet]').forEach((el) => {
+      el.addEventListener('click', async () => {
+        try {
+          const d = await api('DELETE', `/api/v1/projects/${p.id}/other-hours/${el.dataset.aslet}`);
+          projekt = d.project;
+          aendret = true;
+          tegnListe();
+        } catch (ex) { toast(ex.message); }
+      });
+    });
+  };
+  tegnListe();
+
+  // Siden bag ruden tegnes foerst, naar ruden lukkes: en optegning venter
+  // alligevel, mens en dialog er aaben (live-reglen i CLAUDE.md).
+  const luk = async () => {
+    host.remove();
+    if (aendret) await genindlaes();
+  };
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('aLuk').addEventListener('click', luk);
+
+  const tilfoej = async () => {
+    const tid = document.getElementById('aTid').value.trim();
+    // Samme parser som serveren - saa siger ruden nej, foer den spoerger.
+    if (!tovoBeregn.parseVarighed(tid)) {
+      toast(tid ? `"${tid}" is not a number of hours.` : 'How many hours?');
+      document.getElementById('aTid').focus();
+      return;
+    }
+    try {
+      const d = await api('POST', `/api/v1/projects/${p.id}/other-hours`, {
+        date: document.getElementById('aDato').value,
+        time: tid,
+        who: document.getElementById('aHvem').value.trim(),
+        note: document.getElementById('aNote').value.trim(),
+      });
+      projekt = d.project;
+      aendret = true;
+      tegnListe();
+      // Hvem og dato bliver staaende - typisk laegger man flere uger fra den
+      // samme kollega ind i traek.
+      document.getElementById('aTid').value = '';
+      document.getElementById('aNote').value = '';
+      document.getElementById('aTid').focus();
+      toast(`Added ${f(d.line.minutes)}.`);
+    } catch (ex) { toast(ex.message); }
+  };
+  document.getElementById('aGem').addEventListener('click', tilfoej);
+  bindGemGenvej(host, tilfoej);
+  document.getElementById('aTid').focus();
 }
 
 /* ---------------------------------------------------------- detaljeruden */
@@ -6708,7 +6853,9 @@ function kundeArkHtml(p, opgaver, rollup, forbrug) {
     <p class="pkunde">${esc(p.customer || '')}</p>
     <table>
       <thead><tr><th>Task</th><th>Status</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>
-      <tbody>${raekker}</tbody>
+      <tbody>${raekker}${rollup.andre ? `<tr>
+        <td>Delivered by others</td><td></td><td class="num">—</td>
+        <td class="num">${esc(f(rollup.andre))}</td></tr>` : ''}</tbody>
       <tfoot><tr>
         <td><strong>Total</strong></td><td></td>
         <td class="num"><strong>${esc(f(rollup.estimat))}</strong></td>
@@ -6766,6 +6913,8 @@ async function visKundevisning(projektId) {
         ...d.tasks.slice().sort((a, b) => (a.position || 0) - (b.position || 0))
           .map((x) => [x.title, x.status === 'done' ? 'Done' : 'In progress',
             t(x.estimateMinutes), t(d.spent[x.id] || 0)]),
+        // Uden raekken ville Total ikke vaere summen af kolonnen ovenover.
+        ...(d.rollup.andre ? [['Delivered by others', '', '', t(d.rollup.andre)]] : []),
         ['Total', '', t(d.rollup.estimat), t(d.rollup.forbrugt)],
         ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
           ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
@@ -8835,6 +8984,7 @@ const GUIDE_DELE = [
               ['ESTIMATED', 'The task estimates, added up.'],
               ['BUDGET', 'What you agreed with the customer. You set it under Edit project.'],
               ['SPENT', 'Logged so far. When the estimates pass the budget, you have found more work than was sold.'],
+              ['HOURS FROM OTHERS', 'Colleagues often deliver on the same budget. Add their hours under &ldquo;Hours from others&rdquo; on the project: they count in Spent and Left, but never in your own week, day or timesheet.'],
               ['BOARD', 'The columns are the project&rsquo;s own, so two projects can run through different phases. A Planner import brings its buckets in as columns.'],
             ],
             go: [['projects', 'Open Projects']],
@@ -9520,6 +9670,8 @@ function kundeRigTekst(p, opgaver, rollup, forbrug) {
   const hoved = ['Task', 'Status', 'Estimated', 'Spent'];
   const raekker = sorteret.map((t) => [t.title, t.status === 'done' ? 'Done' : 'In progress',
     t.estimateMinutes ? f(t.estimateMinutes) : '—', f(forbrug[t.id] || 0)]);
+  // Samme raekke som arket paa skaermen - ellers gaar Total ikke op.
+  if (rollup.andre) raekker.push(['Delivered by others', '', '—', f(rollup.andre)]);
   const fod = ['Total', '', f(rollup.estimat), f(rollup.forbrugt)];
   const html = [mailOverskrift(p.name, 1)];
   const tekst = [p.name];

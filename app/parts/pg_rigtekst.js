@@ -104,6 +104,8 @@ function kundeRigTekst(p, opgaver, rollup, forbrug) {
   const hoved = ['Task', 'Status', 'Estimated', 'Spent'];
   const raekker = sorteret.map((t) => [t.title, t.status === 'done' ? 'Done' : 'In progress',
     t.estimateMinutes ? f(t.estimateMinutes) : '—', f(forbrug[t.id] || 0)]);
+  // Samme raekke som arket paa skaermen - ellers gaar Total ikke op.
+  if (rollup.andre) raekker.push(['Delivered by others', '', '—', f(rollup.andre)]);
   const fod = ['Total', '', f(rollup.estimat), f(rollup.forbrugt)];
   const html = [mailOverskrift(p.name, 1)];
   const tekst = [p.name];

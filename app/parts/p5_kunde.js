@@ -32,7 +32,9 @@ function kundeArkHtml(p, opgaver, rollup, forbrug) {
     <p class="pkunde">${esc(p.customer || '')}</p>
     <table>
       <thead><tr><th>Task</th><th>Status</th><th class="num">Estimated</th><th class="num">Spent</th></tr></thead>
-      <tbody>${raekker}</tbody>
+      <tbody>${raekker}${rollup.andre ? `<tr>
+        <td>Delivered by others</td><td></td><td class="num">—</td>
+        <td class="num">${esc(f(rollup.andre))}</td></tr>` : ''}</tbody>
       <tfoot><tr>
         <td><strong>Total</strong></td><td></td>
         <td class="num"><strong>${esc(f(rollup.estimat))}</strong></td>
@@ -90,6 +92,8 @@ async function visKundevisning(projektId) {
         ...d.tasks.slice().sort((a, b) => (a.position || 0) - (b.position || 0))
           .map((x) => [x.title, x.status === 'done' ? 'Done' : 'In progress',
             t(x.estimateMinutes), t(d.spent[x.id] || 0)]),
+        // Uden raekken ville Total ikke vaere summen af kolonnen ovenover.
+        ...(d.rollup.andre ? [['Delivered by others', '', '', t(d.rollup.andre)]] : []),
         ['Total', '', t(d.rollup.estimat), t(d.rollup.forbrugt)],
         ...(d.rollup.ramme ? [[], ['Agreed budget (hours)', '', t(d.rollup.ramme), ''],
           ['Remaining (hours)', '', t(Math.max(0, d.rollup.resterende)), '']] : []),
