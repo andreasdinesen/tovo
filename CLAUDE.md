@@ -4,309 +4,65 @@ Tidsregistrering på opgaver og projekter. Yggdrasil-rune. Tvilling til doda:
 separate apps, separate data, **ingen synkronisering**. Se »Broen fra doda«
 nederst — doda kan siden 18-09-2026 starte et ur her, og det ændrer intet i tovo.
 
-## Ny samtale? Læs HANDOVER.md først
+> Kun det, der skal vides i hver session. Detaljerne ligger i `claude-noter/` —
+> slå op dér, når opgaven rammer området (oversigt nederst).
 
-`HANDOVER.md` er den korte vej ind: hvad tovo er, hvor tingene står, arkitekturens
-ufravigelige regler, hvad der ikke er verificeret, og hvor pladsen i install-scriptet er.
-Denne fil er reglerne; handover'en er tilstanden.
+Ren Node ≥22 (`node:http`, `node:sqlite`, `node:crypto`), **nul npm-pakker, nul CDN**.
+**Flerbruger** (doda er én-bruger). Engelsk UI; kode, commits og docs på dansk.
+Install-scriptet **henter** app-koden fra GitHub-taggen `vN`, og `app/kilde.js` henter
+den igen ved hver opstart — **en genstart ER opdateringen**.
 
 ## Før du gør noget
 
 Læs `~/ClaudeMacBook/RUNE-ERFARINGER.md` — hele filen. Læs den igen **efter** et større
-stykke arbejde, ikke kun før. Læs `TOVO-PLAN.md` for fasen du er i gang med.
+stykke arbejde, ikke kun før.
 
-Ved projektstart: læs kildekoden i `andreasdinesen/doda`, især `app/shared/parse.js`
-(quick-add-syntaksen, hvor `+` opretter en opgave), `app/mcp.js`, `app/oauth.js` og
-`app/public/style.css`. tovo skal føles som doda.
+## Filer
 
-**Læst 2026-08-18. Det er allerede fundet, så det behøver ikke findes igen:**
+| Fil | Rolle |
+|---|---|
+| `app/server.js` | Hele backenden: auth, items-API, `FELTER`-hvidlisten, settings, ruter |
+| `app/shared/beregn.js` | **ALLE** udregninger + formatering af varigheder (UMD) |
+| `app/shared/parse.js` | Fangst-syntaksen og dansk datosprog (fra doda, ændrede markører) |
+| `app/shared/planner.js` · `servicenow.js` · `toggl.js` | Importernes risikable del — testbar uden browser |
+| `app/shared/xlsx.js` · `ruter.js` | .xlsx/zip uden pakker · sidernes adresser (app.js + server) |
+| `app/parts/p1_core.js` … `pg_rigtekst.js` | Frontend-kildedele — **redigér her**. `APP_VERSION` står i `p1_core.js` |
+| `app/public/app.js` | **Genereret** af `build_rune.py`. Redigér aldrig |
+| `app/public/style.css` · `sw.js` | Dodas CSS + tovo-blok nederst · service worker |
+| `app/mcp.js` · `oauth.js` · `webauthn.js` | MCP (fjorten værktøjer) · OAuth 2.1 · passkeys (fra doda) |
+| `app/kilde.js` | Henter app-koden ved opstart |
+| `app/live.js` | SSE-nav pr. bruger |
+| `app/totp.js` · `qr.js` | Totrin — kopieret **ordret** fra sagu |
+| `app/sagu.js` · `klientip.js` | Broen til Sagu · klient-IP bag proxy |
+| `app/udvidelse/` | Edge/Chrome-udvidelsen |
+| `build_rune.py` | Bygger `app.js` + `runes/tovo.yaml` |
+| `runes/tovo.yaml` | **Genereret** — redigér aldrig i hånden |
 
-- Dodas markører er `#@!~/`. `~` betyder dér *udskudt dato*, og `/` er en anden
-  projektmarkør ved siden af `@`. I tovo betyder **`~` estimat** (`~2t`, `~90m`, `~1,5t`),
-  **`#` tag**, og `@`/`/` projekt. Defer-grenen skal FJERNES, ikke bare lades ligge —
-  en parser, der producerer felter, modtageren ikke har, taber tekst tavst.
-- **doda er en én-brugers app** (`SELECT ... FROM users LIMIT 1` i `godkend()`).
-  Flerbrugerlaget er tovos eget. Kopiér auth-stakken, men aldrig dataadgangen.
-- **Style.css er dodas, kopieret ordret.** Nye regler skrives i tovo-blokken nederst,
-  så arven kan opdateres i én blok, når doda retter noget.
+## Ufravigeligt (fuld udgave i `claude-noter/arkitektur.md`)
 
-## Arbejdsgang
+1. **Alle beregninger i `app/shared/beregn.js`** — aldrig i `app/parts/`, heller ikke en lille.
+2. **`user_id`-filteret ligger i `hentItem` / `hentItems` / `gemItem` / `saveBulk` selv** —
+   aldrig i kaldstederne. Admin er ingen undtagelse. Isolationstesten køres altid.
+3. **Endepunkter uden login** (`/s/:token`, `/ical/:token`) scanner aldrig datasættet og
+   svarer **404** — aldrig 401/403.
+4. **Genimport (Planner/ServiceNow) rører kun en hvidliste af felter**, og ALT, der gemmes via
+   `/api/v1/items/bulk`, er en HEL opgave.
+5. **Hemmeligheder i `settings` står på `HEMMELIGE_SETTINGS`** (filteret i `hentSettings()`).
+6. **Repoet er OFFENTLIGT** — aldrig kundedata i koden, tests eller kommentarer
+   (eksempler: `Nordvind`, `SAG-…`).
+7. **Visningspræferencer i `settings`** via `brugerFlag()`/`saetBrugerFlag()` — kun
+   `tovo_theme` og `tovo_nav_skjult` bliver med vilje i `localStorage`.
 
-- **Bump aldrig `APP_VERSION` undervejs.** Kun ved udgivelse, efter Andreas har sagt ja.
-  Flere ændringer samles i én version.
-- **Hver udgivelse SKAL tagges:** `git tag vN && git push --tags`. Install-scriptet henter
-  `refs/tags/vN` — glemmer man taggen, svarer GitHub 404, og runen kan ikke installeres.
-  Build'et minder om det i sin sidste linje.
+## Arbejdsgang og udgivelse (detaljer i `claude-noter/udgivelse.md`)
+
 - **Commit og push kræver et udtrykkeligt ja.** Et push er en udgivelse.
+- **Bump aldrig `APP_VERSION` undervejs.** Kun ved udgivelse, efter Andreas har sagt ja.
+- **Hver udgivelse SKAL tagges:** `git tag vN && git push --tags`. Uden taggen svarer
+  GitHub 404, og runen kan ikke installeres.
+- **`RUNE_VERSION` bumpes KUN, når YAML'en selv ændrer sig.**
 - Efter hver ændring: byg, test, opsummer — og vent.
-- Ny generel lærdom → loggen i `RUNE-ERFARINGER.md`. Projekt-specifik → denne fil.
-
-## Ufravigeligt
-
-- **Nul npm-pakker, nul CDN.** Node ≥22: `node:http`, `node:sqlite`, `node:crypto`.
-- **Alle beregninger i `app/shared/beregn.js`.** Aldrig en udregning i `app/parts/`, heller
-  ikke en lille. Webappen og MCP skal give samme tal, ellers er der to sandheder.
-- **`user_id`-filteret ligger i `hentItem` / `hentItems` / `gemItem` / `saveBulk` selv** —
-  aldrig i kaldstederne. Brugere må ikke se hinandens data. Admin er ingen undtagelse.
-- **Genimport fra Planner rører kun en whitelist af felter.** Estimater, tidsposter,
-  kommentarer, links og projektramme er tovos egne og skal overleve enhver import.
-- **Endepunkter uden login** (`/s/:token`, `/ical/:token`) må aldrig scanne datasættet,
-  og svarer **404** ved forkert token — ikke 401 eller 403.
-- `app/public/app.js` og `runes/tovo.yaml` er **genererede** — redigér dem aldrig i hånden.
-- **Adgangsnøgler har en `user_id`.** En nøgle giver adgang til sin egen brugers data og
-  intet andet. Uden det rammer den "første bruger i tabellen", som i doda.
-- **`settings` har `(scope, key)`** hvor scope er brugerens id eller `*` for installationen.
-  Kun admin må skrive `*`-nøglerne (i dag: `allow_registration`).
-- **En visningspræference, brugeren ville forvente overalt, hører i `settings` — ikke i
-  `localStorage`.** localStorage betyder »husket i DENNE browser«, og tovo bruges på både
-  telefon og desktop. Gå gennem `brugerFlag()` / `saetBrugerFlag()` i `p1_core.js` — de
-  læser `state.settings` (hentet ved opstart, så ingen ny rute og intet ekstra kald),
-  skriver optimistisk og tager den gamle localStorage-nøgle som reserve, så et valg fra
-  før flytningen ikke kastes væk. Nøgler i dag: `view_projects_list`, `fold_<afsnit>`,
-  `board_<projektId>`. **Egen nøgle pr. projekt, aldrig ét JSON-kort** — settings-værdier
-  afkortes til 2000 tegn, og et kort med mange projekt-id'er ville tavst miste de sidste.
-- **To ting bliver med vilje i `localStorage`, fordi de hører til ENHEDEN og ikke til
-  brugeren:** `tovo_theme` (skal læses før første paint, hvor der ikke er noget netværk —
-  og lyst/mørkt er et valg pr. skærm) og `tovo_nav_skjult` (afhænger af skærmbredden).
-  Flyt dem ikke.
-
-## Repoet er OFFENTLIGT
-
-`andreasdinesen/tovo` er offentligt, fordi install-scriptet henter app-koden fra
-codeload.github.com, og det spørger ikke om et token.
-
-- **Aldrig kundedata i koden** — heller ikke som eksempel i en test eller en
-  dok-kommentar. Eksemplerne hedder `Nordvind` (opdigtet kunde) og `SAG-…`
-  (sagsnumre). Historikken blev renset én gang; den øvelse skal ikke gentages.
-- Fixturer skal være syntetiske. `tests/fixtures/planner-eksport.xlsx` bruger »Testkunde«.
-
-## Broen til Sagu
-
-`app/sagu.js` er porteret fra doda og er afhængigheds-indsprøjtet: det kender hverken
-databasen eller http-laget. To regler, som ikke må brydes:
-
-- **Forbindelsen er PERSONLIG.** Hver funktion tager `userId` først. doda er én-bruger og
-  slipper for det; gør man det samme her, gælder den første brugers nøgle alle.
-- **Aldrig et kald til Sagu pr. optegning.** Noten hentes ved åbning af ruden — indhold og
-  kommentarer i ét svar — og søgningen venter 300 ms. En rundtur gennem tunnelen er
-  140–190 ms, og tre i træk er et halvt sekund, hvor der ikke sker noget.
-
-`sagu_key` var tovos **første hemmelighed** i settings-tabellen. Den står i
-`HEMMELIGE_SETTINGS` sammen med `totp_secret` og `totp_last`, og filteret ligger i
-`hentSettings()` selv — både settings-ruten og JSON-eksporten går den vej, så der er ét
-sted at huske det. Lægger du en hemmelighed mere i tabellen, skal den på den liste.
-
-## Totrinsbekræftelse
-
-`app/totp.js` og `app/qr.js` er **kopieret ordret fra sagu**; kun udstederens navn er
-skiftet. Ret dem ikke uden at rette dem samme sted i sagu — to udgaver af den samme
-RFC-implementering er to steder at have en fejl.
-
-- **Porten ligger før `createSession`.** Mangler koden, svares `needsCode` uden cookie.
-  Udstedte man cookien først, ville et halvt login være et helt login for enhver, der
-  kunne læse den.
-- **`tjek()` returnerer det vindue, der passede** — ikke `true`. Værdien gemmes i
-  `totp_last`, så den samme kode ikke kan bruges to gange inden for sit vindue.
-- **Adgangsnøgler springer porten over.** En nøgle er selv to led; en engangskode ovenpå
-  ville være et tredje. Det står også i guiden, så retter man det, lyver siden.
-- `kodeFor(hemmelighed, **counter**)` tager et tælleskridt, ikke et tidspunkt. Kalder man
-  den uden, bliver counter `NaN` → 0, og man får den samme kode hver gang — en kode, der
-  ser rigtig ud og aldrig virker. Det kostede mig en fejlsøgning af appen, som var rask.
-
-## To versionsnumre — og hvorfor det ene næsten aldrig flyttes
-
-Fra v23 henter `app/kilde.js` app-koden ved hver opstart. **En genstart ER opdateringen.**
-Runen er blevet en startsnor.
-
-- **`APP_VERSION`** (`app/parts/p1_core.js`) — koden. Bumpes ved hver udgivelse, som før.
-- **`RUNE_VERSION`** (`build_rune.py`) — runen. **Bumpes KUN, når YAML'en selv ændrer sig**
-  (variabler, startup, porte, watchers, events).
-
-Bumper du `RUNE_VERSION` ved hver udgivelse, er hele pointen tabt: så skal Andreas igennem
-panelets to trin hver gang, og det var netop dét, ændringen fjernede. Build'et siger til,
-når runen er uændret.
-
-Build'et spærrer for `RUNE_VERSION > APP_VERSION`: startsnoren ville pege på en tag, der
-ikke er udgivet, og det viser sig **først hos en, der installerer forfra** — aldrig hos os,
-der har en kørende server.
-
-`KODE_VERSION` i panelet: **tom = nyeste**, et tal låser. Vejen tilbage fra en dårlig
-udgivelse er at skrive tallet og genstarte; frem igen er at tømme feltet.
-
-**Låser du til før v23, forsvinder `kilde.js` sammen med resten,** og en genstart opdaterer
-ikke længere. Vejen videre er panelets »Opdater tovo«. Modulet advarer, før det sker, og
-startup-kommandoen siger det ved hver opstart i stedet for at kaste et stakspor.
-
-## »Opdater tovo«-knappen
-
-Panelets `app-update` skifter **filer** og **genstarter ikke serveren** — `restart` er et
-separat endpoint. Uden en besked kører serveren videre på den gamle kode oven på nye filer.
-Sagu lå ti timer sådan. Beskeden står derfor sidst i scriptet, i en ramme, og en prøve
-holder den på plads.
-
-Fire regler, som build'et håndhæver — de er alle betalt for én gang:
-
-- **`kilde.js`-grenen først, startsnoren i `else`.** Omvendt nedgraderer hvert tryk appen
-  til runens udgave og henter den frem igen; fejler andet trin, bliver den liggende.
-- **Aldrig `/tmp`.** `mv` mellem to filsystemer er en kopi, der kan afbrydes på midten.
-  Pak ud ved siden af `app/`.
-- **Aldrig `rm -rf app`.** Flyt den gamle app til `.tovo-gammel` i stedet: samme virkning
-  (slettede filer bliver ikke liggende, Beanledger v30), men uden et vindue uden `app/` —
-  og `startup`-redningen dækker så også denne vej.
-- **Låsen om hele scriptet.** `mkdir` er atomisk; `[ -d ]` + `mkdir` har et hul. En `trap`
-  skal frigive den, og `startup` rydder en strandet lås.
-
-`tests/opdatering.test.mjs` kører panelets **eget** script, hentet ud af den udgivne YAML.
-En afskrift ville kun bevise, at afskriften er rigtig.
-
-## ServiceNow-importen
-
-`app/shared/servicenow.js` læser **CSV**, ikke JSON. ServiceNows JSON-eksport har 145 felter
-mod CSV'ens 16 — og er alligevel den dårligste kilde: referencefelter står som `sys_id`, så
-`company` er en GUID og `state` er `-30`. Listevisningens CSV har dem allerede opløst til
-navne. Skift ikke format; tilføj en kolonne i ServiceNow-visningen, hvis der mangler et felt.
-
-CSV-teksten læses med `tovoToggl.parseCsv` — en rigtig RFC 4180-maskine, så en `description`
-med linjeskift ikke knækker filen.
-
-- **Matchet sker på `snNumber`,** aldrig på `caseNumber`, selv om de bærer samme værdi.
-  Sagsnummeret kan rettes i hånden, og så ville den samme sag blive oprettet igen. Samme
-  regel som Planners `plannerTaskId`.
-- **Kunden bliver et projekt, underkategorien et tag.**
-- **ALT, der gemmes, skal gennem `flet()` eller `luk()`.** `/api/v1/items/bulk` gemmer en
-  **hel** opgave; et bart objekt med kun de importerede felter sletter estimat, note, kolonne
-  og links. Det så rigtigt ud fra begge ender og blev først fanget ved en rigtig import i
-  browseren — **en enhedstest på `sammenlign` kan ikke se et forkert kaldssted.**
-- **En sag, der mangler i filen, lukkes ALDRIG af sig selv.** Filteret er typisk
-  `State != Resolved`, men et filter kan være ændret, og så ville en automatisk afslutning
-  lukke noget, der stadig løber. Ruden spørger, og intet er krydset af på forhånd.
-- Beskrivelsen skrives kun ved **oprettelsen** — ellers overskriver en genimport din egen note.
-
-## Live-opdatering
-
-`app/live.js` er et SSE-nav. Serveren sender et **vink**, aldrig data; fladen henter så
-`/api/v1/state`, som den allerede gør ved opstart. Bar vinket data, skulle en opgave
-serialiseres et sted mere — og så er der to steder, der skal blive enige.
-
-- **`live.varsko(userId)` kaldes fra SKRIVEFUNKTIONERNE selv** (`gemItem`, `startTimer`,
-  `stopTimer`, `gemPost`, `sletPost`) — aldrig fra kaldsstederne. Samme regel som
-  `user_id`-filteret: én vej ind, så ingen ny rute kan glemme det.
-- **En lytter hører kun sin egen brugers ændringer.** Lytterne er grupperet på `userId`, og
-  der findes ingen vej til at sende til alle. En fælles strøm ville fortælle den ene bruger,
-  hvornår den anden møder og går hjem.
-- **Hjerteslag hvert 25. sekund.** En tunnel lukker en stille forbindelse; Cloudflare giver
-  typisk ~100 s. Uden det dør strømmen tavst, og fladen tror, den lytter.
-- `X-Accel-Buffering: no` og `no-transform`, ellers buffrer et mellemled svaret.
-- Klienten kobles til og fra i **`render()`** — det ene sted, der kører ved både login,
-  logout og opstart.
-- **En optegning venter, hvis en dialog er åben eller markøren er i et felt.** Data hentes
-  altid; det er kun siden, der kan vente. Et vink fra en anden enhed er aldrig vigtigere end
-  det, hånden er i gang med.
-
-## Stjernemarkerede opgaver
-
-Et `starred`-flag og et `starredSeq`-**løbenummer** på opgaven — ingen tabel ved siden af.
-Sagu har en `favorites`-tabel, fordi en note dér kan være *delt*; i tovo hører opgaven
-allerede til én bruger, og en tabel ville være det samme svar skrevet to gange.
-
-- **Nummeret er et LØBENUMMER, ikke et tidsstempel.** Første udgave skrev `now()` i feltet.
-  Det ser rigtigt ud — tidsstempler sorterer kronologisk — og er forkert: `now()` er
-  sekunder, så tre opgaver markeret lige efter hinanden får det samme tal, og listen falder
-  tilbage på databasens rækkefølge. Det er præcis samme lektie som `naestePosition()`
-  (doda F3). `tests/stjerner.test.mjs` fangede det, fordi den **markerer i en anden orden,
-  end den opretter i**.
-- **Nummeret sættes af serveren** i `POST /api/v1/tasks/:id/star` — ikke af klienten, og
-  ikke gennem en PATCH. To faner må ikke kunne blive uenige om, hvad »sidst markeret«
-  betyder. Samme regel som `completedAt` i `fuldfoer`.
-- **Listen kommer med `/api/v1/state`** (`starred`, højst 20, kun `{id, title, projectId}`).
-  Den tegnes i sidebaren OG over søgefeltet ved hver optegning; et kald mere pr. side ville
-  være en blokerende rundtur efter noget, man ikke kom efter.
-- **Afsnittet står lige over Projects** (Andreas, 2026-09-16) — de to foldbare afsnit i
-  sidebaren hører sammen. Værten `#stjerneHost` tegnes derfor **inde i `navHtml()`**, ikke
-  i `shellHtml()`, og `tegnStjerner()` kaldes til sidst i `opdaterNav()`, som lige har
-  skiftet hele `#navHost` ud. Ligger kaldet før, tegnes stjernerne og overskrives straks.
-  Sektionen er en `div.nav`, ikke en `<nav>`: den ligger inde i navigationens egen `<nav>`,
-  og to landemærker i hinanden meldes begge af en skærmlæser.
-- **Båndet ligger under tællerne og over feltet** — samme sted som Sagus fanelinje. Tallene
-  folder sig væk ved rulning (`body.rullet .toprow`); båndet bliver, og skal blive: det er
-  netop langt nede i en liste, man vil skifte opgave. Det vises **også under mobilgrænsen**,
-  hvor sidebaren er et overlay og båndet derfor er den eneste vej til en stjerne.
-- **En afsluttet opgave falder ud af listen, men beholder sit flag.** Åbnes den igen, er
-  genvejen tilbage. En stjerne, der blev slettet af en afkrydsning, ville man skulle sætte
-  igen hver gang.
-- **`tegnStjerner()` tegner OG binder.** Markup i `shellHtml()` og binding et andet sted
-  giver punkter, der ser rigtige ud og ikke gør noget efter hver fulde optegning (Sagu,
-  2026-08-21). Knappen i en åben opgaverude rettes desuden i hånden af
-  `opdaterStjerneKnapper()`: ruden er et element på `body`, som sidernes optegning ikke rører.
-- Stjernen følger **ikke** med en `duplicate` (den står ikke i `KOPIER_FELTER`), og en
-  genimport fra Planner/ServiceNow rører den ikke — den ligger uden for fletningens
-  hvidliste og bæres uændret med.
-
-## Forventede timer
-
-**Dagen er tallet; ugen regnes af den** (dag × 5 i `beregn.ugerapport`). Før lå sandheden i
-`norm_week_hours`, som blev delt med 5 — to tal, der kunne pege hver sin vej.
-
-`expected_day_hours` har den gamle ugenorm delt med 5 som standard, så en opgradering ikke
-ændrer nogens tal. Klokkeslættene (`workday_start` / `workday_end`) valideres i
-`forventning()` på serveren, ikke i `beregn.js`: et ugyldigt tidspunkt ville blive til NaN
-inde i udregningen og tage hele dagskortet med sig.
-
-To sammenligninger, og de svarer på hver sit: `forventet` er hele dagen, `forventetNu` er
-den del, dagen er nået til. Uden den anden står man kl. 9 og er 6,4 timer bagud hver morgen.
-Samme regel gælder ugen: `normTilNu`.
-
-## Timer fra andre (`otherHours`)
-
-Andre konsulenter leverer timer på det samme projektbudget. De er en **liste på projektet**
-(`{id, date, minutes, who, note}`) — ikke tidsposter.
-
-- **En tidspost er DIT arbejde.** Lægger man andres timer ind som poster, havner de i din
-  dag, uge, rapport og timeseddel, og du ser ud til at have arbejdet 60 timer. Derfor lægges
-  de KUN til i `rollupProjekt` (`forbrugt = egne + andre`) og i projektlistens forbrug —
-  begge gennem `beregn.minutterFraAndre(projekt)`. `sumPeriode`, `sumPrDag` og resten må
-  aldrig kende dem; `tests/andres-timer.test.mjs` holder øje.
-- **Listen skrives én linje ad gangen på serveren** (`tilfoejAndresTimer` /
-  `fjernAndresTimer`, ruterne `POST|DELETE /api/v1/projects/:id/other-hours`). En klient,
-  der sendte hele listen, ville lade to faner overskrive hinandens linjer. Webappen og MCP's
-  `log_other_hours` går samme vej.
-- Feltet står i `FELTER.project`, så en PATCH (Edit project, Planner-genimport) bærer det
-  urørt med, og `renAndresTimer` renser hver linje. Højst 500 linjer.
-- Kundearket har en række »Delivered by others«, ellers er Total ikke summen af kolonnen.
-
-## Payload-budget
-
-Install-scriptet **henter** app-koden i stedet for at bære den (`HENT_FRA_GITHUB = True` i
-`build_rune.py`), så det er ~1,6 K og konstant — uanset hvor stor appen bliver. Loftet på
-120 K er dermed ikke længere en begrænsning.
-
-Payloaden bygges **stadig** ved hver kørsel, og det er ikke spild: rundturs-tjekket beviser,
-at kilderne kan pakkes og pakkes ud igen, og tallet står i loggen, så §8's vane holder.
-Sæt `HENT_FRA_GITHUB = False`, og den indlejrede rune er tilbage — det er den eneste vej,
-der virker uden net ved installationen.
-
-De delte moduler (`beregn.js`, `parse.js`) ligger i payloaden **to gange** — inde i `app.js`
-og som selvstændige filer serveren kan `require`.
-
-## Faldgruber der allerede har kostet tid i andre runer
-
-- `crypto.randomUUID()` findes ikke over http (panelets IP:port) — brug altid
-  `crypto.getRandomValues`-fallback, ellers dør alt der opretter id'er, stille.
-- CSS skal have `[hidden]{display:none!important}`.
-- Mobilgrænsen er **900 px** og bor i én konstant, brugt af både `matchMedia()` og `@media`.
-- `render()` må ikke `scrollTo(0,0)` ved gentegning af samme side.
-- `overflow-wrap: break-word` på `body` — Planner-titler er lange og ubrudte.
-- Print-HTML må aldrig bruge `var(--…)`-farver. Giv `@media print` egne eksplicitte farver.
-- Serveren logger `server.address().port`, ikke `BIND_PORT`.
-- Bind aldrig til `PORT_KODA` / `KODA_PORT` — det er host-porten.
-- Netværksfejl oversættes i den fælles `api()`-indpakning; `ex.message` må aldrig nå en toast.
-- `Object.assign({headers}, opts)` er shallow — sæt headers **efter** merge.
-- **`state.items` er den AKTUELLE SIDES udsnit** (et projekt, et tag, en søgning) — aldrig
-  »alle opgaver«. Skal noget bruge alle (ugekalenderen, »Log time«), henter det selv
-  `/api/v1/items?kind=task`. En `if (!state.items.length)`-genvej er den samme fejl: listen er
-  sjældent tom, bare forkert. Den gav »Deleted task« i ugen og et projekt i »Log time« (v34).
-- Cache-bust: `app.js?v=N` stemplet i `index.html` af build'et, og **skriv HTML'en tilbage
-  til disk**, ellers pakker tar'en den gamle. HTML serveres `no-store`.
+- Ny generel lærdom → loggen i `RUNE-ERFARINGER.md`. Projekt-specifik → den relevante
+  fil i `claude-noter/`.
 
 ## Lokal kørsel
 
@@ -320,83 +76,39 @@ Dev-serveren til preview-værktøjet hedder `tovo` i den **globale** `~/.claude/
 (port 8911 — 8902 er kokkeris). `TOVO_DEV=1` slår `immutable`-cachen fra; uden den
 revalideres en cachet `app.js?v=1` aldrig, og man fejlsøger kode, der ikke er indlæst.
 
-## Test
+## De fælder, der bider oftest
 
-- Kør altid med `BIND_PORT=0`; tag serverens stderr med i timeout-beskeden.
-- **Tastaturnavigation kan ikke testes gennem browser-panelet** — det sender syntetiske
-  keydown med tom `e.key`. Dispatch en rigtig `KeyboardEvent` med `key` sat.
-- **Mål efter animationen, ikke under den.** Verificér på den egenskab der ER ændret
-  (`getComputedStyle().transform`, en klasse), ikke på geometri der først lander bagefter.
-  Screenshots midt i en transition lyver.
-- Isolationstesten (to brugere, 404 overalt) køres i hver fase, ikke kun én gang.
-  Den ligger i `tests/isolation.test.mjs` og er **set fejle**: fjern `AND user_id = ?`
-  i `hentItem`, og to tests bliver røde. En test, man ikke har set fejle, er en formodning.
-- Build'ets require-spærre er også set fejle (fjern `app/webauthn.js` → build'et stopper).
-- Genimport-testen (importér, sæt estimat, registrér tid, ret i Planner, genimportér,
-  assertér at estimat og tidsposter er urørte) er den vigtigste test i projektet.
-- Print testes ved at stubbe `window.print` og inspicere `#printHost`. `afterprint` fyrer
-  ikke med en stub — sæt `document.title` tilbage manuelt bagefter.
+- **`state.items` er den AKTUELLE SIDES udsnit** — aldrig »alle opgaver«.
+- **Node genindlæser ikke moduler** — genstart serveren efter en ændring i `server.js`/`shared/`.
+- **Under mobilgrænsen (900 px) er BODY rullekassen** — brug `tilToppen()`, aldrig `window.scrollTo`.
+- **En enhedstest kan ikke se et forkert kaldssted** — kør hele flowet i browseren.
+- **Tastaturnavigation kan ikke testes gennem browser-panelet** (tom `e.key`).
+- **GitHub-push:** SSH over port 443; port 22 timer ud fra Mac'en.
 
-## Broen fra doda (18-09-2026)
-
-doda har fået en optageknap på hver opgave. Den kalder **tovos eksisterende API** —
-`/api/v1/state`, `/api/v1/items`, `/api/v1/timer/start|stop|current` — med en
-`full`-nøgle. **Der er ikke ændret én linje i tovo, og der skal ikke ændres noget.**
-
-Det, du skal vide, hvis du retter i tovo:
-
-- **Koblingen ejes af doda.** `items.tovo_task_id` står i dodas base. tovo har
-  bevidst IKKE et `dodaTaskId` ved siden af `plannerTaskId` og `snNumber`: en
-  kobling med to ejere kan blive uenig med sig selv, og så er der ingen at spørge.
-  tovo skal blive ved med ikke at vide, at doda findes.
-- **doda opretter en opgave og rører den aldrig igen.** Den kender reglen om, at
-  `POST /api/v1/items` gemmer en HEL opgave, og at en titel-only-skrivning ville
-  slette estimat, note, kolonne og links. Fjerner du den regel — eller laver du en
-  PATCH-rute — så er det stadig den regel, broen er bygget på.
-- **Oprettelsen går uden om `/api/v1/capture`** med vilje: en doda-titel er ikke
-  skrevet til tovos parser, hvor `#` er et mærkat og `~` et estimat.
-- **`source` bliver `mcp`** på de tidsposter, doda starter, fordi `/timer/start`
-  sætter `auth.viaToken ? 'mcp' : 'timer'`. Det er ikke forkert (doda ER en
-  API-klient), men vil du kunne skelne i en rapport, er det dér, det skal ændres.
-- **Reglen om ÉN kørende timer er det, dodas ikon hviler på.** Knappen fortæller,
-  hvilken opgave der bliver stoppet, FØR man trykker. Laver du flere samtidige
-  timere, holder den forklaring op med at passe.
-
-Dodas side er skrevet ned i `../doda/DESIGN.md` under »tovo-broen«.
-
-## Browserudvidelsen (`app/udvidelse/`)
-
-En Edge/Chrome-udvidelse (MV3): markér tekst → højreklik → »Start tovo timer«. Ingen
-byggetrin, ingen pakker. Siden v33 ligger den **i `app/`**, så den følger med koden, som
-`kilde.js` henter, og serveren pakker den som zip på `GET /api/v1/extension.zip`
-(Settings → Connections → »Download the extension«).
-
-- **Zip'en bygges ved hvert kald** med `xlsx.zip()` — den samme stored-zip-skriver som
-  Excel-eksporten. Ingen genereret zip i repoet, der kan komme ud af trit med kilderne.
-- **`forvalg.json` i zip'en bærer tovos adresse** (`basisUrl(req)`), så indstillingssiden er
-  udfyldt. **Aldrig en nøgle i zip'en** — den havner i Overførsler. »Create a key for it«
-  laver i stedet en `capture`-nøgle gennem den almindelige nøglerude, der viser den én gang.
-- `server.js` require'r nu `shared/xlsx.js` på modulniveau, så den står på `kilde.js`'
-  liste over moduler, en hentet udgave skal have (og i `tests/kilde.test.mjs`).
-
-- **Én rute: `POST /api/v1/capture` med `raw: true`** (`fangstOrdret()` i server.js).
-  Parseren springes over med vilje — sidetekst er ikke tovo-syntaks, samme grund som
-  doda-broen. Retter du i fangsten, så husk, at der nu er to veje ind.
-- **Nøglen er `capture`-scope.** Den kan oprette og starte (det kunne `%` i forvejen),
-  men ikke læse. Kræv aldrig `full` i udvidelsen — nøglen ligger i en browserprofil.
-- **Genbrug sker på titel** (trimmet, mellemrum samlet, uden hensyn til store/små
-  bogstaver) og kun på ÅBNE opgaver. En afsluttet sag genopstår ikke.
-- **Kører uret allerede på opgaven, røres det ikke** — en genstart ville efterlade en
-  post på 0 minutter.
-- Indstillingssiden tester nøglen med en TOM tekst: 400 »no text« betyder gyldig nøgle med
-  ret scope, uden at noget oprettes. Ændrer du fejlkoden for tom fangst, knækker testen.
-- `permissions.request` skal kaldes før første `await` i klik-handleren, ellers afviser
-  Edge den (brugergesten er tabt).
-- **Ikke verificeret i en rigtig Edge** fra Claudes side: API'et er testet
-  (`tests/udvidelse.test.mjs`), udvidelsen selv er kun syntakstjekket.
+Hele listen: `claude-noter/faldgruber.md` og `claude-noter/test.md`.
 
 ## Ikke i scope
 
 Offline-tilstand, service worker-kø, fakturerbarhed, Notion-integration, deling mellem
 brugere, OneNote-API (kun links). **Tovejs-synkronisering med doda** er stadig ikke i
 scope — broen ovenfor er et link, ikke en synkronisering.
+
+## Notefiler
+
+| Fil | Læs den når |
+|---|---|
+| `claude-noter/arkitektur.md` | Du rører datamodel, isolation, settings, `FELTER` — eller kopierer fra doda. |
+| `claude-noter/udgivelse.md` | Du udgiver, rører `kilde.js`, `update:`-scriptet, »Opdater tovo«, payload eller versionsnumrene. |
+| `claude-noter/funktioner.md` | Du rører en funktion: syntaks, timer, start-links, rapport, iCal, gentagelser, eksport, MCP. |
+| `claude-noter/planner-import.md` | Du rører Planner-importen. |
+| `claude-noter/servicenow-import.md` | Du rører ServiceNow-importen. |
+| `claude-noter/totrin.md` | Du rører totrin, `totp.js`/`qr.js` eller genoprettelseskoder. |
+| `claude-noter/sagu-broen.md` | Du rører broen til Sagu eller hemmeligheder i settings. |
+| `claude-noter/live-opdatering.md` | Du rører `live.js` eller en skrivefunktion. |
+| `claude-noter/stjernemarkering.md` | Du rører stjernerne eller sidebaren. |
+| `claude-noter/forventede-timer.md` | Du rører dagens/ugens mål. |
+| `claude-noter/timer-fra-andre.md` | Du rører `otherHours` eller projektets budget. |
+| `claude-noter/broen-fra-doda.md` | Du ændrer timer-API'et, `POST /api/v1/items` eller reglen om én timer. |
+| `claude-noter/browserudvidelsen.md` | Du rører `app/udvidelse/` eller `/api/v1/capture`. |
+| `claude-noter/faldgruber.md` | Før en større ændring — og ved layout/rulning på mobil. |
+| `claude-noter/test.md` | Du skriver tests — og listen over, hvad der ikke er verificeret. |

@@ -40,7 +40,7 @@ Den samme forklaring står kort på engelsk på login-siden under »Why “tovo�
 | 8 | MCP-server + connector til claude.ai | **færdig** |
 | 9 | Polering | **færdig** |
 
-Hele planen står i `TOVO-PLAN.md`, projektreglerne i `CLAUDE.md`.
+Projektreglerne står i `CLAUDE.md` og `claude-noter/`.
 
 ## Lokal kørsel
 
