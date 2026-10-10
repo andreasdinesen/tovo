@@ -68,8 +68,31 @@ Serveren → Settings → Update/Reinstall installerer selve appen; `/data` over
 | `~estimat` | `~2t`, `~90m`, `~1,5t`, `~1t30m` — dansk decimalkomma virker |
 | `tekst // mere` | alt efter `//` bliver beskrivelsen |
 
-`Cmd/Ctrl+K` åbner feltet overalt. Piletaster fører ind i listen, Enter åbner,
-mellemrum afslutter, Esc slipper listen igen.
+## Tastatur
+
+Samme regel som i doda, qlk og sagu. `?` viser hele oversigten (også i appen under
+brugermenuen → Keyboard shortcuts og i guiden). ⌘ på Mac, Ctrl andre steder.
+
+| Hvor | Tast | Gør |
+|---|---|---|
+| Overalt | `⌘K` / `Ctrl+K` | åbner søgefeltet |
+| Overalt | skriv bare | bogstaver går til søgefeltet — undtagen når en række har fokus |
+| Overalt | `?` | oversigten over genveje |
+| Overalt | `Esc` | lukker det, der er åbent |
+| Overalt | `⌘↵` | gemmer og lukker en rude |
+| Overalt | `⌘⇧M` | registrér tid i hånden |
+| Søgefeltet | `↑ ↓` · `Enter` · `⌘↵` | flyt mellem resultater · opret/åbn · start uret på den valgte |
+| Listen | `↑ ↓` | fører ind i listen og rundt i den |
+| Listen | `j` / `k` | næste / forrige række |
+| Listen | `Enter` · mellemrum | åbn · udført |
+| Listen | `t` (eller `⌘↵`) | start/stop uret |
+| Listen | `m` | flyt opgaven til et andet projekt (kolonnen ryddes) |
+| Tavlen | `← →` | skift kolonne |
+| Listen | `Esc` | slipper listen — bogstaverne går tilbage til søgefeltet |
+
+Bogstaver fører aldrig markøren IND i en liste — kun piletasterne gør — så man altid kan
+skrive en opgave, der begynder med et hvilket som helst bogstav. Når en række først har
+fokus, ejer den bogstaverne. `/` er projekt-præfikset i søgefeltet, ikke en genvej.
 
 ## Sådan holder du den opdateret
 
@@ -89,6 +112,16 @@ Låser du til en version før v23, kan den udgave ikke hente sin egen kode. Så 
 videre panelets »Opdater tovo«.
 
 ## Versionshistorik
+
+### v38 — fælles tastaturgenveje
+
+- `?` viser genvejsoversigten overalt, også når en række har fokus.
+- Rækker og tavlekort fik `j`/`k` (næste/forrige), `t` (start/stop uret — samme som
+  `⌘↵`) og `m` (flyt til et andet projekt i en lille vælger).
+- Når en række har fokus, ejer den bogstaverne (som i doda). »Skriv bare« virker som
+  før, når ingen række har fokus; `Esc` slipper rækken.
+- Oversigten og guiden er delt i *Anywhere · In the search field · In a list* og viser
+  ⌘ på Mac og Ctrl andre steder.
 
 ### v37 — hvorfor hedder den tovo?
 

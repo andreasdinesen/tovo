@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 37;
+const APP_VERSION = 38;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1430,7 +1430,20 @@ async function tegnSide() {
   const host = document.getElementById('pageHost');
   if (!host) return;
   synkAdresse();
+  /*
+   * Raekken med fokus overlever en optegning. Raekkerne ejer bogstaverne
+   * (j/k/t/m), og efter `t` eller et live-vink tegnes listen om - uden
+   * dette faldt fokus til body, og NAESTE bogstav endte i soegefeltet.
+   * Kun hvis fokus faktisk blev tabt: har brugeren flyttet sig imens, bliver
+   * brugeren, hvor fokus er.
+   */
+  const a = document.activeElement;
+  const r = a && a.closest && a.closest('[data-keynav] [data-row]');
+  const fokusId = r ? (r.dataset.id || r.dataset.kort) : null;
   await tegnSelveSiden(host);
+  if (fokusId && (!document.activeElement || document.activeElement === document.body)) {
+    fokusRaekke(fokusId);
+  }
   // Siden kan have rettet sin egen tilstand undervejs (et projekt, der ikke
   // fandtes, en admin-fane for en almindelig bruger). Den rettelse ERSTATTER.
   synkAdresse(true);

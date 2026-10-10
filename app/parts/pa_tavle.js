@@ -118,19 +118,10 @@ function bindTavle(host, p, opgaver, forbrug) {
 
   host.querySelectorAll('[data-kort]').forEach((el) => {
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        // Samme genvej som i listerne: ⌘↵ starter uret paa den markerede.
-        if (e.metaKey || e.ctrlKey) {
-          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.kort;
-          if (koerer) stopTimer();
-          else startTimerPaa(el.dataset.kort);
-          return;
-        }
-        aabnOpgave(el.dataset.kort);
-        return;
-      }
-      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.kort); return; }
+      // Enter, ⌘↵, mellemrum, j/k, t og m: de SAMME taster som i listerne -
+      // raekkeTast() i p3_opgaver.js. `m` flytter til et andet PROJEKT;
+      // kolonneskift er knappen paa kortet (visFlytMenu) og traek.
+      if (raekkeTast(e, el, el.dataset.kort)) return;
 
       /*
        * Venstre og hoejre skifter KOLONNE.

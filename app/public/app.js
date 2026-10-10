@@ -2474,7 +2474,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 37;
+const APP_VERSION = 38;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -3899,7 +3899,20 @@ async function tegnSide() {
   const host = document.getElementById('pageHost');
   if (!host) return;
   synkAdresse();
+  /*
+   * Raekken med fokus overlever en optegning. Raekkerne ejer bogstaverne
+   * (j/k/t/m), og efter `t` eller et live-vink tegnes listen om - uden
+   * dette faldt fokus til body, og NAESTE bogstav endte i soegefeltet.
+   * Kun hvis fokus faktisk blev tabt: har brugeren flyttet sig imens, bliver
+   * brugeren, hvor fokus er.
+   */
+  const a = document.activeElement;
+  const r = a && a.closest && a.closest('[data-keynav] [data-row]');
+  const fokusId = r ? (r.dataset.id || r.dataset.kort) : null;
   await tegnSelveSiden(host);
+  if (fokusId && (!document.activeElement || document.activeElement === document.body)) {
+    fokusRaekke(fokusId);
+  }
   // Siden kan have rettet sin egen tilstand undervejs (et projekt, der ikke
   // fandtes, en admin-fane for en almindelig bruger). Den rettelse ERSTATTER.
   synkAdresse(true);
@@ -5162,20 +5175,27 @@ document.addEventListener('keydown', (e) => {
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
   if (document.querySelector('.modal')) return;
   /*
-   * Her afviger tovo fra doda med vilje.
+   * Staar man paa en raekke, EJER raekken bogstaverne (som i doda).
    *
-   * doda traekker sig, saa snart fokus staar i en `[data-keynav]`-liste,
-   * fordi dodas raekker EJER bogstaverne (n = next, w = waiting, x = slet).
-   * tovos raekker bruger kun Enter og mellemrum, saa den samme regel ville
-   * betyde, at bogstaver blev aedt: man staar i listen, skriver, og der sker
-   * ingenting. Planen siger det modsatte - bogstaver skal kunne skrives i
-   * soegefeltet, uanset hvor man staar.
+   * Foer v38 afveg tovo her med vilje: raekkerne brugte kun Enter og
+   * mellemrum, saa dodas regel ville have betydet, at bogstaver blev aedt
+   * (RUNE-ERFARINGER 2026-08-18, tovo F1). Den faelles genvejsregel for doda,
+   * tovo, qlk og sagu (10-10-2026) giver raekkerne bogstaver - j/k, t, m -
+   * og saa er dodas regel den rigtige her ogsaa.
    *
-   * Derfor: kun en liste, der SELV siger, at den vil have bogstaverne
-   * (`data-keynav-letters`), faar lov at beholde dem. Kommer der en saadan
-   * liste i en senere fase, er mekanismen der allerede.
+   * »Skriv bare« er IKKE vaek: bogstaver foerer stadig aldrig IND i listen.
+   * Har ingen raekke fokus, gaar de til soegefeltet som altid, og Esc paa en
+   * raekke slipper den igen (handleren nederst), saa bogstaverne vender
+   * tilbage til soegningen.
+   *
+   * Baade fokus og haendelsens MAAL tjekkes: en raekke, der tegnes om
+   * undervejs (fx efter `t`), er vaek, naar haendelsen naar herop, og saa er
+   * activeElement faldet tilbage til body - maalet ved stadig, hvor det kom
+   * fra (doda v27). Raekken stopper i forvejen selv udbredelsen for de
+   * taster, den bruger; det her er spaerren for de bogstaver, den IKKE
+   * bruger - de skal hverken goere noget eller ende i soegefeltet.
    */
-  if (el && el.closest && el.closest('[data-keynav-letters]')) return;
+  if (paaRaekke(e)) return;
 
   if (e.key.length !== 1) return;
   e.preventDefault();
@@ -5204,16 +5224,33 @@ document.addEventListener('keydown', (e) => {
   const raekker = [...document.querySelectorAll('[data-keynav] [data-row]')];
   if (!raekker.length) return;
 
-  const nu = raekker.indexOf(el);
-  if (nu < 0) {
-    e.preventDefault();
+  e.preventDefault();
+  if (raekker.indexOf(el) < 0) {
     (e.key === 'ArrowDown' ? raekker[0] : raekker[raekker.length - 1]).focus();
     return;
   }
-  e.preventDefault();
-  const n = raekker.length;
-  raekker[(nu + (e.key === 'ArrowDown' ? 1 : n - 1)) % n].focus();
+  naboRaekke(el, e.key === 'ArrowDown' ? 1 : -1).focus();
 });
+
+/**
+ * Raekken foer eller efter `el` i dokumentets raekkefoelge - med
+ * omslag i begge ender. Bruges af piletasterne her og af j/k paa raekken
+ * selv, saa de to veje ALDRIG kan gaa hver sin vej. Paa tavlen er
+ * dokumentets raekkefoelge kolonne for kolonne.
+ */
+function naboRaekke(el, retning) {
+  const raekker = [...document.querySelectorAll('[data-keynav] [data-row]')];
+  const n = raekker.length;
+  const i = raekker.indexOf(el);
+  if (i < 0) return retning > 0 ? raekker[0] : raekker[n - 1];
+  return raekker[(i + (retning > 0 ? 1 : n - 1)) % n];
+}
+
+/** Staar tastetrykket paa (eller kom det fra) en raekke i en tastaturliste? */
+function paaRaekke(e) {
+  const ramt = (x) => !!(x && x.closest && x.closest('[data-keynav] [data-row]'));
+  return ramt(document.activeElement) || ramt(e.target);
+}
 
 /* Esc slipper listen igen - ellers sidder brugeren fast i en tilstand, hvor
    tasterne betyder noget andet, end de plejer (doda v7). */
@@ -5303,25 +5340,141 @@ function bindOpgaveListe(host) {
       if (e.target.closest('[data-stop]')) return;
       aabnOpgave(el.dataset.id);
     });
-    // Piletasterne foerte hertil; herfra er der tre ting at goere.
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        // Cmd/Ctrl+Enter starter (eller stopper) timeren paa den raekke, der
-        // har fokus - samme genvej som i paletten. En genvej, der kun virker
-        // ét sted, er en genvej, man ikke laerer.
-        if (e.metaKey || e.ctrlKey) {
-          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.id;
-          if (koerer) stopTimer();
-          else startTimerPaa(el.dataset.id);
-          return;
-        }
-        aabnOpgave(el.dataset.id);
-        return;
-      }
-      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.id); }
-    });
+    // Piletasterne foerte hertil; herfra ejer raekken tasterne.
+    el.addEventListener('keydown', (e) => raekkeTast(e, el, el.dataset.id));
   });
+}
+
+/**
+ * Tasterne paa en raekke - i listerne OG paa tavlens kort.
+ *
+ * Den faelles genvejsregel for doda, tovo, qlk og sagu (10-10-2026):
+ * Enter aabner, mellemrum = udfoert, j/k = naeste/forrige, t = timer,
+ * m = flyt. Ét sted for begge flader, saa et kort og en raekke aldrig
+ * svarer forskelligt paa den samme tast.
+ *
+ * `mit()` = preventDefault + stopPropagation, og KUN naar raekken faktisk
+ * handlede: preventDefault alene stopper ikke boblingen op til »skriv
+ * bare« (doda F1). Et bogstav, raekken ikke bruger, aedes af »skriv
+ * bare«-handlerens eget vaern (paaRaekke) - det gaar hverken til
+ * soegefeltet eller goer noget.
+ *
+ * @returns {boolean} om tasten blev brugt - tavlen bruger det til at vide,
+ *   om den selv skal se paa venstre/hoejre.
+ */
+function raekkeTast(e, el, id) {
+  const mit = () => { e.preventDefault(); e.stopPropagation(); };
+  if (e.key === 'Enter') {
+    mit();
+    // Cmd/Ctrl+Enter starter (eller stopper) timeren paa den raekke, der
+    // har fokus - samme genvej som i paletten. En genvej, der kun virker
+    // ét sted, er en genvej, man ikke laerer.
+    if (e.metaKey || e.ctrlKey) { skiftTimerPaaRaekke(el, id); return true; }
+    aabnOpgave(id);
+    return true;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.key === ' ') { mit(); skiftFaerdig(id); return true; }
+  if (e.key === 'j' || e.key === 'k') {
+    mit();
+    const nabo = naboRaekke(el, e.key === 'j' ? 1 : -1);
+    if (nabo) nabo.focus();
+    return true;
+  }
+  /*
+   * `t` = samme som ⌘↵. Kun naar raekken HAR en timerknap: en faerdig
+   * opgave har ingen, og saa er tasten bare et ubrugt bogstav - en genvej,
+   * der stopper udbredelsen for at goere ingenting, goer en fremtidig
+   * lytter umulig at fejlsoege (samme regel som i doda).
+   */
+  if (e.key === 't') {
+    if (!el.querySelector('[data-start]')) return false;
+    mit();
+    skiftTimerPaaRaekke(el, id);
+    return true;
+  }
+  if (e.key === 'm') { mit(); vaelgProjektFor(id); return true; }
+  return false;
+}
+
+/** Starter eller stopper uret. Fokus bliver paa raekken - det soerger
+    tegnSide() for, ogsaa naar live-vinket tegner listen om bagefter. */
+function skiftTimerPaaRaekke(el, id) {
+  const koerer = timerState.data && timerState.data.entry.taskId === id;
+  if (koerer) stopTimer();
+  else startTimerPaa(id);
+}
+
+function fokusRaekke(id) {
+  const r = [...document.querySelectorAll('[data-keynav] [data-row]')]
+    .find((x) => (x.dataset.id || x.dataset.kort) === id);
+  if (r) r.focus();
+}
+
+/**
+ * `m`: flyt opgaven til et andet projekt.
+ *
+ * En lille vaelger som dodas `vaelgHurtigt` - piletaster og Enter, Esc
+ * fortryder. Tavlens `visFlytMenu` kan IKKE genbruges: den flytter mellem
+ * KOLONNER i samme projekt, og kolonnerne hoerer til projektet.
+ *
+ * Derfor ryddes `sectionId` ved et projektskift: en kolonne fra det gamle
+ * projekt findes ikke paa det nye, og opgaven ville staa i en kolonne,
+ * tavlen ikke kan tegne. PATCH fletter ind over det gemte, saa alt andet
+ * (estimat, tidsposter, maerkater) er uroert.
+ *
+ * Arkiverede projekter er udeladt - undtagen det, opgaven staar i nu.
+ */
+function vaelgProjektFor(id) {
+  const raekke = [...document.querySelectorAll('[data-keynav] [data-row]')]
+    .find((x) => (x.dataset.id || x.dataset.kort) === id);
+  const opgave = (state.items || []).find((t) => t.id === id);
+  const titel = opgave ? opgave.title
+    : (raekke && (raekke.querySelector('.item-title, .kort-titel') || {}).textContent) || '';
+  const nu = opgave ? opgave.projectId || '' : null;
+  const projekter = (state.projects || [])
+    .filter((p) => !p.archivedAt || p.id === nu)
+    .slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'da'));
+
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Move to a project" style="max-width:420px">
+      <h2>Move to a project</h2>
+      <p class="meta">${esc(titel)}</p>
+      <select class="input" id="mvSel" size="${Math.min(projekter.length + 1, 9)}">
+        <option value=""${nu === '' ? ' selected' : ''}>— no project —</option>
+        ${projekter.map((p) => `<option value="${esc(p.id)}"${p.id === nu ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
+      </select>
+      <div class="modal-foot">
+        <button class="btn primary" id="mvGem" title="↵ / ⌘↵">Move</button>
+        <button class="btn" id="mvLuk">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const sel = host.querySelector('#mvSel');
+  if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+  const luk = () => { host.remove(); fokusRaekke(id); };
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); luk(); } });
+  host.querySelector('#mvLuk').addEventListener('click', luk);
+
+  const gem = async () => {
+    const til = sel.value || null;
+    if (nu !== null && (til || '') === nu) { luk(); return; }
+    try {
+      await api('PATCH', `/api/v1/items/${id}`, { projectId: til, sectionId: null });
+      host.remove();
+      const p = projekter.find((x) => x.id === til);
+      toast(p ? `Moved to ${p.name}.` : 'Moved out of its project.');
+      await genindlaes();
+      fokusRaekke(id);
+    } catch (ex) { toast(ex.message); }
+  };
+  bindGemGenvej(host, gem);
+  host.querySelector('#mvGem').addEventListener('click', gem);
+  sel.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); gem(); } });
+  sel.addEventListener('dblclick', gem);
+  sel.focus();
 }
 
 async function skiftFaerdig(id) {
@@ -5387,8 +5540,8 @@ async function tegnIDag() {
     </div>
     ${!d.items.length ? '<div class="empty"><p class="empty-title">Nothing here yet</p>'
       + '<p>Type in the field above to add your first task.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
-      · Space completes · Esc leaves · ⌘⇧M logs time by hand</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project
+      · Space completes · Esc leaves · ? shows all · ⌘⇧M logs time by hand</p>
   </div>`;
   bindOpgaveListe(host);
   bindPoster(host, d.items);
@@ -5663,8 +5816,8 @@ async function tegnUdenProjekt() {
     </div>
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">Nothing here</p>'
       + '<p>Every task belongs to a project.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
-      · Space completes · Esc leaves</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project
+      · Space completes · Esc leaves · ? shows all</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
   bindOpgaveListe(host);
@@ -5744,7 +5897,7 @@ async function tegnProjekt(id) {
       </div>
       ${tavleHtml(p, d.tasks, d.spent)}
       <p class="hintline meta">Arrow keys move into the board · ← → change column
-        · Enter opens · ⌘↵ starts the timer · Space completes · Esc leaves</p>`
+        · Enter opens · t starts the timer · m changes project · Space completes · Esc leaves · ? shows all</p>`
     : `<div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
@@ -5752,8 +5905,8 @@ async function tegnProjekt(id) {
     </div>`}
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">No tasks in this project</p>'
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
-      · Space completes · Esc leaves</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project
+      · Space completes · Esc leaves · ? shows all</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
   // ÉN binding, ikke to. Bindes begge, fyrer hvert klik to gange - og et
@@ -8051,30 +8204,74 @@ async function togglImporter() {
 
 /* ------------------------------------------------- genvejsoversigten */
 
+/**
+ * ⌘ paa Mac, Ctrl+ alle andre steder - samme regel som sagu (modTast).
+ * Laeses én gang ved indlaesning; uden `navigator` (tests) bliver det Ctrl+.
+ */
+function modTast() {
+  const nav = (typeof navigator !== 'undefined' && navigator) || {};
+  const kilde = String((nav.userAgentData && nav.userAgentData.platform) || nav.platform || '');
+  return /mac|iphone|ipad|ipod/i.test(kilde) ? '\u2318' : 'Ctrl+';
+}
+
+/*
+ * Den faelles genvejsregel for doda, tovo, qlk og sagu (10-10-2026):
+ * samme tre grupper i samme raekkefoelge, samme form som dodas GENVEJE -
+ * [gruppe, [[tast, tekst], ...]]. Guiden laeser den SAMME konstant.
+ *
+ * `/` staar her ikke som egen genvej: i tovo er `/` projekt-praefikset,
+ * man skriver via »skriv bare«, ikke en vej til soegefeltet.
+ */
+const GENVEJ_MOD = modTast();
 const GENVEJE = [
-  ['⌘K / Ctrl+K', 'Open the search field from anywhere'],
-  ['Just type', 'Starts writing in the search field'],
-  ['+ text', 'Create a task — @project #tag :case !date ~estimate'],
-  ['%', 'Anywhere in the line: create it and start the timer at once'],
-  ['Enter', 'Create, or open the selected row'],
-  ['⌘↵', 'In a list: start the timer on the selected task'],
-  ['⌘↵', 'In a dialog: save and close it'],
-  ['↑ ↓', 'Move into the list and around in it'],
-  ['Space', 'Complete the task the cursor is on'],
-  ['Esc', 'Leave the list, or close what is open'],
-  ['⌘⇧M', 'Log time by hand'],
+  ['Anywhere', [
+    [`${GENVEJ_MOD}K`, 'Open the search field'],
+    ['Just type', 'Starts writing in the search field — unless a row has the cursor'],
+    ['?', 'This list'],
+    ['Esc', 'Close what is open'],
+    [`${GENVEJ_MOD}↵`, 'In a dialog: save and close it'],
+    [GENVEJ_MOD === '\u2318' ? '⌘⇧M' : 'Ctrl+Shift+M', 'Log time by hand'],
+  ]],
+  ['In the search field', [
+    ['+ text', 'Create a task — @project #tag :case !date ~estimate'],
+    ['%', 'Anywhere in the line: create it and start the timer at once'],
+    ['↑ ↓', 'Move between results'],
+    ['Enter', 'Create, or open the selected result'],
+    [`${GENVEJ_MOD}↵`, 'Start the timer on the selected task'],
+    ['Backspace', 'Leave the mode when the field is empty'],
+  ]],
+  ['In a list', [
+    ['↑ ↓', 'Move into the list and around in it'],
+    ['j / k', 'Next / previous row'],
+    ['Enter', 'Open the task'],
+    ['Space', 'Complete the task'],
+    [`t / ${GENVEJ_MOD}↵`, 'Start or stop its timer'],
+    ['m', 'Move it to another project'],
+    ['← →', 'On a board: change column'],
+    ['Esc', 'Leave the list — letters go back to the search field'],
+  ]],
 ];
 
+/** Grupperne som tabeller - brugt af oversigten OG af guiden, hver med
+    sin egen tabelklasse (ruden: `data genvejstabel`, guiden: `shortcuts`). */
+function genvejeHtml(klasse) {
+  return GENVEJE.map(([gruppe, liste]) => `
+    <div class="meta" style="margin:16px 0 8px">${esc(gruppe)}</div>
+    <table class="${klasse}">${liste.map(([t, b]) =>
+    `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}</table>`).join('');
+}
+
 function visGenveje() {
+  if (document.getElementById('genvejsark')) return;
   const host = document.createElement('div');
   host.className = 'modal';
+  host.id = 'genvejsark';
   host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Keyboard shortcuts">
       <h2>Keyboard shortcuts</h2>
-      <table class="data genvejstabel">
-        ${GENVEJE.map(([t, b]) => `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}
-      </table>
-      <p class="meta">Letters never move the cursor into a list — you must be able to type a
-        task that begins with any letter.</p>
+      ${genvejeHtml('data genvejstabel')}
+      <p class="meta">Letters never move the cursor into a list — only ↑ ↓ do — so you can always
+        type a task that begins with any letter. Once a row has the cursor, its letters belong to
+        the row; Esc gives them back to the search field.</p>
       <div class="modal-foot"><button class="btn primary" id="gvClose">Close</button></div>
     </div>`;
   document.body.appendChild(host);
@@ -8082,7 +8279,26 @@ function visGenveje() {
   document.getElementById('gvClose').addEventListener('click', luk);
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('gvClose').focus();
 }
+
+/*
+ * `?` viser oversigten OVERALT - ogsaa naar en raekke har fokus og ejer
+ * bogstaverne. Derfor capture-fasen og stopPropagation: den skal naa frem
+ * FOER raekkens egne taster og foer »skriv bare«, der ellers ville sende
+ * `?` til soegefeltet (samme greb som doda).
+ */
+document.addEventListener('keydown', (e) => {
+  if (!state.user || e.key !== '?') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+    || el.isContentEditable)) return;
+  if (document.querySelector('.modal')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  visGenveje();
+}, true);
 
 
 /* ------------------------------------------------------ excel-download */
@@ -8238,19 +8454,10 @@ function bindTavle(host, p, opgaver, forbrug) {
 
   host.querySelectorAll('[data-kort]').forEach((el) => {
     el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        // Samme genvej som i listerne: ⌘↵ starter uret paa den markerede.
-        if (e.metaKey || e.ctrlKey) {
-          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.kort;
-          if (koerer) stopTimer();
-          else startTimerPaa(el.dataset.kort);
-          return;
-        }
-        aabnOpgave(el.dataset.kort);
-        return;
-      }
-      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.kort); return; }
+      // Enter, ⌘↵, mellemrum, j/k, t og m: de SAMME taster som i listerne -
+      // raekkeTast() i p3_opgaver.js. `m` flytter til et andet PROJEKT;
+      // kolonneskift er knappen paa kortet (visFlytMenu) og traek.
+      if (raekkeTast(e, el, el.dataset.kort)) return;
 
       /*
        * Venstre og hoejre skifter KOLONNE.
@@ -8586,7 +8793,7 @@ async function tegnTags() {
         ${faerdige.length ? afsnit('Done', faerdige, { foldbar: true, noegle: `tag-faerdige-${valgt.id}` }) : ''}
       </div>
       ${!opgaver.length ? '<div class="empty"><p>Nothing carries this tag right now.</p></div>' : ''}
-      <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer</p>
+      <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project · ? shows all</p>
     ` : (t.tags.length ? '<p class="meta" style="margin-top:18px">Pick a tag to see what carries it.</p>' : '')}
   </div>`;
 
@@ -8955,7 +9162,7 @@ const GUIDE_DELE = [
             lead: 'One timer runs at a time — the database enforces it, not just the code.',
             raekker: [
               ['CLICK', 'The play button on any task row starts it. Starting another stops the first.'],
-              ['⌘↵', 'On the selected row: start or stop without opening anything.'],
+              ['t · ⌘↵', 'On the selected row: start or stop without opening anything.'],
               ['ANYWHERE', 'It keeps running when you close the browser — the start time is what is stored, never a counter.'],
             ],
             go: [['today', 'Open Today']],
@@ -9150,8 +9357,7 @@ function sideGuide() {
     // af trit. En guide, der skriver dem af, er en legende mere at holde ved lige.
     if (e.genveje) {
       return `<h2>${esc(e.titel)}</h2><p class="lead guide-lead">${esc(e.lead)}</p>
-        <div class="card"><table class="shortcuts">${GENVEJE.map(([t, b]) =>
-    `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}</table></div>`;
+        <div class="card">${genvejeHtml('shortcuts')}</div>`;
     }
     return guideEmne(e);
   }).join('')}`).join('')}`).join('')}

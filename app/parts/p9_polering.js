@@ -132,30 +132,74 @@ async function togglImporter() {
 
 /* ------------------------------------------------- genvejsoversigten */
 
+/**
+ * ⌘ paa Mac, Ctrl+ alle andre steder - samme regel som sagu (modTast).
+ * Laeses én gang ved indlaesning; uden `navigator` (tests) bliver det Ctrl+.
+ */
+function modTast() {
+  const nav = (typeof navigator !== 'undefined' && navigator) || {};
+  const kilde = String((nav.userAgentData && nav.userAgentData.platform) || nav.platform || '');
+  return /mac|iphone|ipad|ipod/i.test(kilde) ? '\u2318' : 'Ctrl+';
+}
+
+/*
+ * Den faelles genvejsregel for doda, tovo, qlk og sagu (10-10-2026):
+ * samme tre grupper i samme raekkefoelge, samme form som dodas GENVEJE -
+ * [gruppe, [[tast, tekst], ...]]. Guiden laeser den SAMME konstant.
+ *
+ * `/` staar her ikke som egen genvej: i tovo er `/` projekt-praefikset,
+ * man skriver via »skriv bare«, ikke en vej til soegefeltet.
+ */
+const GENVEJ_MOD = modTast();
 const GENVEJE = [
-  ['⌘K / Ctrl+K', 'Open the search field from anywhere'],
-  ['Just type', 'Starts writing in the search field'],
-  ['+ text', 'Create a task — @project #tag :case !date ~estimate'],
-  ['%', 'Anywhere in the line: create it and start the timer at once'],
-  ['Enter', 'Create, or open the selected row'],
-  ['⌘↵', 'In a list: start the timer on the selected task'],
-  ['⌘↵', 'In a dialog: save and close it'],
-  ['↑ ↓', 'Move into the list and around in it'],
-  ['Space', 'Complete the task the cursor is on'],
-  ['Esc', 'Leave the list, or close what is open'],
-  ['⌘⇧M', 'Log time by hand'],
+  ['Anywhere', [
+    [`${GENVEJ_MOD}K`, 'Open the search field'],
+    ['Just type', 'Starts writing in the search field — unless a row has the cursor'],
+    ['?', 'This list'],
+    ['Esc', 'Close what is open'],
+    [`${GENVEJ_MOD}↵`, 'In a dialog: save and close it'],
+    [GENVEJ_MOD === '\u2318' ? '⌘⇧M' : 'Ctrl+Shift+M', 'Log time by hand'],
+  ]],
+  ['In the search field', [
+    ['+ text', 'Create a task — @project #tag :case !date ~estimate'],
+    ['%', 'Anywhere in the line: create it and start the timer at once'],
+    ['↑ ↓', 'Move between results'],
+    ['Enter', 'Create, or open the selected result'],
+    [`${GENVEJ_MOD}↵`, 'Start the timer on the selected task'],
+    ['Backspace', 'Leave the mode when the field is empty'],
+  ]],
+  ['In a list', [
+    ['↑ ↓', 'Move into the list and around in it'],
+    ['j / k', 'Next / previous row'],
+    ['Enter', 'Open the task'],
+    ['Space', 'Complete the task'],
+    [`t / ${GENVEJ_MOD}↵`, 'Start or stop its timer'],
+    ['m', 'Move it to another project'],
+    ['← →', 'On a board: change column'],
+    ['Esc', 'Leave the list — letters go back to the search field'],
+  ]],
 ];
 
+/** Grupperne som tabeller - brugt af oversigten OG af guiden, hver med
+    sin egen tabelklasse (ruden: `data genvejstabel`, guiden: `shortcuts`). */
+function genvejeHtml(klasse) {
+  return GENVEJE.map(([gruppe, liste]) => `
+    <div class="meta" style="margin:16px 0 8px">${esc(gruppe)}</div>
+    <table class="${klasse}">${liste.map(([t, b]) =>
+    `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}</table>`).join('');
+}
+
 function visGenveje() {
+  if (document.getElementById('genvejsark')) return;
   const host = document.createElement('div');
   host.className = 'modal';
+  host.id = 'genvejsark';
   host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Keyboard shortcuts">
       <h2>Keyboard shortcuts</h2>
-      <table class="data genvejstabel">
-        ${GENVEJE.map(([t, b]) => `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}
-      </table>
-      <p class="meta">Letters never move the cursor into a list — you must be able to type a
-        task that begins with any letter.</p>
+      ${genvejeHtml('data genvejstabel')}
+      <p class="meta">Letters never move the cursor into a list — only ↑ ↓ do — so you can always
+        type a task that begins with any letter. Once a row has the cursor, its letters belong to
+        the row; Esc gives them back to the search field.</p>
       <div class="modal-foot"><button class="btn primary" id="gvClose">Close</button></div>
     </div>`;
   document.body.appendChild(host);
@@ -163,7 +207,26 @@ function visGenveje() {
   document.getElementById('gvClose').addEventListener('click', luk);
   host.addEventListener('click', (e) => { if (e.target === host) luk(); });
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('gvClose').focus();
 }
+
+/*
+ * `?` viser oversigten OVERALT - ogsaa naar en raekke har fokus og ejer
+ * bogstaverne. Derfor capture-fasen og stopPropagation: den skal naa frem
+ * FOER raekkens egne taster og foer »skriv bare«, der ellers ville sende
+ * `?` til soegefeltet (samme greb som doda).
+ */
+document.addEventListener('keydown', (e) => {
+  if (!state.user || e.key !== '?') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+    || el.isContentEditable)) return;
+  if (document.querySelector('.modal')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  visGenveje();
+}, true);
 
 
 /* ------------------------------------------------------ excel-download */

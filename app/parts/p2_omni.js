@@ -576,20 +576,27 @@ document.addEventListener('keydown', (e) => {
   if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
   if (document.querySelector('.modal')) return;
   /*
-   * Her afviger tovo fra doda med vilje.
+   * Staar man paa en raekke, EJER raekken bogstaverne (som i doda).
    *
-   * doda traekker sig, saa snart fokus staar i en `[data-keynav]`-liste,
-   * fordi dodas raekker EJER bogstaverne (n = next, w = waiting, x = slet).
-   * tovos raekker bruger kun Enter og mellemrum, saa den samme regel ville
-   * betyde, at bogstaver blev aedt: man staar i listen, skriver, og der sker
-   * ingenting. Planen siger det modsatte - bogstaver skal kunne skrives i
-   * soegefeltet, uanset hvor man staar.
+   * Foer v38 afveg tovo her med vilje: raekkerne brugte kun Enter og
+   * mellemrum, saa dodas regel ville have betydet, at bogstaver blev aedt
+   * (RUNE-ERFARINGER 2026-08-18, tovo F1). Den faelles genvejsregel for doda,
+   * tovo, qlk og sagu (10-10-2026) giver raekkerne bogstaver - j/k, t, m -
+   * og saa er dodas regel den rigtige her ogsaa.
    *
-   * Derfor: kun en liste, der SELV siger, at den vil have bogstaverne
-   * (`data-keynav-letters`), faar lov at beholde dem. Kommer der en saadan
-   * liste i en senere fase, er mekanismen der allerede.
+   * »Skriv bare« er IKKE vaek: bogstaver foerer stadig aldrig IND i listen.
+   * Har ingen raekke fokus, gaar de til soegefeltet som altid, og Esc paa en
+   * raekke slipper den igen (handleren nederst), saa bogstaverne vender
+   * tilbage til soegningen.
+   *
+   * Baade fokus og haendelsens MAAL tjekkes: en raekke, der tegnes om
+   * undervejs (fx efter `t`), er vaek, naar haendelsen naar herop, og saa er
+   * activeElement faldet tilbage til body - maalet ved stadig, hvor det kom
+   * fra (doda v27). Raekken stopper i forvejen selv udbredelsen for de
+   * taster, den bruger; det her er spaerren for de bogstaver, den IKKE
+   * bruger - de skal hverken goere noget eller ende i soegefeltet.
    */
-  if (el && el.closest && el.closest('[data-keynav-letters]')) return;
+  if (paaRaekke(e)) return;
 
   if (e.key.length !== 1) return;
   e.preventDefault();
@@ -618,16 +625,33 @@ document.addEventListener('keydown', (e) => {
   const raekker = [...document.querySelectorAll('[data-keynav] [data-row]')];
   if (!raekker.length) return;
 
-  const nu = raekker.indexOf(el);
-  if (nu < 0) {
-    e.preventDefault();
+  e.preventDefault();
+  if (raekker.indexOf(el) < 0) {
     (e.key === 'ArrowDown' ? raekker[0] : raekker[raekker.length - 1]).focus();
     return;
   }
-  e.preventDefault();
-  const n = raekker.length;
-  raekker[(nu + (e.key === 'ArrowDown' ? 1 : n - 1)) % n].focus();
+  naboRaekke(el, e.key === 'ArrowDown' ? 1 : -1).focus();
 });
+
+/**
+ * Raekken foer eller efter `el` i dokumentets raekkefoelge - med
+ * omslag i begge ender. Bruges af piletasterne her og af j/k paa raekken
+ * selv, saa de to veje ALDRIG kan gaa hver sin vej. Paa tavlen er
+ * dokumentets raekkefoelge kolonne for kolonne.
+ */
+function naboRaekke(el, retning) {
+  const raekker = [...document.querySelectorAll('[data-keynav] [data-row]')];
+  const n = raekker.length;
+  const i = raekker.indexOf(el);
+  if (i < 0) return retning > 0 ? raekker[0] : raekker[n - 1];
+  return raekker[(i + (retning > 0 ? 1 : n - 1)) % n];
+}
+
+/** Staar tastetrykket paa (eller kom det fra) en raekke i en tastaturliste? */
+function paaRaekke(e) {
+  const ramt = (x) => !!(x && x.closest && x.closest('[data-keynav] [data-row]'));
+  return ramt(document.activeElement) || ramt(e.target);
+}
 
 /* Esc slipper listen igen - ellers sidder brugeren fast i en tilstand, hvor
    tasterne betyder noget andet, end de plejer (doda v7). */

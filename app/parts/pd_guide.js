@@ -93,7 +93,7 @@ const GUIDE_DELE = [
             lead: 'One timer runs at a time — the database enforces it, not just the code.',
             raekker: [
               ['CLICK', 'The play button on any task row starts it. Starting another stops the first.'],
-              ['⌘↵', 'On the selected row: start or stop without opening anything.'],
+              ['t · ⌘↵', 'On the selected row: start or stop without opening anything.'],
               ['ANYWHERE', 'It keeps running when you close the browser — the start time is what is stored, never a counter.'],
             ],
             go: [['today', 'Open Today']],
@@ -288,8 +288,7 @@ function sideGuide() {
     // af trit. En guide, der skriver dem af, er en legende mere at holde ved lige.
     if (e.genveje) {
       return `<h2>${esc(e.titel)}</h2><p class="lead guide-lead">${esc(e.lead)}</p>
-        <div class="card"><table class="shortcuts">${GENVEJE.map(([t, b]) =>
-    `<tr><td><kbd>${esc(t)}</kbd></td><td>${esc(b)}</td></tr>`).join('')}</table></div>`;
+        <div class="card">${genvejeHtml('shortcuts')}</div>`;
     }
     return guideEmne(e);
   }).join('')}`).join('')}`).join('')}

@@ -48,7 +48,7 @@ async function tegnTags() {
         ${faerdige.length ? afsnit('Done', faerdige, { foldbar: true, noegle: `tag-faerdige-${valgt.id}` }) : ''}
       </div>
       ${!opgaver.length ? '<div class="empty"><p>Nothing carries this tag right now.</p></div>' : ''}
-      <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer</p>
+      <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project · ? shows all</p>
     ` : (t.tags.length ? '<p class="meta" style="margin-top:18px">Pick a tag to see what carries it.</p>' : '')}
   </div>`;
 

@@ -77,25 +77,141 @@ function bindOpgaveListe(host) {
       if (e.target.closest('[data-stop]')) return;
       aabnOpgave(el.dataset.id);
     });
-    // Piletasterne foerte hertil; herfra er der tre ting at goere.
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        // Cmd/Ctrl+Enter starter (eller stopper) timeren paa den raekke, der
-        // har fokus - samme genvej som i paletten. En genvej, der kun virker
-        // ét sted, er en genvej, man ikke laerer.
-        if (e.metaKey || e.ctrlKey) {
-          const koerer = timerState.data && timerState.data.entry.taskId === el.dataset.id;
-          if (koerer) stopTimer();
-          else startTimerPaa(el.dataset.id);
-          return;
-        }
-        aabnOpgave(el.dataset.id);
-        return;
-      }
-      if (e.key === ' ') { e.preventDefault(); skiftFaerdig(el.dataset.id); }
-    });
+    // Piletasterne foerte hertil; herfra ejer raekken tasterne.
+    el.addEventListener('keydown', (e) => raekkeTast(e, el, el.dataset.id));
   });
+}
+
+/**
+ * Tasterne paa en raekke - i listerne OG paa tavlens kort.
+ *
+ * Den faelles genvejsregel for doda, tovo, qlk og sagu (10-10-2026):
+ * Enter aabner, mellemrum = udfoert, j/k = naeste/forrige, t = timer,
+ * m = flyt. Ét sted for begge flader, saa et kort og en raekke aldrig
+ * svarer forskelligt paa den samme tast.
+ *
+ * `mit()` = preventDefault + stopPropagation, og KUN naar raekken faktisk
+ * handlede: preventDefault alene stopper ikke boblingen op til »skriv
+ * bare« (doda F1). Et bogstav, raekken ikke bruger, aedes af »skriv
+ * bare«-handlerens eget vaern (paaRaekke) - det gaar hverken til
+ * soegefeltet eller goer noget.
+ *
+ * @returns {boolean} om tasten blev brugt - tavlen bruger det til at vide,
+ *   om den selv skal se paa venstre/hoejre.
+ */
+function raekkeTast(e, el, id) {
+  const mit = () => { e.preventDefault(); e.stopPropagation(); };
+  if (e.key === 'Enter') {
+    mit();
+    // Cmd/Ctrl+Enter starter (eller stopper) timeren paa den raekke, der
+    // har fokus - samme genvej som i paletten. En genvej, der kun virker
+    // ét sted, er en genvej, man ikke laerer.
+    if (e.metaKey || e.ctrlKey) { skiftTimerPaaRaekke(el, id); return true; }
+    aabnOpgave(id);
+    return true;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
+  if (e.key === ' ') { mit(); skiftFaerdig(id); return true; }
+  if (e.key === 'j' || e.key === 'k') {
+    mit();
+    const nabo = naboRaekke(el, e.key === 'j' ? 1 : -1);
+    if (nabo) nabo.focus();
+    return true;
+  }
+  /*
+   * `t` = samme som ⌘↵. Kun naar raekken HAR en timerknap: en faerdig
+   * opgave har ingen, og saa er tasten bare et ubrugt bogstav - en genvej,
+   * der stopper udbredelsen for at goere ingenting, goer en fremtidig
+   * lytter umulig at fejlsoege (samme regel som i doda).
+   */
+  if (e.key === 't') {
+    if (!el.querySelector('[data-start]')) return false;
+    mit();
+    skiftTimerPaaRaekke(el, id);
+    return true;
+  }
+  if (e.key === 'm') { mit(); vaelgProjektFor(id); return true; }
+  return false;
+}
+
+/** Starter eller stopper uret. Fokus bliver paa raekken - det soerger
+    tegnSide() for, ogsaa naar live-vinket tegner listen om bagefter. */
+function skiftTimerPaaRaekke(el, id) {
+  const koerer = timerState.data && timerState.data.entry.taskId === id;
+  if (koerer) stopTimer();
+  else startTimerPaa(id);
+}
+
+function fokusRaekke(id) {
+  const r = [...document.querySelectorAll('[data-keynav] [data-row]')]
+    .find((x) => (x.dataset.id || x.dataset.kort) === id);
+  if (r) r.focus();
+}
+
+/**
+ * `m`: flyt opgaven til et andet projekt.
+ *
+ * En lille vaelger som dodas `vaelgHurtigt` - piletaster og Enter, Esc
+ * fortryder. Tavlens `visFlytMenu` kan IKKE genbruges: den flytter mellem
+ * KOLONNER i samme projekt, og kolonnerne hoerer til projektet.
+ *
+ * Derfor ryddes `sectionId` ved et projektskift: en kolonne fra det gamle
+ * projekt findes ikke paa det nye, og opgaven ville staa i en kolonne,
+ * tavlen ikke kan tegne. PATCH fletter ind over det gemte, saa alt andet
+ * (estimat, tidsposter, maerkater) er uroert.
+ *
+ * Arkiverede projekter er udeladt - undtagen det, opgaven staar i nu.
+ */
+function vaelgProjektFor(id) {
+  const raekke = [...document.querySelectorAll('[data-keynav] [data-row]')]
+    .find((x) => (x.dataset.id || x.dataset.kort) === id);
+  const opgave = (state.items || []).find((t) => t.id === id);
+  const titel = opgave ? opgave.title
+    : (raekke && (raekke.querySelector('.item-title, .kort-titel') || {}).textContent) || '';
+  const nu = opgave ? opgave.projectId || '' : null;
+  const projekter = (state.projects || [])
+    .filter((p) => !p.archivedAt || p.id === nu)
+    .slice().sort((a, b) => String(a.name).localeCompare(String(b.name), 'da'));
+
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `<div class="modal-card" role="dialog" aria-label="Move to a project" style="max-width:420px">
+      <h2>Move to a project</h2>
+      <p class="meta">${esc(titel)}</p>
+      <select class="input" id="mvSel" size="${Math.min(projekter.length + 1, 9)}">
+        <option value=""${nu === '' ? ' selected' : ''}>— no project —</option>
+        ${projekter.map((p) => `<option value="${esc(p.id)}"${p.id === nu ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
+      </select>
+      <div class="modal-foot">
+        <button class="btn primary" id="mvGem" title="↵ / ⌘↵">Move</button>
+        <button class="btn" id="mvLuk">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const sel = host.querySelector('#mvSel');
+  if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+  const luk = () => { host.remove(); fokusRaekke(id); };
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); luk(); } });
+  host.querySelector('#mvLuk').addEventListener('click', luk);
+
+  const gem = async () => {
+    const til = sel.value || null;
+    if (nu !== null && (til || '') === nu) { luk(); return; }
+    try {
+      await api('PATCH', `/api/v1/items/${id}`, { projectId: til, sectionId: null });
+      host.remove();
+      const p = projekter.find((x) => x.id === til);
+      toast(p ? `Moved to ${p.name}.` : 'Moved out of its project.');
+      await genindlaes();
+      fokusRaekke(id);
+    } catch (ex) { toast(ex.message); }
+  };
+  bindGemGenvej(host, gem);
+  host.querySelector('#mvGem').addEventListener('click', gem);
+  sel.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); gem(); } });
+  sel.addEventListener('dblclick', gem);
+  sel.focus();
 }
 
 async function skiftFaerdig(id) {
@@ -161,8 +277,8 @@ async function tegnIDag() {
     </div>
     ${!d.items.length ? '<div class="empty"><p class="empty-title">Nothing here yet</p>'
       + '<p>Type in the field above to add your first task.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
-      · Space completes · Esc leaves · ⌘⇧M logs time by hand</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project
+      · Space completes · Esc leaves · ? shows all · ⌘⇧M logs time by hand</p>
   </div>`;
   bindOpgaveListe(host);
   bindPoster(host, d.items);
@@ -437,8 +553,8 @@ async function tegnUdenProjekt() {
     </div>
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">Nothing here</p>'
       + '<p>Every task belongs to a project.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
-      · Space completes · Esc leaves</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project
+      · Space completes · Esc leaves · ? shows all</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
   bindOpgaveListe(host);
@@ -518,7 +634,7 @@ async function tegnProjekt(id) {
       </div>
       ${tavleHtml(p, d.tasks, d.spent)}
       <p class="hintline meta">Arrow keys move into the board · ← → change column
-        · Enter opens · ⌘↵ starts the timer · Space completes · Esc leaves</p>`
+        · Enter opens · t starts the timer · m changes project · Space completes · Esc leaves · ? shows all</p>`
     : `<div data-keynav>
       ${sektioner.map((sek) => afsnit(sek.name, iSektion(sek.id), { forbrug: d.spent })).join('')}
       ${afsnit(sektioner.length ? 'No section' : 'Open', iSektion(null), { forbrug: d.spent })}
@@ -526,8 +642,8 @@ async function tegnProjekt(id) {
     </div>`}
     ${!d.tasks.length ? '<div class="empty"><p class="empty-title">No tasks in this project</p>'
       + '<p>The field above adds them here — you are inside the project.</p></div>' : ''}
-    <p class="hintline meta">Arrow keys move into the list · Enter opens · ⌘↵ starts the timer
-      · Space completes · Esc leaves</p>
+    <p class="hintline meta">Arrow keys move into the list · Enter opens · t starts the timer · m changes project
+      · Space completes · Esc leaves · ? shows all</p>
   </div>`;
   document.getElementById('tilbage').addEventListener('click', () => gaaTil('projects'));
   // ÉN binding, ikke to. Bindes begge, fyrer hvert klik to gange - og et
