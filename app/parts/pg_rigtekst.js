@@ -66,6 +66,7 @@ function rapportRigTekst(d, decimal) {
   const tekst = [];
   const titel = `${d.from} – ${d.to}`;
   const resume = `${f(r.total)} in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`
+    + `${r.overtime ? ` · ${f(r.overtime)} overtime (included)` : ''}`
     + `${r.norm ? ` · expected ${f(r.norm)}` : ''}`;
   html.push(mailOverskrift(titel, 1), mailAfsnit(resume));
   tekst.push(titel, resume);
@@ -82,6 +83,12 @@ function rapportRigTekst(d, decimal) {
     afsnit('Per case number, per day', ['Case', ...dage, 'Total'],
       ts.caseRows.map((c) => [c.case || '(no case number)', ...dagTal(c.dage), f(c.total)]),
       ['Total', ...dagTal(ts.perDay), f(ts.total)], talFra(1));
+  }
+  if (ts && ts.overtime && ts.overtime.rows.length) {
+    const ot = ts.overtime;
+    afsnit('Overtime — per case number, per day', ['Case', 'Project', 'Task', ...dage, 'Total'],
+      ot.rows.map((x) => [x.case || '', x.project || '', x.title, ...dagTal(x.dage), f(x.total)]),
+      ['Total', '', '', ...dagTal(ot.perDay), f(ot.total)], talFra(3));
   }
   if (ts && ts.rows.length) {
     afsnit('Per day, per task', ['Case', 'Project', 'Task', ...dage, 'Total'],

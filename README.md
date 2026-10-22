@@ -113,6 +113,17 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v39 — overtid
+
+- En tidspost kan markeres som **overtid** (afkrydsning i »Log time« / »Edit time«, også
+  på et ur, der kører). Overtiden tæller med i totalen, men vises også for sig.
+- Rapporten har et *Overtime*-tal og en tabel »Overtime — per case number, per day« —
+  listen, der skal registreres særskilt. Med i Excel (eget ark), »Copy table«, markdown
+  og print.
+- Overtidsposter har et mærke på Today og er stribede i Week.
+- MCP: `log_time` tager `overtime: true`, og `week_report` viser overtiden for sig.
+- Ny skema-migration (`m5`) lægger kolonnen på ved første opstart.
+
 ### v38 — fælles tastaturgenveje
 
 - `?` viser genvejsoversigten overalt, også når en række har fokus.

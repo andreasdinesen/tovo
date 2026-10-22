@@ -40,6 +40,12 @@ projekt i stedet for at love et nyt.
   første (det er morgen). Under 20 minutter er frokost og kaffe (`hullerPaaDag`). Et klik
   åbner registreringen udfyldt.
 
+- **Overtid er et flag på tidsposten** (`overtime`, kolonne fra skema-migration `m5`), ikke en
+  kilde: kilden siger HVORDAN tiden kom ind, flaget HVAD den er. Overtid tæller med i alle
+  totaler (dag, uge, budget) og vises desuden for sig: `report.overtime` og
+  `timesheet.overtime` (samme form som hovedsedlen) i `beregn.js`. PATCH uden `overtime`
+  beholder flaget; et kørende ur kan markeres uden tidsrum. Fortrydelsen sender flaget med.
+
 ## Start-links (`/s/:token`)
 
 - **`GET /s/:token` udfører handlingen** — prisen for ét klik fra OneNote. Klienter, der siger,

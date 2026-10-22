@@ -210,6 +210,10 @@ async function aabnManuel(forvalgtOpgave, opt) {
       </div>
       <label class="field"><span>Note (optional)</span>
         <input class="input" id="mNote" placeholder="What was it?" value="${esc(post ? post.note : '')}"></label>
+      <!-- Overtid registreres for sig i det andet system. Den taeller stadig
+           med i totalen; rapporten viser den ogsaa alene. -->
+      <label class="overtidcheck"><input type="checkbox" id="mOvertime" ${post && post.overtime ? 'checked' : ''}>
+        Overtime — counts in the total, and is also shown on its own in the report</label>
       <div class="modal-foot">
         <button class="btn primary" id="mSave" title="⌘↵ / Ctrl+↵">${post ? 'Save' : 'Log it'}
           <span class="genvejstip">⌘↵</span></button>
@@ -290,7 +294,14 @@ async function aabnManuel(forvalgtOpgave, opt) {
         nyTitel.value = '';
         tegnOpgaver(taskId);
       }
-      if (post) {
+      const overtime = document.getElementById('mOvertime').checked;
+      if (post && !post.stoppedAt && !tekst.trim()) {
+        // Et ur, der stadig koerer, har intet tidsrum at skrive - men det
+        // skal kunne markeres som overtid (eller flyttes) undervejs.
+        await api('PATCH', `/api/v1/entries/${post.id}`, {
+          taskId, note: document.getElementById('mNote').value, overtime,
+        });
+      } else if (post) {
         // Tidsrummet tolkes af beregn.js - samme funktion som serveren
         // bruger ved oprettelse. To tolkninger ville vaere to sandheder.
         const tidsrum = tovoBeregn.parseTidsrum(tekst, dato);
@@ -303,10 +314,11 @@ async function aabnManuel(forvalgtOpgave, opt) {
           startedAt,
           stoppedAt: startedAt + tidsrum.minutter * 60,
           note: document.getElementById('mNote').value,
+          overtime,
         });
       } else {
         await api('POST', '/api/v1/entries', {
-          taskId, date: dato, text: tekst, note: document.getElementById('mNote').value,
+          taskId, date: dato, text: tekst, note: document.getElementById('mNote').value, overtime,
         });
       }
       luk();
@@ -326,7 +338,7 @@ async function aabnManuel(forvalgtOpgave, opt) {
           const p = d.deleted;
           await api('POST', '/api/v1/entries', {
             id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
-            note: p.note, source: p.source,
+            note: p.note, source: p.source, overtime: p.overtime,
           });
           await genindlaes();
         } });
@@ -416,7 +428,7 @@ function postRaekke(e, opgaver) {
     <span class="post-tid meta">${esc(kl(fra))}–${til ? esc(kl(til)) : 'now'}</span>
     <span class="post-main">
       <span>${esc(opgave ? opgave.title : 'Deleted task')}</span>
-      <span class="meta">${esc(projekt ? projekt.name : 'no project')} · ${esc(e.source)}${e.note ? ` · ${esc(e.note)}` : ''}</span>
+      <span class="meta">${e.overtime ? '<span class="overtid-maerke">overtime</span> ' : ''}${esc(projekt ? projekt.name : 'no project')} · ${esc(e.source)}${e.note ? ` · ${esc(e.note)}` : ''}</span>
     </span>
     <span class="post-sum">${esc(tovoBeregn.formatVarighed(minutter))}${koerer ? ' …' : ''}</span>
     <button class="linkbtn" data-slet="${esc(e.id)}">delete</button>
@@ -440,7 +452,7 @@ function bindPoster(host, opgaver) {
             // fortrydelsen ikke en fortrydelse.
             await api('POST', '/api/v1/entries', {
               id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
-              note: p.note, source: p.source,
+              note: p.note, source: p.source, overtime: p.overtime,
             });
             await genindlaes();
           },

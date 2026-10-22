@@ -536,10 +536,19 @@
         });
       }
 
+      /* Overtiden er MED i totalen - den er arbejdstid. Den staar her for
+         sig, fordi den registreres paa en saerlig maade i det andet system.
+         Samme afrunding pr. post som alt andet, saa tallet kan genfindes i
+         overtidens timeseddel. */
+      const overtid = entries()
+        .filter((e) => e.overtime && e.startedAt >= fra && e.startedAt < til)
+        .reduce((n, e) => n + afrund(varighed(e, nu), afrunding2), 0);
+
       return {
         fra,
         til,
         total: s.total,
+        overtime: overtid,
         entries: s.entries,
         projects: s.projects,
         cases: [...sager.values()]
@@ -608,6 +617,15 @@
      * forrest, fordi det er noeglen dér.
      */
     function timeseddel(fra, til, nu) {
+      /*
+       * Overtiden faar sin EGEN seddel med samme form. Den skal registreres
+       * for sig i det andet system - pr. sag, pr. dag, ligesom resten - og
+       * hovedsedlen beholder den, saa dens total stadig er rapportens total.
+       */
+      return { ...seddel(fra, til, nu, () => true), overtime: seddel(fra, til, nu, (e) => e.overtime) };
+    }
+
+    function seddel(fra, til, nu, medtag) {
       const opgaver = new Map(items('task').map((t) => [t.id, t]));
       const projekter = new Map(items('project').map((p) => [p.id, p]));
       const r = afrunding();
@@ -620,7 +638,7 @@
 
       const raekker = new Map();
       for (const e of entries()) {
-        if (e.startedAt < fra || e.startedAt >= til) continue;
+        if (e.startedAt < fra || e.startedAt >= til || !medtag(e)) continue;
         const d = new Date(e.startedAt * 1000);
         const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const opgave = opgaver.get(e.taskId);

@@ -104,8 +104,11 @@ async function tegnRapport() {
         <div style="flex:1"><div class="meta">Total</div><div class="bigtal">${esc(f(r.total))}</div></div>
         <div style="flex:1"><div class="meta">On projects</div><div class="bigtal">${esc(f(r.onProjects))}</div></div>
         <div style="flex:1"><div class="meta">Ad hoc</div><div class="bigtal">${esc(f(r.adhoc))}</div></div>
+        <div style="flex:1"><div class="meta">Overtime</div><div class="bigtal">${esc(f(r.overtime))}</div></div>
         <div style="flex:1"><div class="meta">Completed</div><div class="bigtal">${r.completed}</div></div>
       </div>
+      ${r.overtime ? `<p class="meta">The ${esc(f(r.overtime))} of overtime is part of the total — it is
+        listed on its own below, because it is registered separately.</p>` : ''}
       <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} expected: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No expected day set'}${esc(forskel(r.total, forrige.total))}</p>
       ${r.norm && r.normTilNu < r.norm ? `<p class="meta">The period is not over. Of the
         ${esc(f(r.norm))} expected, ${esc(f(r.normTilNu))} has fallen due so far —
@@ -153,6 +156,29 @@ async function tegnRapport() {
         per day.${decimal ? ' Hours as decimals — 3,5 is three and a half. They are rounded to two '
     + 'places for display; the minutes behind them are exact, and the totals are added up from those.'
     : ''}</p>` : ''}
+
+    ${ts.overtime.caseRows.length ? `<h2 class="group">Overtime — per case number, per day<span class="group-count">${esc(f(ts.overtime.total))}</span></h2>
+      <div class="tabelrul">
+      <table class="data rapporttabel timeseddel overtidstabel">
+        <tr><th>Case</th><th>Task</th>
+          ${ts.overtime.dage.map((iso) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return `<th class="num">${dagsnavn[d.getDay()]}<span class="meta">${iso.slice(8)}</span></th>`;
+  }).join('')}
+          <th class="num">Total</th></tr>
+        ${ts.overtime.rows.map((raekke) => `<tr>
+          <td>${raekke.case ? sagHtml(raekke.case) : '<span class="meta">—</span>'}</td>
+          <td>${esc(raekke.title)}${raekke.project ? `<span class="meta"> · ${esc(raekke.project)}</span>` : ''}</td>
+          ${ts.overtime.dage.map((iso) => `<td class="num">${raekke.dage[iso] ? esc(f(raekke.dage[iso])) : ''}</td>`).join('')}
+          <td class="num"><strong>${esc(f(raekke.total))}</strong></td>
+        </tr>`).join('')}
+        <tr><td colspan="2"><strong>Total overtime</strong></td>
+          ${ts.overtime.dage.map((iso) => `<td class="num"><strong>${ts.overtime.perDay[iso] ? esc(f(ts.overtime.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(ts.overtime.total))}</strong></td></tr>
+      </table>
+      </div>
+      <p class="meta">Only the entries marked as overtime. They are also in the tables above and
+        below — this is the list to register separately.</p>` : ''}
 
     ${ts.rows.length ? `<h2 class="group">Per day, per task<span class="group-count">${ts.rows.length}</span></h2>
       <div class="tabelrul">
@@ -234,6 +260,15 @@ async function tegnRapport() {
           ['Total', ...ts.dage.map((iso) => excelTimer(ts.perDay[iso])), excelTimer(ts.total)],
         ],
       },
+      ...(ts.overtime.rows.length ? [{
+        navn: 'Overtime',
+        rows: [
+          ['Case', 'Project', 'Task', ...dagsHoved, 'Total (hours)'],
+          ...ts.overtime.rows.map((x) => [x.case || '', x.project || '', x.title,
+            ...ts.dage.map((iso) => excelTimer(x.dage[iso])), excelTimer(x.total)]),
+          ['Total', '', '', ...ts.dage.map((iso) => excelTimer(ts.overtime.perDay[iso])), excelTimer(ts.overtime.total)],
+        ],
+      }] : []),
       {
         navn: 'Per task per day',
         rows: [
@@ -270,7 +305,8 @@ function rapportMarkdown(d) {
   const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
   const r = d.report;
   const linjer = [`# ${d.from} – ${d.to}`, ''];
-  linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`);
+  linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`
+    + `${r.overtime ? ` · ${f(r.overtime)} overtime (included)` : ''}`);
   if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
   linjer.push('');
   const ts = d.timesheet;
@@ -284,6 +320,17 @@ function rapportMarkdown(d) {
         + `${ts.dage.map((iso) => (c.dage[iso] ? f(c.dage[iso]) : '')).join(' | ')} | ${f(c.total)} |`);
     }
     linjer.push(`| **Total** | ${ts.dage.map((iso) => (ts.perDay[iso] ? f(ts.perDay[iso]) : '')).join(' | ')} | **${f(ts.total)}** |`);
+    linjer.push('');
+  }
+  if (ts && ts.overtime.rows.length) {
+    linjer.push('## Overtime — per case number, per day', '');
+    linjer.push(`| Case | Task | ${ts.dage.map((iso) => iso.slice(5)).join(' | ')} | Total |`);
+    linjer.push(`|---|---|${ts.dage.map(() => '--:').join('|')}|--:|`);
+    for (const raekke of ts.overtime.rows) {
+      linjer.push(`| ${raekke.case || '—'} | ${raekke.title} | `
+        + `${ts.dage.map((iso) => (raekke.dage[iso] ? f(raekke.dage[iso]) : '')).join(' | ')} | ${f(raekke.total)} |`);
+    }
+    linjer.push(`| **Total** |  | ${ts.dage.map((iso) => (ts.overtime.perDay[iso] ? f(ts.overtime.perDay[iso]) : '')).join(' | ')} | **${f(ts.overtime.total)}** |`);
     linjer.push('');
   }
   if (ts && ts.rows.length) {
@@ -325,7 +372,7 @@ function rapportArkHtml(d) {
   return `
     <h1>${esc(d.from)} – ${esc(d.to)}</h1>
     <p class="pkunde">${esc(f(r.total))} in total · ${esc(f(r.onProjects))} on projects
-      · ${esc(f(r.adhoc))} ad hoc${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
+      · ${esc(f(r.adhoc))} ad hoc${r.overtime ? ` · ${esc(f(r.overtime))} overtime (included)` : ''}${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
     ${d.timesheet && d.timesheet.caseRows.length ? `<table>
         <thead><tr><th>Case</th>
           ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
@@ -334,6 +381,18 @@ function rapportArkHtml(d) {
           <td>${esc(c.case || '(no case number)')}</td>
           ${d.timesheet.dage.map((iso) => `<td class="num">${c.dage[iso] ? esc(f(c.dage[iso])) : ''}</td>`).join('')}
           <td class="num">${esc(f(c.total))}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
+    ${d.timesheet && d.timesheet.overtime.rows.length ? `<h2>Overtime</h2><table>
+        <thead><tr><th>Case</th><th>Task</th>
+          ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
+          <th class="num">Total</th></tr></thead>
+        <tbody>${d.timesheet.overtime.rows.map((raekke) => `<tr>
+          <td>${esc(raekke.case || '—')}</td><td>${esc(raekke.title)}</td>
+          ${d.timesheet.dage.map((iso) => `<td class="num">${raekke.dage[iso] ? esc(f(raekke.dage[iso])) : ''}</td>`).join('')}
+          <td class="num">${esc(f(raekke.total))}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2"><strong>Total overtime</strong></td>
+          ${d.timesheet.dage.map((iso) => `<td class="num"><strong>${d.timesheet.overtime.perDay[iso] ? esc(f(d.timesheet.overtime.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(d.timesheet.overtime.total))}</strong></td></tr></tfoot>
       </table>` : ''}
     ${d.timesheet && d.timesheet.rows.length ? `<table>
         <thead><tr><th>Case</th><th>Task</th>

@@ -537,10 +537,19 @@
         });
       }
 
+      /* Overtiden er MED i totalen - den er arbejdstid. Den staar her for
+         sig, fordi den registreres paa en saerlig maade i det andet system.
+         Samme afrunding pr. post som alt andet, saa tallet kan genfindes i
+         overtidens timeseddel. */
+      const overtid = entries()
+        .filter((e) => e.overtime && e.startedAt >= fra && e.startedAt < til)
+        .reduce((n, e) => n + afrund(varighed(e, nu), afrunding2), 0);
+
       return {
         fra,
         til,
         total: s.total,
+        overtime: overtid,
         entries: s.entries,
         projects: s.projects,
         cases: [...sager.values()]
@@ -609,6 +618,15 @@
      * forrest, fordi det er noeglen dér.
      */
     function timeseddel(fra, til, nu) {
+      /*
+       * Overtiden faar sin EGEN seddel med samme form. Den skal registreres
+       * for sig i det andet system - pr. sag, pr. dag, ligesom resten - og
+       * hovedsedlen beholder den, saa dens total stadig er rapportens total.
+       */
+      return { ...seddel(fra, til, nu, () => true), overtime: seddel(fra, til, nu, (e) => e.overtime) };
+    }
+
+    function seddel(fra, til, nu, medtag) {
       const opgaver = new Map(items('task').map((t) => [t.id, t]));
       const projekter = new Map(items('project').map((p) => [p.id, p]));
       const r = afrunding();
@@ -621,7 +639,7 @@
 
       const raekker = new Map();
       for (const e of entries()) {
-        if (e.startedAt < fra || e.startedAt >= til) continue;
+        if (e.startedAt < fra || e.startedAt >= til || !medtag(e)) continue;
         const d = new Date(e.startedAt * 1000);
         const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         const opgave = opgaver.get(e.taskId);
@@ -2474,7 +2492,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 38;
+const APP_VERSION = 39;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -6748,6 +6766,10 @@ async function aabnManuel(forvalgtOpgave, opt) {
       </div>
       <label class="field"><span>Note (optional)</span>
         <input class="input" id="mNote" placeholder="What was it?" value="${esc(post ? post.note : '')}"></label>
+      <!-- Overtid registreres for sig i det andet system. Den taeller stadig
+           med i totalen; rapporten viser den ogsaa alene. -->
+      <label class="overtidcheck"><input type="checkbox" id="mOvertime" ${post && post.overtime ? 'checked' : ''}>
+        Overtime — counts in the total, and is also shown on its own in the report</label>
       <div class="modal-foot">
         <button class="btn primary" id="mSave" title="⌘↵ / Ctrl+↵">${post ? 'Save' : 'Log it'}
           <span class="genvejstip">⌘↵</span></button>
@@ -6828,7 +6850,14 @@ async function aabnManuel(forvalgtOpgave, opt) {
         nyTitel.value = '';
         tegnOpgaver(taskId);
       }
-      if (post) {
+      const overtime = document.getElementById('mOvertime').checked;
+      if (post && !post.stoppedAt && !tekst.trim()) {
+        // Et ur, der stadig koerer, har intet tidsrum at skrive - men det
+        // skal kunne markeres som overtid (eller flyttes) undervejs.
+        await api('PATCH', `/api/v1/entries/${post.id}`, {
+          taskId, note: document.getElementById('mNote').value, overtime,
+        });
+      } else if (post) {
         // Tidsrummet tolkes af beregn.js - samme funktion som serveren
         // bruger ved oprettelse. To tolkninger ville vaere to sandheder.
         const tidsrum = tovoBeregn.parseTidsrum(tekst, dato);
@@ -6841,10 +6870,11 @@ async function aabnManuel(forvalgtOpgave, opt) {
           startedAt,
           stoppedAt: startedAt + tidsrum.minutter * 60,
           note: document.getElementById('mNote').value,
+          overtime,
         });
       } else {
         await api('POST', '/api/v1/entries', {
-          taskId, date: dato, text: tekst, note: document.getElementById('mNote').value,
+          taskId, date: dato, text: tekst, note: document.getElementById('mNote').value, overtime,
         });
       }
       luk();
@@ -6864,7 +6894,7 @@ async function aabnManuel(forvalgtOpgave, opt) {
           const p = d.deleted;
           await api('POST', '/api/v1/entries', {
             id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
-            note: p.note, source: p.source,
+            note: p.note, source: p.source, overtime: p.overtime,
           });
           await genindlaes();
         } });
@@ -6954,7 +6984,7 @@ function postRaekke(e, opgaver) {
     <span class="post-tid meta">${esc(kl(fra))}–${til ? esc(kl(til)) : 'now'}</span>
     <span class="post-main">
       <span>${esc(opgave ? opgave.title : 'Deleted task')}</span>
-      <span class="meta">${esc(projekt ? projekt.name : 'no project')} · ${esc(e.source)}${e.note ? ` · ${esc(e.note)}` : ''}</span>
+      <span class="meta">${e.overtime ? '<span class="overtid-maerke">overtime</span> ' : ''}${esc(projekt ? projekt.name : 'no project')} · ${esc(e.source)}${e.note ? ` · ${esc(e.note)}` : ''}</span>
     </span>
     <span class="post-sum">${esc(tovoBeregn.formatVarighed(minutter))}${koerer ? ' …' : ''}</span>
     <button class="linkbtn" data-slet="${esc(e.id)}">delete</button>
@@ -6978,7 +7008,7 @@ function bindPoster(host, opgaver) {
             // fortrydelsen ikke en fortrydelse.
             await api('POST', '/api/v1/entries', {
               id: p.id, taskId: p.taskId, startedAt: p.startedAt, stoppedAt: p.stoppedAt,
-              note: p.note, source: p.source,
+              note: p.note, source: p.source, overtime: p.overtime,
             });
             await genindlaes();
           },
@@ -7569,8 +7599,11 @@ async function tegnRapport() {
         <div style="flex:1"><div class="meta">Total</div><div class="bigtal">${esc(f(r.total))}</div></div>
         <div style="flex:1"><div class="meta">On projects</div><div class="bigtal">${esc(f(r.onProjects))}</div></div>
         <div style="flex:1"><div class="meta">Ad hoc</div><div class="bigtal">${esc(f(r.adhoc))}</div></div>
+        <div style="flex:1"><div class="meta">Overtime</div><div class="bigtal">${esc(f(r.overtime))}</div></div>
         <div style="flex:1"><div class="meta">Completed</div><div class="bigtal">${r.completed}</div></div>
       </div>
+      ${r.overtime ? `<p class="meta">The ${esc(f(r.overtime))} of overtime is part of the total — it is
+        listed on its own below, because it is registered separately.</p>` : ''}
       <p class="meta">${r.norm ? `Against ${esc(f(r.norm))} expected: ${r.overNorm >= 0 ? '+' : '−'}${esc(f(Math.abs(r.overNorm)))}` : 'No expected day set'}${esc(forskel(r.total, forrige.total))}</p>
       ${r.norm && r.normTilNu < r.norm ? `<p class="meta">The period is not over. Of the
         ${esc(f(r.norm))} expected, ${esc(f(r.normTilNu))} has fallen due so far —
@@ -7618,6 +7651,29 @@ async function tegnRapport() {
         per day.${decimal ? ' Hours as decimals — 3,5 is three and a half. They are rounded to two '
     + 'places for display; the minutes behind them are exact, and the totals are added up from those.'
     : ''}</p>` : ''}
+
+    ${ts.overtime.caseRows.length ? `<h2 class="group">Overtime — per case number, per day<span class="group-count">${esc(f(ts.overtime.total))}</span></h2>
+      <div class="tabelrul">
+      <table class="data rapporttabel timeseddel overtidstabel">
+        <tr><th>Case</th><th>Task</th>
+          ${ts.overtime.dage.map((iso) => {
+    const d = new Date(`${iso}T12:00:00`);
+    return `<th class="num">${dagsnavn[d.getDay()]}<span class="meta">${iso.slice(8)}</span></th>`;
+  }).join('')}
+          <th class="num">Total</th></tr>
+        ${ts.overtime.rows.map((raekke) => `<tr>
+          <td>${raekke.case ? sagHtml(raekke.case) : '<span class="meta">—</span>'}</td>
+          <td>${esc(raekke.title)}${raekke.project ? `<span class="meta"> · ${esc(raekke.project)}</span>` : ''}</td>
+          ${ts.overtime.dage.map((iso) => `<td class="num">${raekke.dage[iso] ? esc(f(raekke.dage[iso])) : ''}</td>`).join('')}
+          <td class="num"><strong>${esc(f(raekke.total))}</strong></td>
+        </tr>`).join('')}
+        <tr><td colspan="2"><strong>Total overtime</strong></td>
+          ${ts.overtime.dage.map((iso) => `<td class="num"><strong>${ts.overtime.perDay[iso] ? esc(f(ts.overtime.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(ts.overtime.total))}</strong></td></tr>
+      </table>
+      </div>
+      <p class="meta">Only the entries marked as overtime. They are also in the tables above and
+        below — this is the list to register separately.</p>` : ''}
 
     ${ts.rows.length ? `<h2 class="group">Per day, per task<span class="group-count">${ts.rows.length}</span></h2>
       <div class="tabelrul">
@@ -7699,6 +7755,15 @@ async function tegnRapport() {
           ['Total', ...ts.dage.map((iso) => excelTimer(ts.perDay[iso])), excelTimer(ts.total)],
         ],
       },
+      ...(ts.overtime.rows.length ? [{
+        navn: 'Overtime',
+        rows: [
+          ['Case', 'Project', 'Task', ...dagsHoved, 'Total (hours)'],
+          ...ts.overtime.rows.map((x) => [x.case || '', x.project || '', x.title,
+            ...ts.dage.map((iso) => excelTimer(x.dage[iso])), excelTimer(x.total)]),
+          ['Total', '', '', ...ts.dage.map((iso) => excelTimer(ts.overtime.perDay[iso])), excelTimer(ts.overtime.total)],
+        ],
+      }] : []),
       {
         navn: 'Per task per day',
         rows: [
@@ -7735,7 +7800,8 @@ function rapportMarkdown(d) {
   const f = rapportDecimal() ? tovoBeregn.formatDecimal : tovoBeregn.formatVarighed;
   const r = d.report;
   const linjer = [`# ${d.from} – ${d.to}`, ''];
-  linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`);
+  linjer.push(`**${f(r.total)}** in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`
+    + `${r.overtime ? ` · ${f(r.overtime)} overtime (included)` : ''}`);
   if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
   linjer.push('');
   const ts = d.timesheet;
@@ -7749,6 +7815,17 @@ function rapportMarkdown(d) {
         + `${ts.dage.map((iso) => (c.dage[iso] ? f(c.dage[iso]) : '')).join(' | ')} | ${f(c.total)} |`);
     }
     linjer.push(`| **Total** | ${ts.dage.map((iso) => (ts.perDay[iso] ? f(ts.perDay[iso]) : '')).join(' | ')} | **${f(ts.total)}** |`);
+    linjer.push('');
+  }
+  if (ts && ts.overtime.rows.length) {
+    linjer.push('## Overtime — per case number, per day', '');
+    linjer.push(`| Case | Task | ${ts.dage.map((iso) => iso.slice(5)).join(' | ')} | Total |`);
+    linjer.push(`|---|---|${ts.dage.map(() => '--:').join('|')}|--:|`);
+    for (const raekke of ts.overtime.rows) {
+      linjer.push(`| ${raekke.case || '—'} | ${raekke.title} | `
+        + `${ts.dage.map((iso) => (raekke.dage[iso] ? f(raekke.dage[iso]) : '')).join(' | ')} | ${f(raekke.total)} |`);
+    }
+    linjer.push(`| **Total** |  | ${ts.dage.map((iso) => (ts.overtime.perDay[iso] ? f(ts.overtime.perDay[iso]) : '')).join(' | ')} | **${f(ts.overtime.total)}** |`);
     linjer.push('');
   }
   if (ts && ts.rows.length) {
@@ -7790,7 +7867,7 @@ function rapportArkHtml(d) {
   return `
     <h1>${esc(d.from)} – ${esc(d.to)}</h1>
     <p class="pkunde">${esc(f(r.total))} in total · ${esc(f(r.onProjects))} on projects
-      · ${esc(f(r.adhoc))} ad hoc${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
+      · ${esc(f(r.adhoc))} ad hoc${r.overtime ? ` · ${esc(f(r.overtime))} overtime (included)` : ''}${r.norm ? ` · norm ${esc(f(r.norm))}` : ''}</p>
     ${d.timesheet && d.timesheet.caseRows.length ? `<table>
         <thead><tr><th>Case</th>
           ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
@@ -7799,6 +7876,18 @@ function rapportArkHtml(d) {
           <td>${esc(c.case || '(no case number)')}</td>
           ${d.timesheet.dage.map((iso) => `<td class="num">${c.dage[iso] ? esc(f(c.dage[iso])) : ''}</td>`).join('')}
           <td class="num">${esc(f(c.total))}</td></tr>`).join('')}</tbody>
+      </table>` : ''}
+    ${d.timesheet && d.timesheet.overtime.rows.length ? `<h2>Overtime</h2><table>
+        <thead><tr><th>Case</th><th>Task</th>
+          ${d.timesheet.dage.map((iso) => `<th class="num">${esc(iso.slice(5))}</th>`).join('')}
+          <th class="num">Total</th></tr></thead>
+        <tbody>${d.timesheet.overtime.rows.map((raekke) => `<tr>
+          <td>${esc(raekke.case || '—')}</td><td>${esc(raekke.title)}</td>
+          ${d.timesheet.dage.map((iso) => `<td class="num">${raekke.dage[iso] ? esc(f(raekke.dage[iso])) : ''}</td>`).join('')}
+          <td class="num">${esc(f(raekke.total))}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2"><strong>Total overtime</strong></td>
+          ${d.timesheet.dage.map((iso) => `<td class="num"><strong>${d.timesheet.overtime.perDay[iso] ? esc(f(d.timesheet.overtime.perDay[iso])) : ''}</strong></td>`).join('')}
+          <td class="num"><strong>${esc(f(d.timesheet.overtime.total))}</strong></td></tr></tfoot>
       </table>` : ''}
     ${d.timesheet && d.timesheet.rows.length ? `<table>
         <thead><tr><th>Case</th><th>Task</th>
@@ -7979,10 +8068,10 @@ function blokkeFor(iso, tidligst) {
     const hoejde = (minutter / 60) * KAL_TIME_PX;
     const bredde = 100 / antalSpor;
     const koerer = !e.stoppedAt;
-    return `<button class="kal-blok${koerer ? ' koerer' : ''}" data-post="${esc(e.id)}"
+    return `<button class="kal-blok${koerer ? ' koerer' : ''}${e.overtime ? ' overtid' : ''}" data-post="${esc(e.id)}"
       style="top:${top}px;height:${Math.max(16, hoejde)}px;left:${e._spor * bredde}%;width:${bredde}%">
       <span class="kal-blok-titel">${esc(opgave ? opgave.title : 'Deleted task')}</span>
-      <span class="kal-blok-sub">${esc(projekt ? projekt.name : 'no project')} · ${esc(tovoBeregn.formatVarighed(slutMin - start))}</span>
+      <span class="kal-blok-sub">${e.overtime ? 'Overtime · ' : ''}${esc(projekt ? projekt.name : 'no project')} · ${esc(tovoBeregn.formatVarighed(slutMin - start))}</span>
     </button>`;
   });
 }
@@ -9855,6 +9944,7 @@ function rapportRigTekst(d, decimal) {
   const tekst = [];
   const titel = `${d.from} – ${d.to}`;
   const resume = `${f(r.total)} in total · ${f(r.onProjects)} on projects · ${f(r.adhoc)} ad hoc`
+    + `${r.overtime ? ` · ${f(r.overtime)} overtime (included)` : ''}`
     + `${r.norm ? ` · expected ${f(r.norm)}` : ''}`;
   html.push(mailOverskrift(titel, 1), mailAfsnit(resume));
   tekst.push(titel, resume);
@@ -9871,6 +9961,12 @@ function rapportRigTekst(d, decimal) {
     afsnit('Per case number, per day', ['Case', ...dage, 'Total'],
       ts.caseRows.map((c) => [c.case || '(no case number)', ...dagTal(c.dage), f(c.total)]),
       ['Total', ...dagTal(ts.perDay), f(ts.total)], talFra(1));
+  }
+  if (ts && ts.overtime && ts.overtime.rows.length) {
+    const ot = ts.overtime;
+    afsnit('Overtime — per case number, per day', ['Case', 'Project', 'Task', ...dage, 'Total'],
+      ot.rows.map((x) => [x.case || '', x.project || '', x.title, ...dagTal(x.dage), f(x.total)]),
+      ['Total', '', '', ...dagTal(ot.perDay), f(ot.total)], talFra(3));
   }
   if (ts && ts.rows.length) {
     afsnit('Per day, per task', ['Case', 'Project', 'Task', ...dage, 'Total'],

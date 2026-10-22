@@ -200,6 +200,7 @@ function opret(srv) {
           time: { type: 'string', description: '"9-11.30", "1,5t", "90m" or "1t30m".' },
           date: { type: 'string', description: 'YYYY-MM-DD. Defaults to today.' },
           note: { type: 'string' },
+          overtime: { type: 'boolean', description: 'True if the time was worked as overtime.' },
         },
         required: ['id', 'time'],
       },
@@ -219,10 +220,10 @@ function opret(srv) {
           : srv.beregn.placerVarighed(dagens, dato, tidsrum.minutter);
         const post = srv.gemPost(auth.user.id, {
           taskId: opgave.id, startedAt: plads.startedAt, stoppedAt: plads.stoppedAt,
-          note: String(a.note || ''), source: 'mcp',
+          note: String(a.note || ''), source: 'mcp', overtime: a.overtime === true,
         });
         return {
-          tekst: `Logged ${f(tidsrum.minutter)} on ${dato}: ${opgave.title}`,
+          tekst: `Logged ${f(tidsrum.minutter)}${post.overtime ? ' of overtime' : ''} on ${dato}: ${opgave.title}`,
           data: { entry: post },
         };
       },
@@ -288,12 +289,22 @@ function opret(srv) {
         const linjer = [`${fra} – ${til}: ${f(r.total)} in total`,
           `On projects: ${f(r.onProjects)} · Ad hoc: ${f(r.adhoc)} · Completed: ${r.completed}`];
         if (r.norm) linjer.push(`Against ${f(r.norm)} normal hours: ${r.overNorm >= 0 ? '+' : '−'}${f(Math.abs(r.overNorm))}`);
+        if (r.overtime) linjer.push(`Overtime: ${f(r.overtime)} (included in the total)`);
         // Pr. sag PR. DAG - det er den opgoerelse, timerne skrives af fra.
         const ts = b.timeseddel(srv.dagStart(fra), srv.dagStart(til) + 86400);
         if (ts.caseRows.length) {
           linjer.push('', 'Per case number, per day:');
           for (const c of ts.caseRows) {
             const dage = ts.dage.filter((iso) => c.dage[iso])
+              .map((iso) => `${iso}: ${f(c.dage[iso])}`).join(' · ');
+            linjer.push(`  ${c.case || '(no case number)'} — ${f(c.total)}${dage ? ` (${dage})` : ''}`);
+          }
+        }
+        // Overtiden for sig: den registreres paa en saerlig maade.
+        if (ts.overtime.caseRows.length) {
+          linjer.push('', 'Overtime per case number, per day:');
+          for (const c of ts.overtime.caseRows) {
+            const dage = ts.overtime.dage.filter((iso) => c.dage[iso])
               .map((iso) => `${iso}: ${f(c.dage[iso])}`).join(' · ');
             linjer.push(`  ${c.case || '(no case number)'} — ${f(c.total)}${dage ? ` (${dage})` : ''}`);
           }

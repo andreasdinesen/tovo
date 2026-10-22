@@ -268,6 +268,19 @@ const MIGRATIONS = [
       CREATE INDEX ix_recovery_bruger ON recovery_codes(user_id) WHERE used_at IS NULL;
     `);
   },
+
+  function m5(d) {
+    /*
+     * Overtid paa en tidspost (v39).
+     *
+     * Overtid registreres paa en SAERLIG maade i det andet system, saa den
+     * skal kunne ses for sig selv - men den er stadig arbejdstid og taeller
+     * med i totalen. Derfor et flag paa posten og ikke en kilde: kilden
+     * siger, HVORDAN tiden kom ind (timer, manuel ...), flaget siger, HVAD
+     * den er. En timer-post kan sagtens vaere overtid.
+     */
+    d.exec('ALTER TABLE time_entries ADD COLUMN overtime INTEGER NOT NULL DEFAULT 0');
+  },
 ];
 
 function migrate() {
@@ -1395,6 +1408,7 @@ function pakPost(row) {
     stoppedAt: row.stopped_at,
     note: row.note || '',
     source: row.source,
+    overtime: !!row.overtime,
   };
 }
 
@@ -1479,13 +1493,13 @@ function gemPost(userId, felter) {
   if (eksisterende && eksisterende.user_id !== userId) {
     throw Object.assign(new Error('no such entry'), { status: 404 });
   }
-  db.prepare(`INSERT INTO time_entries (id, user_id, task_id, started_at, stopped_at, note, source)
-              VALUES (?,?,?,?,?,?,?)
+  db.prepare(`INSERT INTO time_entries (id, user_id, task_id, started_at, stopped_at, note, source, overtime)
+              VALUES (?,?,?,?,?,?,?,?)
               ON CONFLICT(id) DO UPDATE SET task_id = excluded.task_id,
                 started_at = excluded.started_at, stopped_at = excluded.stopped_at,
-                note = excluded.note`)
+                note = excluded.note, overtime = excluded.overtime`)
     .run(id, userId, taskId, start, stop, str(felter.note, 500),
-      KILDER.has(felter.source) ? felter.source : 'manuel');
+      KILDER.has(felter.source) ? felter.source : 'manuel', felter.overtime === true ? 1 : 0);
   live.varsko(userId);
   return hentPost(userId, id);
 }
@@ -3374,6 +3388,9 @@ const ROUTES = {
         startedAt: plads.startedAt,
         stoppedAt: plads.stoppedAt,
         note: body.note,
+        // Med i fortrydelsen ogsaa: en slettet overtidspost skal komme
+        // tilbage som overtid, ellers forsvinder den tavst fra opgoerelsen.
+        overtime: body.overtime === true,
         source: auth.viaToken ? 'mcp' : (KILDER.has(body.source) ? body.source : 'manuel'),
       }),
     });
@@ -3785,6 +3802,7 @@ const MOENSTRE = [
           startedAt: body.startedAt !== undefined ? body.startedAt : post.startedAt,
           stoppedAt: body.stoppedAt !== undefined ? body.stoppedAt : post.stoppedAt,
           note: body.note !== undefined ? body.note : post.note,
+          overtime: typeof body.overtime === 'boolean' ? body.overtime : post.overtime,
           source: post.source,
         }),
       });

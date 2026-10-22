@@ -154,10 +154,10 @@ function blokkeFor(iso, tidligst) {
     const hoejde = (minutter / 60) * KAL_TIME_PX;
     const bredde = 100 / antalSpor;
     const koerer = !e.stoppedAt;
-    return `<button class="kal-blok${koerer ? ' koerer' : ''}" data-post="${esc(e.id)}"
+    return `<button class="kal-blok${koerer ? ' koerer' : ''}${e.overtime ? ' overtid' : ''}" data-post="${esc(e.id)}"
       style="top:${top}px;height:${Math.max(16, hoejde)}px;left:${e._spor * bredde}%;width:${bredde}%">
       <span class="kal-blok-titel">${esc(opgave ? opgave.title : 'Deleted task')}</span>
-      <span class="kal-blok-sub">${esc(projekt ? projekt.name : 'no project')} · ${esc(tovoBeregn.formatVarighed(slutMin - start))}</span>
+      <span class="kal-blok-sub">${e.overtime ? 'Overtime · ' : ''}${esc(projekt ? projekt.name : 'no project')} · ${esc(tovoBeregn.formatVarighed(slutMin - start))}</span>
     </button>`;
   });
 }
