@@ -2294,6 +2294,7 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 .snsum strong { font-size: 16px; }
 .snmangler { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
 .snmangler ul { max-height: 220px; overflow-y: auto; margin: 8px 0; }
+#snVaelgAlle { margin: 2px 0 4px; padding: 6px 12px; font-size: 13px; }
 /* Afkrydsningen er et VALG. Rammen goer hele linjen klikbar, saa man ikke
    skal ramme en 13 px firkant for at lukke en sag. */
 .snvalg { display: flex; gap: 9px; align-items: flex-start; padding: 5px 2px; cursor: pointer; }

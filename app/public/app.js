@@ -2571,7 +2571,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 41;
+const APP_VERSION = 42;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -9636,6 +9636,7 @@ async function snForhaandsvis(fil) {
       <button class="btn primary" id="snGo">Import</button>`;
     document.getElementById('snClose2').addEventListener('click', () => document.getElementById('snModal').remove());
     document.getElementById('snGo').addEventListener('click', snUdfoer);
+    bindVaelgAlle();
   } catch (ex) {
     krop.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
   }
@@ -9695,6 +9696,7 @@ function snForsvundneHtml(forsvundne) {
     <p class="meta"><strong>${forsvundne.length}</strong>
       ${forsvundne.length === 1 ? 'task with a ServiceNow number is' : 'tasks with a ServiceNow number are'}
       not in this file — probably resolved in ServiceNow. Tick the ones to close here:</p>
+    ${forsvundne.length > 1 ? '<button class="btn" id="snVaelgAlle" type="button">Select all</button>' : ''}
     <ul class="plain">
       ${forsvundne.map((t) => `<li><label class="snvalg">
         <input type="checkbox" data-luk="${esc(t.id)}">
@@ -9704,6 +9706,26 @@ function snForsvundneHtml(forsvundne) {
     </ul>
     <p class="meta">Nothing is closed unless you tick it. Your logged time stays either way.</p>
   </div>`;
+}
+
+/*
+ * »Select all« er et VALG, man tager med ét klik - ikke en standard. Listen
+ * starter stadig tom; knappen sparer kun femten klik, naar man har set den
+ * igennem. Den skifter til »Clear all«, naar alt er krydset af, ogsaa naar
+ * det er sket ét flueben ad gangen.
+ */
+function bindVaelgAlle() {
+  const knap = document.getElementById('snVaelgAlle');
+  if (!knap) return;
+  const bokse = [...document.querySelectorAll('[data-luk]')];
+  const alleValgt = () => bokse.every((b) => b.checked);
+  const tegn = () => { knap.textContent = alleValgt() ? 'Clear all' : 'Select all'; };
+  knap.addEventListener('click', () => {
+    const til = !alleValgt();
+    for (const b of bokse) b.checked = til;
+    tegn();
+  });
+  for (const b of bokse) b.addEventListener('change', tegn);
 }
 
 async function snUdfoer() {

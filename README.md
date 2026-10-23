@@ -113,6 +113,12 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v42 — vælg alle sager, der skal lukkes
+
+- ServiceNow-ruden har fået en **Select all**-knap over listen med sager, der ikke er i
+  filen. Den skifter til **Clear all**, når alle er krydset af — også når det er sket ét
+  flueben ad gangen. Listen starter stadig tom; intet lukkes, uden at du har valgt det.
+
 ### v41 — dubletter fra ServiceNow flettes sammen
 
 - Findes en sag både som din egen opgave (nummeret i *Case number*) og som den importerede,
