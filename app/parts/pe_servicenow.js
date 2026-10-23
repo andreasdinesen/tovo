@@ -80,6 +80,7 @@ async function snForhaandsvis(fil) {
       ${eksport.advarsler.length ? `<p class="meta warnline">${
     eksport.advarsler.map(esc).join('<br>')}</p>` : ''}
       ${snKobledeHtml(koblede)}
+      ${snDubletterHtml(sam.dubletter)}
       ${snForsvundneHtml(sam.forsvundne)}`;
 
     document.getElementById('snFod').innerHTML = `
@@ -107,6 +108,25 @@ function snKobledeHtml(koblede) {
     <ul class="plain">
       ${koblede.map((o) => `<li><code>${esc(o.number)}</code> ${esc(o.task.title)}${
     o.aendringer.includes('title') ? ` <span class="meta">→ ${esc(o.felter.title)}</span>` : ''}</li>`).join('')}
+    </ul>
+  </div>`;
+}
+
+/**
+ * Dubletter (v41): en sag, der findes BAADE som din egen opgave og som den
+ * importerede. Den egne flettes ind i den importerede - timerne flyttes med,
+ * og start-links i OneNote peger derefter paa den importerede.
+ */
+function snDubletterHtml(dubletter) {
+  if (!dubletter.length) return '';
+  return `<div class="snmangler">
+    <p class="meta"><strong>${dubletter.length}</strong>
+      ${dubletter.length === 1 ? 'task you made is a duplicate' : 'tasks you made are duplicates'}
+      of a case in this file. ${dubletter.length === 1 ? 'It is' : 'They are'} merged into it —
+      the logged time and start links move over, and the duplicate is removed:</p>
+    <ul class="plain">
+      ${dubletter.map((d) => `<li><code>${esc(d.number)}</code> ${esc(d.title)}
+        <span class="meta">→ ${esc(d.intoTitle)}</span></li>`).join('')}
     </ul>
   </div>`;
 }
@@ -200,12 +220,28 @@ async function snUdfoer() {
       if (f) f.textContent = `Saving… ${gemt} of ${alle.length}`;
     }
 
+    /*
+     * 3. Dubletterne flettes - EFTER gemningen, saa en opgave, der netop blev
+     * koblet, staar med sit snNumber, foer der flettes ind i den. Serveren
+     * flytter timer, start-links, kommentarer og underopgaver i én transaktion.
+     */
+    let flyttet = 0;
+    for (const d of sam.dubletter) {
+      const f = document.getElementById('snFremdrift');
+      if (f) f.textContent = `Merging duplicates… ${d.number}`;
+      flyttet += (await api('POST', `/api/v1/tasks/${d.id}/merge`, { into: d.into })).movedEntries;
+    }
+
     document.getElementById('snModal').remove();
     await genindlaes();
     const antalKoblet = sam.opdaterede.filter((o) => o.koblet).length;
     const dele = [`${sam.nye.length} new`, `${sam.opdaterede.length - antalKoblet} updated`];
     if (antalKoblet) dele.push(`${antalKoblet} linked`);
     if (luk.length) dele.push(`${luk.length} closed`);
+    if (sam.dubletter.length) {
+      dele.push(`${sam.dubletter.length} ${sam.dubletter.length === 1 ? 'duplicate' : 'duplicates'} merged`
+        + ` (${flyttet} ${flyttet === 1 ? 'entry' : 'entries'} moved)`);
+    }
     toast(dele.join(', ') + '.');
   } catch (ex) {
     fod.innerHTML = `<button class="btn" id="snClose3">Close</button>`;

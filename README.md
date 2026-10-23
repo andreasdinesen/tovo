@@ -113,6 +113,17 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v41 — dubletter fra ServiceNow flettes sammen
+
+- Findes en sag både som din egen opgave (nummeret i *Case number*) og som den importerede,
+  fletter importen din egen ind i den importerede og fjerner den. Timer (også overtid),
+  start-links, kommentarer og underopgaver flyttes med — et start-link i OneNote starter nu
+  uret på den importerede opgave.
+- Estimat, note, links og stjerne følger med, hvor den importerede intet har; to noter
+  lægges sammen. Titel, kunde og status er ServiceNows.
+- Ruden viser dubletterne før import, og beskeden bagefter siger, hvor mange poster der
+  blev flyttet. Det sker i én transaktion på serveren (`POST /api/v1/tasks/:id/merge`).
+
 ### v40 — ServiceNow-importen kender dine egne opgaver
 
 - En opgave, du selv har lavet med ServiceNow-nummeret i *Case number*, bliver nu

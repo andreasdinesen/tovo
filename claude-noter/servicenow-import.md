@@ -33,6 +33,13 @@ med linjeskift ikke knækker filen.
   gælder opgaver, der allerede HAR et `snNumber`. En kobling gemmes også uden ændrede felter
   (ellers får den aldrig `snNumber`). Flere med samme nummer: en åben før en afsluttet.
   Ruden viser koblingerne og en titel, der skifter.
+- **Dubletter flettes** (v41): en håndlavet opgave (uden `snNumber`), hvis nummer i filen
+  hører til en ANDEN opgave — en importeret eller den, der netop blev koblet — flettes ind
+  i den efter gemningen via `POST /api/v1/tasks/:id/merge {into}` (`fletOpgave` i
+  server.js). Én transaktion flytter tidsposter, start-links (OneNote-links virker videre),
+  kommentarer og underopgaver; estimat/note/links/stjerne tages med, hvor målet intet har
+  (noter lægges sammen); dubletten blødt-slettes. Ruden viser dem, men spørger ikke —
+  Andreas bad om det som fast adfærd (2026-10-23).
 - Beskrivelsen skrives kun ved **oprettelsen** — ellers overskriver en genimport din egen note.
 
 

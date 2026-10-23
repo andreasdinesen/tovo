@@ -228,15 +228,27 @@
      * rettet). En opgave uden snNumber har kun sagsnummeret at blive kendt paa.
      *
      * Flere haandlavede med samme nummer: en aaben foer en afsluttet - det er
-     * den, man arbejder paa. De andre roeres ikke.
+     * den, man arbejder paa. De andre bliver DUBLETTER (herunder).
      */
     const haandlavede = new Map();
     for (const t of eksisterende || []) {
       if (t.snNumber || !t.caseNumber) continue;
       const nr = String(t.caseNumber).trim().toUpperCase();
-      const foer = haandlavede.get(nr);
-      if (!foer || (foer.status === 'done' && t.status !== 'done')) haandlavede.set(nr, t);
+      if (!haandlavede.has(nr)) haandlavede.set(nr, []);
+      haandlavede.get(nr).push(t);
     }
+    for (const liste of haandlavede.values()) {
+      liste.sort((a, b) => (a.status === 'done') - (b.status === 'done'));
+    }
+
+    /*
+     * DUBLETTER (v41): haandlavede opgaver med et nummer, der i filen hoerer
+     * til en ANDEN opgave - en importeret, eller den haandlavede, der netop
+     * blev koblet. De flettes ind i den: timerne flyttes, og dubletten
+     * forsvinder. Saadan en opstod, naar sagen var lavet i haanden og senere
+     * importeret (foer v40 kendte importen den ikke).
+     */
+    const dubletter = [];
 
     const nye = [];
     const opdaterede = [];
@@ -253,10 +265,14 @@
       };
       let findes = kendte.get(s.number);
       let koblet = false;
-      if (!findes) {
-        const nr = String(s.number).trim().toUpperCase();
-        findes = haandlavede.get(nr);
-        if (findes) { koblet = true; haandlavede.delete(nr); }
+      const nr = String(s.number).trim().toUpperCase();
+      const egne = haandlavede.get(nr) || [];
+      haandlavede.delete(nr);
+      if (!findes && egne.length) { findes = egne.shift(); koblet = true; }
+      if (findes) {
+        for (const d of egne) {
+          dubletter.push({ id: d.id, number: s.number, title: d.title, task: d, into: findes.id, intoTitle: s.title });
+        }
       }
       if (!findes) {
         nye.push({ number: s.number, felter, note: s.note, kilde: s });
@@ -322,6 +338,7 @@
       opdaterede,
       uaendrede,
       forsvundne,
+      dubletter,
       projekter: projekter.filter((p) => p.ny),
       tags: maerkater.filter((t) => t.ny),
     };

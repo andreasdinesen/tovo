@@ -1055,6 +1055,67 @@ function sletItem(userId, id) {
 }
 
 /**
+ * FLETNING: opgaven `fraId` lægges ind i `tilId` og forsvinder (v41).
+ *
+ * Til den dublet, der opstod, naar en sag var lavet i haanden OG senere blev
+ * importeret fra ServiceNow. Alt, der PEGER paa den gamle opgave, flyttes:
+ *
+ *   - tidsposterne (det er hele pointen - timerne maa ikke forsvinde),
+ *   - start-linkene, saa et link i OneNote stadig starter et ur - nu paa den
+ *     nye opgave - i stedet for at doe med den gamle,
+ *   - kommentarer og underopgaver.
+ *
+ * Tovos EGNE felter (estimat, note, links, stjerne) tages med, hvor den nye
+ * intet har; noter lægges sammen, saa ingen af dem kastes vaek. Felter, som
+ * importen ejer (titel, projekt, status ...), er den nyes.
+ *
+ * Én transaktion: enten er alt flyttet og den gamle slettet, eller intet er
+ * sket. Halvt flyttede timer paa en slettet opgave ville vaere vaerre end
+ * dubletten.
+ */
+function fletOpgave(userId, fraId, tilId) {
+  const fra = hentItem(userId, fraId);
+  const til = hentItem(userId, tilId);
+  if (!fra || fra.kind !== 'task' || !til || til.kind !== 'task') {
+    throw Object.assign(new Error('no such task'), { status: 404 });
+  }
+  if (fra.id === til.id) throw Object.assign(new Error('a task cannot be merged into itself'), { status: 400 });
+
+  const ny = Object.assign({}, til);
+  if (!ny.estimateMinutes && fra.estimateMinutes) ny.estimateMinutes = fra.estimateMinutes;
+  if (fra.note && fra.note !== ny.note) ny.note = ny.note ? `${ny.note}\n\n${fra.note}` : fra.note;
+  if (Array.isArray(fra.links) && fra.links.length) {
+    const kendte = new Set((ny.links || []).map((l) => l.url));
+    ny.links = [...(ny.links || []), ...fra.links.filter((l) => !kendte.has(l.url))];
+  }
+  if (fra.starred && !ny.starred) { ny.starred = true; ny.starredSeq = fra.starredSeq; }
+
+  db.exec('BEGIN IMMEDIATE');
+  let poster;
+  try {
+    poster = db.prepare('UPDATE time_entries SET task_id = ? WHERE task_id = ? AND user_id = ?')
+      .run(til.id, fra.id, userId).changes;
+    db.prepare('UPDATE start_tokens SET task_id = ? WHERE task_id = ? AND user_id = ?')
+      .run(til.id, fra.id, userId);
+    for (const k of hentItems(userId, { kind: 'comment' }).filter((c) => c.taskId === fra.id)) {
+      gemItem(userId, Object.assign({}, k, { taskId: til.id }));
+    }
+    for (const u of hentItems(userId, { kind: 'task' }).filter((t) => t.parentTaskId === fra.id)) {
+      gemItem(userId, Object.assign({}, u, { parentTaskId: til.id }));
+    }
+    gemItem(userId, ny);
+    gemItem(userId, Object.assign({}, fra, { deletedAt: now() }));
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+  audit('opgave-flettet', til.id, fra.id);
+  live.varsko(userId);
+  return { item: hentItem(userId, til.id), movedEntries: poster };
+}
+
+/**
  * Opgavens SAGSNUMMER.
  *
  * Staar der intet paa opgaven, gaelder projektets. Ét projekt er tit én sag,
@@ -3680,6 +3741,16 @@ const MOENSTRE = [
       const item = hentItem(auth.user.id, ctx.params[0]);
       if (!item || item.kind !== 'task') { apiFejl(res, 404, 'not_found', 'No such task.'); return; }
       sendJson(res, 200, { item: saetStjerne(auth.user.id, item, body.starred !== false) });
+    },
+  },
+  {
+    // Flet denne opgave ind i en anden: timer og links flyttes, og den slettes.
+    metode: 'POST', re: /^\/api\/v1\/tasks\/([0-9a-f-]{8,64})\/merge$/,
+    kald: async (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const body = await readJsonBody(req, auth.viaToken);
+      sendJson(res, 200, fletOpgave(auth.user.id, ctx.params[0], str(body.into, 64)));
     },
   },
   {

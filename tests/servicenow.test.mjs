@@ -266,7 +266,19 @@ test('en kobling gemmes, ogsaa naar intet andet felt er aendret', () => {
   assert.deepEqual(ud.opdaterede[0].aendringer, []);
 });
 
-test('flere haandlavede med samme nummer: den aabne kobles, resten roeres ikke', () => {
+test('en egen opgave, der ogsaa findes IMPORTERET, er en dublet - den flettes ind', () => {
+  const r = laes(csv(raekke()));
+  const { f, projekter, tags } = foersteImport(csv(raekke()));
+  const importeret = somOprettet(f.nye, projekter, tags)[0];
+  const egen = { id: 'egen', title: 'Lavet i haanden', status: 'open', caseNumber: 'sag-inc0000001' };
+  const ud = sn.sammenlign(r.opgaver, [importeret, egen], { projects: projekter, tags });
+  assert.equal(ud.nye.length, 0);
+  assert.deepEqual(ud.dubletter.map((d) => [d.id, d.into]), [['egen', importeret.id]]);
+  assert.ok(!ud.opdaterede.some((o) => o.id === 'egen'), 'dubletten maa ikke OGSAA kobles');
+  assert.deepEqual(ud.forsvundne, []);
+});
+
+test('flere egne med samme nummer: én kobles, resten flettes ind i den', () => {
   const r = laes(csv(raekke()));
   const egne = [
     { id: 'gammel', title: 'Lukket', status: 'done', caseNumber: 'SAG-INC0000001' },
@@ -274,7 +286,13 @@ test('flere haandlavede med samme nummer: den aabne kobles, resten roeres ikke',
   ];
   const ud = sn.sammenlign(r.opgaver, egne, { projects: [], tags: [] });
   assert.deepEqual(ud.opdaterede.map((o) => o.id), ['aaben']);
-  assert.equal(ud.nye.length, 0);
+  assert.deepEqual(ud.dubletter.map((d) => [d.id, d.into]), [['gammel', 'aaben']]);
+});
+
+test('en egen opgave, hvis nummer IKKE er i filen, er ingen dublet', () => {
+  const r = laes(csv(raekke()));
+  const egne = [{ id: 'h', title: 'x', status: 'open', caseNumber: 'SAG-INC0000005' }];
+  assert.deepEqual(sn.sammenlign(r.opgaver, egne, { projects: [], tags: [] }).dubletter, []);
 });
 
 test('nummerForm kender et ServiceNow-nummer fra et sagsnummer', () => {

@@ -2101,15 +2101,27 @@
      * rettet). En opgave uden snNumber har kun sagsnummeret at blive kendt paa.
      *
      * Flere haandlavede med samme nummer: en aaben foer en afsluttet - det er
-     * den, man arbejder paa. De andre roeres ikke.
+     * den, man arbejder paa. De andre bliver DUBLETTER (herunder).
      */
     const haandlavede = new Map();
     for (const t of eksisterende || []) {
       if (t.snNumber || !t.caseNumber) continue;
       const nr = String(t.caseNumber).trim().toUpperCase();
-      const foer = haandlavede.get(nr);
-      if (!foer || (foer.status === 'done' && t.status !== 'done')) haandlavede.set(nr, t);
+      if (!haandlavede.has(nr)) haandlavede.set(nr, []);
+      haandlavede.get(nr).push(t);
     }
+    for (const liste of haandlavede.values()) {
+      liste.sort((a, b) => (a.status === 'done') - (b.status === 'done'));
+    }
+
+    /*
+     * DUBLETTER (v41): haandlavede opgaver med et nummer, der i filen hoerer
+     * til en ANDEN opgave - en importeret, eller den haandlavede, der netop
+     * blev koblet. De flettes ind i den: timerne flyttes, og dubletten
+     * forsvinder. Saadan en opstod, naar sagen var lavet i haanden og senere
+     * importeret (foer v40 kendte importen den ikke).
+     */
+    const dubletter = [];
 
     const nye = [];
     const opdaterede = [];
@@ -2126,10 +2138,14 @@
       };
       let findes = kendte.get(s.number);
       let koblet = false;
-      if (!findes) {
-        const nr = String(s.number).trim().toUpperCase();
-        findes = haandlavede.get(nr);
-        if (findes) { koblet = true; haandlavede.delete(nr); }
+      const nr = String(s.number).trim().toUpperCase();
+      const egne = haandlavede.get(nr) || [];
+      haandlavede.delete(nr);
+      if (!findes && egne.length) { findes = egne.shift(); koblet = true; }
+      if (findes) {
+        for (const d of egne) {
+          dubletter.push({ id: d.id, number: s.number, title: d.title, task: d, into: findes.id, intoTitle: s.title });
+        }
       }
       if (!findes) {
         nye.push({ number: s.number, felter, note: s.note, kilde: s });
@@ -2195,6 +2211,7 @@
       opdaterede,
       uaendrede,
       forsvundne,
+      dubletter,
       projekter: projekter.filter((p) => p.ny),
       tags: maerkater.filter((t) => t.ny),
     };
@@ -2554,7 +2571,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 40;
+const APP_VERSION = 41;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -9610,6 +9627,7 @@ async function snForhaandsvis(fil) {
       ${eksport.advarsler.length ? `<p class="meta warnline">${
     eksport.advarsler.map(esc).join('<br>')}</p>` : ''}
       ${snKobledeHtml(koblede)}
+      ${snDubletterHtml(sam.dubletter)}
       ${snForsvundneHtml(sam.forsvundne)}`;
 
     document.getElementById('snFod').innerHTML = `
@@ -9637,6 +9655,25 @@ function snKobledeHtml(koblede) {
     <ul class="plain">
       ${koblede.map((o) => `<li><code>${esc(o.number)}</code> ${esc(o.task.title)}${
     o.aendringer.includes('title') ? ` <span class="meta">→ ${esc(o.felter.title)}</span>` : ''}</li>`).join('')}
+    </ul>
+  </div>`;
+}
+
+/**
+ * Dubletter (v41): en sag, der findes BAADE som din egen opgave og som den
+ * importerede. Den egne flettes ind i den importerede - timerne flyttes med,
+ * og start-links i OneNote peger derefter paa den importerede.
+ */
+function snDubletterHtml(dubletter) {
+  if (!dubletter.length) return '';
+  return `<div class="snmangler">
+    <p class="meta"><strong>${dubletter.length}</strong>
+      ${dubletter.length === 1 ? 'task you made is a duplicate' : 'tasks you made are duplicates'}
+      of a case in this file. ${dubletter.length === 1 ? 'It is' : 'They are'} merged into it —
+      the logged time and start links move over, and the duplicate is removed:</p>
+    <ul class="plain">
+      ${dubletter.map((d) => `<li><code>${esc(d.number)}</code> ${esc(d.title)}
+        <span class="meta">→ ${esc(d.intoTitle)}</span></li>`).join('')}
     </ul>
   </div>`;
 }
@@ -9730,12 +9767,28 @@ async function snUdfoer() {
       if (f) f.textContent = `Saving… ${gemt} of ${alle.length}`;
     }
 
+    /*
+     * 3. Dubletterne flettes - EFTER gemningen, saa en opgave, der netop blev
+     * koblet, staar med sit snNumber, foer der flettes ind i den. Serveren
+     * flytter timer, start-links, kommentarer og underopgaver i én transaktion.
+     */
+    let flyttet = 0;
+    for (const d of sam.dubletter) {
+      const f = document.getElementById('snFremdrift');
+      if (f) f.textContent = `Merging duplicates… ${d.number}`;
+      flyttet += (await api('POST', `/api/v1/tasks/${d.id}/merge`, { into: d.into })).movedEntries;
+    }
+
     document.getElementById('snModal').remove();
     await genindlaes();
     const antalKoblet = sam.opdaterede.filter((o) => o.koblet).length;
     const dele = [`${sam.nye.length} new`, `${sam.opdaterede.length - antalKoblet} updated`];
     if (antalKoblet) dele.push(`${antalKoblet} linked`);
     if (luk.length) dele.push(`${luk.length} closed`);
+    if (sam.dubletter.length) {
+      dele.push(`${sam.dubletter.length} ${sam.dubletter.length === 1 ? 'duplicate' : 'duplicates'} merged`
+        + ` (${flyttet} ${flyttet === 1 ? 'entry' : 'entries'} moved)`);
+    }
     toast(dele.join(', ') + '.');
   } catch (ex) {
     fod.innerHTML = `<button class="btn" id="snClose3">Close</button>`;
