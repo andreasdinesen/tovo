@@ -2056,6 +2056,16 @@
    * @param opt.projects eksisterende projekter [{id, name}]
    * @param opt.tags     eksisterende maerkater [{id, name}]
    */
+  /**
+   * Et ServiceNow-nummers FORM: bogstaverne foran de afsluttende cifre
+   * (`INC0012345` -> `INC`). null, hvis det ikke ligner et - bogstav lige foer
+   * mindst fire cifre, saa `SAG-1234` ikke tager fejl af en sag.
+   */
+  function nummerForm(nr) {
+    const m = /^(.*[A-Z])\d{4,}$/.exec(String(nr || '').trim().toUpperCase());
+    return m ? m[1] : null;
+  }
+
   function sammenlign(sn, eksisterende, opt) {
     const o = opt || {};
     const kendte = new Map((eksisterende || []).filter((t) => t.snNumber).map((t) => [t.snNumber, t]));
@@ -2080,6 +2090,27 @@
       return ny.id;
     };
 
+    /*
+     * HAANDLAVEDE opgaver med sagens nummer i Case number (v40).
+     *
+     * Er sagen oprettet i tovo, foer den kom i en eksport, kendes den ikke paa
+     * snNumber - og saa oprettede importen den en gang til. Nu KOBLES den i
+     * stedet: den faar snNumber og er derefter importens som alle andre. Det
+     * bryder ikke reglen om aldrig at matche paa caseNumber: den gaelder
+     * opgaver, der ALLEREDE har et snNumber (og hvis sagsnummer kan vaere
+     * rettet). En opgave uden snNumber har kun sagsnummeret at blive kendt paa.
+     *
+     * Flere haandlavede med samme nummer: en aaben foer en afsluttet - det er
+     * den, man arbejder paa. De andre roeres ikke.
+     */
+    const haandlavede = new Map();
+    for (const t of eksisterende || []) {
+      if (t.snNumber || !t.caseNumber) continue;
+      const nr = String(t.caseNumber).trim().toUpperCase();
+      const foer = haandlavede.get(nr);
+      if (!foer || (foer.status === 'done' && t.status !== 'done')) haandlavede.set(nr, t);
+    }
+
     const nye = [];
     const opdaterede = [];
     const uaendrede = [];
@@ -2093,7 +2124,13 @@
         status: s.lukket ? 'done' : 'open',
         tagIds: [tagId(s.subcategory)].filter(Boolean),
       };
-      const findes = kendte.get(s.number);
+      let findes = kendte.get(s.number);
+      let koblet = false;
+      if (!findes) {
+        const nr = String(s.number).trim().toUpperCase();
+        findes = haandlavede.get(nr);
+        if (findes) { koblet = true; haandlavede.delete(nr); }
+      }
       if (!findes) {
         nye.push({ number: s.number, felter, note: s.note, kilde: s });
         continue;
@@ -2107,7 +2144,11 @@
         const efter = felt === 'tagIds' ? (felter.tagIds || []).join(',') : (felter[felt] == null ? '' : felter[felt]);
         if (String(foer) !== String(efter)) aendringer.push(felt);
       }
-      if (aendringer.length) opdaterede.push({ id: findes.id, number: s.number, felter, aendringer, kilde: s, task: findes });
+      // En kobling skal GEMMES, ogsaa uden aendrede felter - ellers faar
+      // opgaven aldrig sit snNumber, og spoergsmaalet kommer igen hver gang.
+      if (aendringer.length || koblet) {
+        opdaterede.push({ id: findes.id, number: s.number, felter, aendringer, kilde: s, task: findes, koblet });
+      }
       else uaendrede.push({ id: findes.id, number: s.number });
     }
 
@@ -2126,6 +2167,27 @@
       if (iFilen.has(number)) continue;
       if (t.status === 'done') continue;          // allerede lukket - ikke et spoergsmaal
       forsvundne.push({ id: t.id, number, title: t.title, task: t });
+    }
+
+    /*
+     * HAANDLAVEDE opgaver med et ServiceNow-nummer i sagsnummeret (v40).
+     *
+     * Mange sager er oprettet i tovo, foer de kom i en eksport - med nummeret
+     * skrevet i Case number. Uden snNumber er de ikke importens, saa de blev
+     * aldrig naevnt, og en loest sag blev staaende aaben. Nu SPOERGES der ogsaa
+     * om dem - stadig kun spoerges; intet lukkes af sig selv.
+     *
+     * Kun numre med SAMME FORM som filens (INC + cifre, CS + cifre ...). Et
+     * sagsnummer fra et andet system - `SAG-1234` - har ingen grund til at
+     * staa i en ServiceNow-eksport, og at det mangler dér, siger intet.
+     */
+    const former = new Set(sn.map((s) => nummerForm(s.number)).filter(Boolean));
+    const iFilenNorm = new Set(sn.map((s) => String(s.number).trim().toUpperCase()));
+    for (const t of eksisterende || []) {
+      if (t.snNumber || t.status === 'done' || !t.caseNumber) continue;
+      const nr = String(t.caseNumber).trim().toUpperCase();
+      if (!former.has(nummerForm(nr)) || iFilenNorm.has(nr)) continue;
+      forsvundne.push({ id: t.id, number: nr, title: t.title, task: t, haandlavet: true });
     }
 
     return {
@@ -2178,7 +2240,7 @@
     });
   }
 
-  return { KOLONNER, FLETTEFELTER, LUKKEDE, kolonneKort, laesDato, afHtml, laesEksport, sammenlign, flet, luk };
+  return { KOLONNER, FLETTEFELTER, LUKKEDE, kolonneKort, laesDato, afHtml, laesEksport, nummerForm, sammenlign, flet, luk };
 }));
 
 /* ---- shared/toggl.js ---- */
@@ -2492,7 +2554,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 39;
+const APP_VERSION = 40;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -9531,11 +9593,14 @@ async function snForhaandsvis(fil) {
     });
     snState.data = { eksport, sam };
 
+    const koblede = sam.opdaterede.filter((o) => o.koblet);
     const linje = (n, etiket) => (n ? `<li><strong>${n}</strong> ${esc(etiket)}</li>` : '');
     krop.innerHTML = `
       <ul class="plain snsum">
         ${linje(sam.nye.length, sam.nye.length === 1 ? 'new task' : 'new tasks')}
-        ${linje(sam.opdaterede.length, 'updated')}
+        ${linje(sam.opdaterede.filter((o) => !o.koblet).length, 'updated')}
+        ${linje(koblede.length, koblede.length === 1
+    ? 'task you made is linked to its case' : 'tasks you made are linked to their case')}
         ${linje(sam.uaendrede.length, 'already up to date')}
       </ul>
       ${sam.projekter.length ? `<p class="meta">New projects: ${
@@ -9544,6 +9609,7 @@ async function snForhaandsvis(fil) {
     sam.tags.map((t) => esc(t.name)).join(', ')}</p>` : ''}
       ${eksport.advarsler.length ? `<p class="meta warnline">${
     eksport.advarsler.map(esc).join('<br>')}</p>` : ''}
+      ${snKobledeHtml(koblede)}
       ${snForsvundneHtml(sam.forsvundne)}`;
 
     document.getElementById('snFod').innerHTML = `
@@ -9555,6 +9621,24 @@ async function snForhaandsvis(fil) {
   } catch (ex) {
     krop.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
   }
+}
+
+/**
+ * Haandlavede opgaver, der genkendes paa sagsnummeret (v40).
+ *
+ * De oprettes ikke igen - de kobles. Fra nu af er ServiceNow kilden til
+ * titel, kunde og status, saa en titel, der skifter, vises FOER der trykkes.
+ */
+function snKobledeHtml(koblede) {
+  if (!koblede.length) return '';
+  return `<div class="snmangler">
+    <p class="meta">These were made in tovo with the case number in <strong>Case number</strong>.
+      They are linked instead of created again — estimates, notes and logged time stay:</p>
+    <ul class="plain">
+      ${koblede.map((o) => `<li><code>${esc(o.number)}</code> ${esc(o.task.title)}${
+    o.aendringer.includes('title') ? ` <span class="meta">→ ${esc(o.felter.title)}</span>` : ''}</li>`).join('')}
+    </ul>
+  </div>`;
 }
 
 /**
@@ -9571,13 +9655,14 @@ async function snForhaandsvis(fil) {
 function snForsvundneHtml(forsvundne) {
   if (!forsvundne.length) return '';
   return `<div class="snmangler">
-    <p class="meta"><strong>${forsvundne.length}</strong> imported
-      ${forsvundne.length === 1 ? 'task is' : 'tasks are'} not in this file —
-      probably resolved in ServiceNow. Tick the ones to close here:</p>
+    <p class="meta"><strong>${forsvundne.length}</strong>
+      ${forsvundne.length === 1 ? 'task with a ServiceNow number is' : 'tasks with a ServiceNow number are'}
+      not in this file — probably resolved in ServiceNow. Tick the ones to close here:</p>
     <ul class="plain">
       ${forsvundne.map((t) => `<li><label class="snvalg">
         <input type="checkbox" data-luk="${esc(t.id)}">
-        <span><code>${esc(t.number)}</code> ${esc(t.title)}</span>
+        <span><code>${esc(t.number)}</code> ${esc(t.title)}${t.haandlavet
+    ? ' <span class="meta">· made in tovo</span>' : ''}</span>
       </label></li>`).join('')}
     </ul>
     <p class="meta">Nothing is closed unless you tick it. Your logged time stays either way.</p>
@@ -9647,7 +9732,9 @@ async function snUdfoer() {
 
     document.getElementById('snModal').remove();
     await genindlaes();
-    const dele = [`${sam.nye.length} new`, `${sam.opdaterede.length} updated`];
+    const antalKoblet = sam.opdaterede.filter((o) => o.koblet).length;
+    const dele = [`${sam.nye.length} new`, `${sam.opdaterede.length - antalKoblet} updated`];
+    if (antalKoblet) dele.push(`${antalKoblet} linked`);
     if (luk.length) dele.push(`${luk.length} closed`);
     toast(dele.join(', ') + '.');
   } catch (ex) {

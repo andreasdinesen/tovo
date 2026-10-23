@@ -63,11 +63,14 @@ async function snForhaandsvis(fil) {
     });
     snState.data = { eksport, sam };
 
+    const koblede = sam.opdaterede.filter((o) => o.koblet);
     const linje = (n, etiket) => (n ? `<li><strong>${n}</strong> ${esc(etiket)}</li>` : '');
     krop.innerHTML = `
       <ul class="plain snsum">
         ${linje(sam.nye.length, sam.nye.length === 1 ? 'new task' : 'new tasks')}
-        ${linje(sam.opdaterede.length, 'updated')}
+        ${linje(sam.opdaterede.filter((o) => !o.koblet).length, 'updated')}
+        ${linje(koblede.length, koblede.length === 1
+    ? 'task you made is linked to its case' : 'tasks you made are linked to their case')}
         ${linje(sam.uaendrede.length, 'already up to date')}
       </ul>
       ${sam.projekter.length ? `<p class="meta">New projects: ${
@@ -76,6 +79,7 @@ async function snForhaandsvis(fil) {
     sam.tags.map((t) => esc(t.name)).join(', ')}</p>` : ''}
       ${eksport.advarsler.length ? `<p class="meta warnline">${
     eksport.advarsler.map(esc).join('<br>')}</p>` : ''}
+      ${snKobledeHtml(koblede)}
       ${snForsvundneHtml(sam.forsvundne)}`;
 
     document.getElementById('snFod').innerHTML = `
@@ -87,6 +91,24 @@ async function snForhaandsvis(fil) {
   } catch (ex) {
     krop.innerHTML = `<p class="gate-error">${esc(ex.message)}</p>`;
   }
+}
+
+/**
+ * Haandlavede opgaver, der genkendes paa sagsnummeret (v40).
+ *
+ * De oprettes ikke igen - de kobles. Fra nu af er ServiceNow kilden til
+ * titel, kunde og status, saa en titel, der skifter, vises FOER der trykkes.
+ */
+function snKobledeHtml(koblede) {
+  if (!koblede.length) return '';
+  return `<div class="snmangler">
+    <p class="meta">These were made in tovo with the case number in <strong>Case number</strong>.
+      They are linked instead of created again — estimates, notes and logged time stay:</p>
+    <ul class="plain">
+      ${koblede.map((o) => `<li><code>${esc(o.number)}</code> ${esc(o.task.title)}${
+    o.aendringer.includes('title') ? ` <span class="meta">→ ${esc(o.felter.title)}</span>` : ''}</li>`).join('')}
+    </ul>
+  </div>`;
 }
 
 /**
@@ -103,13 +125,14 @@ async function snForhaandsvis(fil) {
 function snForsvundneHtml(forsvundne) {
   if (!forsvundne.length) return '';
   return `<div class="snmangler">
-    <p class="meta"><strong>${forsvundne.length}</strong> imported
-      ${forsvundne.length === 1 ? 'task is' : 'tasks are'} not in this file —
-      probably resolved in ServiceNow. Tick the ones to close here:</p>
+    <p class="meta"><strong>${forsvundne.length}</strong>
+      ${forsvundne.length === 1 ? 'task with a ServiceNow number is' : 'tasks with a ServiceNow number are'}
+      not in this file — probably resolved in ServiceNow. Tick the ones to close here:</p>
     <ul class="plain">
       ${forsvundne.map((t) => `<li><label class="snvalg">
         <input type="checkbox" data-luk="${esc(t.id)}">
-        <span><code>${esc(t.number)}</code> ${esc(t.title)}</span>
+        <span><code>${esc(t.number)}</code> ${esc(t.title)}${t.haandlavet
+    ? ' <span class="meta">· made in tovo</span>' : ''}</span>
       </label></li>`).join('')}
     </ul>
     <p class="meta">Nothing is closed unless you tick it. Your logged time stays either way.</p>
@@ -179,7 +202,9 @@ async function snUdfoer() {
 
     document.getElementById('snModal').remove();
     await genindlaes();
-    const dele = [`${sam.nye.length} new`, `${sam.opdaterede.length} updated`];
+    const antalKoblet = sam.opdaterede.filter((o) => o.koblet).length;
+    const dele = [`${sam.nye.length} new`, `${sam.opdaterede.length - antalKoblet} updated`];
+    if (antalKoblet) dele.push(`${antalKoblet} linked`);
     if (luk.length) dele.push(`${luk.length} closed`);
     toast(dele.join(', ') + '.');
   } catch (ex) {

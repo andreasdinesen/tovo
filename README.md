@@ -113,6 +113,15 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v40 — ServiceNow-importen kender dine egne opgaver
+
+- En opgave, du selv har lavet med ServiceNow-nummeret i *Case number*, bliver nu
+  **koblet** til sagen ved importen i stedet for at blive oprettet en gang til. Den
+  beholder estimat, note og registreret tid; ruden viser koblingen og en titel, der skifter.
+- Mangler sådan en opgaves nummer i filen, spørger ruden — som for importerede sager — om
+  den skal lukkes (»made in tovo«). Kun numre med samme form som filens (fx `INC…`);
+  intet er krydset af på forhånd.
+
 ### v39 — overtid
 
 - En tidspost kan markeres som **overtid** (afkrydsning i »Log time« / »Edit time«, også

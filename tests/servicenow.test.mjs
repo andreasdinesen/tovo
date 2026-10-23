@@ -215,6 +215,75 @@ test('en opgave, tovo ikke har importeret, roeres aldrig', () => {
   assert.equal(ud.opdaterede.length, 0);
 });
 
+test('en HAANDLAVET opgave med et ServiceNow-nummer, der mangler i filen, spoerges der om', () => {
+  const r = laes(csv(raekke()));                        // SAG-INC0000001
+  const egne = [
+    { id: 'h1', title: 'Skrevet i tovo', status: 'open', caseNumber: 'sag-inc0000009' },
+    { id: 'h2', title: 'Anden kilde', status: 'open', caseNumber: 'SAG-1234' },
+    { id: 'h3', title: 'Lukket', status: 'done', caseNumber: 'SAG-INC0000008' },
+    { id: 'h4', title: 'Andet system', status: 'open', caseNumber: 'RITM0000001' },
+  ];
+  const ud = sn.sammenlign(r.opgaver, egne, { projects: [], tags: [] });
+  assert.deepEqual(ud.forsvundne.map((f) => f.id), ['h1'],
+    'kun samme nummer-form som filen, kun aabne - SAG-1234 og RITM er ikke denne eksports');
+  assert.equal(ud.forsvundne[0].haandlavet, true);
+  assert.equal(ud.forsvundne[0].number, 'SAG-INC0000009');
+  assert.ok(ud.forsvundne[0].task, 'luk() skal have hele opgaven');
+  assert.equal(ud.opdaterede.length, 0, 'intet lukkes af sig selv');
+});
+
+test('en haandlavet opgave, hvis nummer STAAR i filen, kobles - der oprettes ingen dublet', () => {
+  const r = laes(csv(raekke()));
+  const egne = [{ id: 'h1', title: 'Skrevet i tovo', status: 'open', caseNumber: 'sag-inc0000001',
+    estimateMinutes: 90, note: 'min egen' }];
+  const ud = sn.sammenlign(r.opgaver, egne, { projects: [], tags: [] });
+  assert.equal(ud.nye.length, 0, 'sagen blev oprettet en gang til');
+  assert.deepEqual(ud.forsvundne, []);
+  assert.equal(ud.opdaterede.length, 1);
+  assert.equal(ud.opdaterede[0].koblet, true);
+  assert.equal(ud.opdaterede[0].id, 'h1');
+
+  // Det, der GEMMES, beholder tovos egne felter og faar matchefeltet.
+  const gemt = sn.flet(ud.opdaterede[0].felter, ud.opdaterede[0].task, { number: ud.opdaterede[0].number });
+  assert.equal(gemt.snNumber, 'SAG-INC0000001');
+  assert.equal(gemt.estimateMinutes, 90);
+  assert.equal(gemt.note, 'min egen');
+
+  // Og naeste import kender den paa snNumber - uden ny kobling.
+  const igen = sn.sammenlign(r.opgaver, [gemt], { projects: [{ id: 'p', name: 'x' }], tags: [] });
+  assert.equal(igen.nye.length, 0);
+  assert.ok(!igen.opdaterede.some((o) => o.koblet));
+});
+
+test('en kobling gemmes, ogsaa naar intet andet felt er aendret', () => {
+  const r = laes(csv(raekke()));
+  const { f, projekter, tags } = foersteImport(csv(raekke()));
+  const egen = somOprettet(f.nye, projekter, tags)[0];
+  delete egen.snNumber;                                  // som om den var lavet i haanden
+  const ud = sn.sammenlign(r.opgaver, [egen], { projects: projekter, tags });
+  assert.equal(ud.uaendrede.length, 0);
+  assert.equal(ud.opdaterede.length, 1, 'uden at gemme faar den aldrig sit snNumber');
+  assert.deepEqual(ud.opdaterede[0].aendringer, []);
+});
+
+test('flere haandlavede med samme nummer: den aabne kobles, resten roeres ikke', () => {
+  const r = laes(csv(raekke()));
+  const egne = [
+    { id: 'gammel', title: 'Lukket', status: 'done', caseNumber: 'SAG-INC0000001' },
+    { id: 'aaben', title: 'Aaben', status: 'open', caseNumber: 'SAG-INC0000001' },
+  ];
+  const ud = sn.sammenlign(r.opgaver, egne, { projects: [], tags: [] });
+  assert.deepEqual(ud.opdaterede.map((o) => o.id), ['aaben']);
+  assert.equal(ud.nye.length, 0);
+});
+
+test('nummerForm kender et ServiceNow-nummer fra et sagsnummer', () => {
+  assert.equal(sn.nummerForm('INC0012345'), 'INC');
+  assert.equal(sn.nummerForm('cs0012345'), 'CS');
+  assert.equal(sn.nummerForm('SAG-1234'), null);
+  assert.equal(sn.nummerForm(''), null);
+});
+
 test('den samme sag to gange i én fil siges der til om', () => {
   const r = laes(csv(raekke(), raekke({ title: 'Samme sag igen' })));
   assert.match(r.advarsler.join(' '), /står to gange/);

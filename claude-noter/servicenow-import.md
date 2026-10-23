@@ -23,6 +23,16 @@ med linjeskift ikke knækker filen.
 - **En sag, der mangler i filen, lukkes ALDRIG af sig selv.** Filteret er typisk
   `State != Resolved`, men et filter kan være ændret, og så ville en automatisk afslutning
   lukke noget, der stadig løber. Ruden spørger, og intet er krydset af på forhånd.
+- **Håndlavede opgaver spørges der også om** (v40): en åben opgave uden `snNumber`,
+  hvis `caseNumber` har samme *nummer-form* som filens sager (`nummerForm()`: bogstaverne
+  foran mindst fire afsluttende cifre, fx `INC`), og som ikke står i filen, kommer på
+  »not in this file«-listen med »made in tovo«. `SAG-1234` og andre præfikser end filens
+  røres ikke. Stadig intet krydset af på forhånd.
+- **En håndlavet opgave, hvis nummer STÅR i filen, kobles** (v40): den får `snNumber` og
+  opdateres som en importeret — ingen dublet. Reglen om aldrig at matche på `caseNumber`
+  gælder opgaver, der allerede HAR et `snNumber`. En kobling gemmes også uden ændrede felter
+  (ellers får den aldrig `snNumber`). Flere med samme nummer: en åben før en afsluttet.
+  Ruden viser koblingerne og en titel, der skifter.
 - Beskrivelsen skrives kun ved **oprettelsen** — ellers overskriver en genimport din egen note.
 
 
