@@ -295,6 +295,34 @@ test('en egen opgave, hvis nummer IKKE er i filen, er ingen dublet', () => {
   assert.deepEqual(sn.sammenlign(r.opgaver, egne, { projects: [], tags: [] }).dubletter, []);
 });
 
+test('en PLANNER-opgave med sagens nummer kobles ikke - den henviser bare til sagen', () => {
+  const r = laes(csv(raekke()));                         // SAG-INC0000001
+  const planner = { id: 'pl', title: 'Fra Planner', status: 'open', plannerTaskId: 'pt-1',
+    projectId: 'planen', caseNumber: 'SAG-INC0000001' };
+  const ud = sn.sammenlign(r.opgaver, [planner], { projects: [{ id: 'planen', name: 'Planen' }], tags: [] });
+  assert.equal(ud.nye.length, 1, 'sagen skal stadig oprettes som sin egen opgave');
+  assert.equal(ud.opdaterede.length, 0, 'Planner-opgaven blev koblet og fik titel og projekt overskrevet');
+  assert.deepEqual(ud.dubletter, []);
+});
+
+test('en PLANNER-opgave med en IMPORTERET sags nummer er ingen dublet', () => {
+  const r = laes(csv(raekke()));
+  const { f, projekter, tags } = foersteImport(csv(raekke()));
+  const importeret = somOprettet(f.nye, projekter, tags)[0];
+  const planner = { id: 'pl', title: 'Fra Planner', status: 'open', plannerTaskId: 'pt-1',
+    caseNumber: 'sag-inc0000001' };
+  const ud = sn.sammenlign(r.opgaver, [importeret, planner], { projects: projekter, tags });
+  assert.deepEqual(ud.dubletter, [], 'Planner-opgaven ville blive flettet ind og slettet');
+  assert.ok(!ud.opdaterede.some((o) => o.id === 'pl'));
+});
+
+test('en PLANNER-opgave med et nummer, der mangler i filen, spoerges der ikke om', () => {
+  const r = laes(csv(raekke()));
+  const planner = { id: 'pl', title: 'Fra Planner', status: 'open', plannerTaskId: 'pt-1',
+    caseNumber: 'SAG-INC0000009' };
+  assert.deepEqual(sn.sammenlign(r.opgaver, [planner], { projects: [], tags: [] }).forsvundne, []);
+});
+
 test('nummerForm kender et ServiceNow-nummer fra et sagsnummer', () => {
   assert.equal(sn.nummerForm('INC0012345'), 'INC');
   assert.equal(sn.nummerForm('cs0012345'), 'CS');

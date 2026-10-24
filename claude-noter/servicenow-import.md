@@ -40,6 +40,12 @@ med linjeskift ikke knækker filen.
   kommentarer og underopgaver; estimat/note/links/stjerne tages med, hvor målet intet har
   (noter lægges sammen); dubletten blødt-slettes. Ruden viser dem, men spørger ikke —
   Andreas bad om det som fast adfærd (2026-10-23).
+- **Planner-opgaver er aldrig håndlavede** (v43): en opgave med `plannerTaskId` kobles,
+  flettes og spørges der aldrig om, selv om dens `caseNumber` står i filen. Sagsnummeret
+  på en Planner-opgave er en HENVISNING — så timerne lander under sagen i rapporten og
+  timesedlen (`sagFor()`) — ikke et ejerskab. Før v43 overskrev en kobling titel og
+  projekt (og Planner skrev titlen tilbage: ping-pong), og en dublet blev flettet ind og
+  slettet. Testene står i `tests/servicenow.test.mjs` (»en PLANNER-opgave …«).
 - Beskrivelsen skrives kun ved **oprettelsen** — ellers overskriver en genimport din egen note.
 
 

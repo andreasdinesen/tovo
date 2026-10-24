@@ -229,10 +229,16 @@
      *
      * Flere haandlavede med samme nummer: en aaben foer en afsluttet - det er
      * den, man arbejder paa. De andre bliver DUBLETTER (herunder).
+     *
+     * PLANNER-opgaver er ikke haandlavede (v43). Deres sagsnummer HENVISER
+     * til sagen, saa timerne lander under den i rapporten - opgaven er stadig
+     * Planner-importens. Blev den koblet, overskrev importen titel og
+     * projekt (og Planner skrev titlen tilbage ved naeste import); blev den
+     * en dublet, blev den flettet ind og slettet.
      */
     const haandlavede = new Map();
     for (const t of eksisterende || []) {
-      if (t.snNumber || !t.caseNumber) continue;
+      if (t.snNumber || t.plannerTaskId || !t.caseNumber) continue;
       const nr = String(t.caseNumber).trim().toUpperCase();
       if (!haandlavede.has(nr)) haandlavede.set(nr, []);
       haandlavede.get(nr).push(t);
@@ -327,7 +333,8 @@
     const former = new Set(sn.map((s) => nummerForm(s.number)).filter(Boolean));
     const iFilenNorm = new Set(sn.map((s) => String(s.number).trim().toUpperCase()));
     for (const t of eksisterende || []) {
-      if (t.snNumber || t.status === 'done' || !t.caseNumber) continue;
+      // En Planner-opgave lukkes af Planner, ikke af en ServiceNow-sag (v43).
+      if (t.snNumber || t.plannerTaskId || t.status === 'done' || !t.caseNumber) continue;
       const nr = String(t.caseNumber).trim().toUpperCase();
       if (!former.has(nummerForm(nr)) || iFilenNorm.has(nr)) continue;
       forsvundne.push({ id: t.id, number: nr, title: t.title, task: t, haandlavet: true });

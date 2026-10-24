@@ -113,6 +113,15 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v43 — Planner-opgaver kan pege på en ServiceNow-sag
+
+- Skriv sagens nummer i *Case number* på en opgave fra Planner, så lander dens timer under
+  sagen i rapporten og timesedlen — sammen med timerne på den importerede sag.
+- ServiceNow-importen rører ikke længere en Planner-opgave med sagens nummer: den kobles
+  ikke (før fik den sagens titel og blev flyttet til kundens projekt), den flettes ikke ind
+  som dublet (før blev den slettet), og den kommer ikke på listen over sager, der skal lukkes.
+  Planner-importen ejer stadig opgaven.
+
 ### v42 — vælg alle sager, der skal lukkes
 
 - ServiceNow-ruden har fået en **Select all**-knap over listen med sager, der ikke er i
