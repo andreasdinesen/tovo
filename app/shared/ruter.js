@@ -27,6 +27,7 @@
     ['week', 'week', ['uge', 'kalender', 'calendar']],
     ['projects', 'projects', ['projekter', 'projekt', 'project']],
     ['tags', 'tags', ['tag', 'maerkater', 'maerkat']],
+    ['recurring', 'recurring', ['gentagelser', 'gentagne', 'tilbagevendende', 'repeat']],
     ['report', 'report', ['rapport', 'ugerapport', 'timeseddel']],
     ['settings', 'settings', ['indstillinger']],
     ['guide', 'guide', ['vejledning', 'hjaelp', 'help']],

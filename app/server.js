@@ -299,9 +299,10 @@ function migrate() {
   }
 }
 
-/* De fire slags indhold. Kind-hvidlisten staar ÉT sted, saa et API-kald ikke
-   kan lave en femte slags, som ingen visning kender. */
-const KINDS = new Set(['project', 'task', 'comment', 'tag']);
+/* Slagsene af indhold. Kind-hvidlisten staar ÉT sted, saa et API-kald ikke
+   kan lave en slags, som ingen visning kender. `recurring` er skabelonen bag
+   en gentagen opgave (Recurring-siden) - den er IKKE en opgave selv. */
+const KINDS = new Set(['project', 'task', 'comment', 'tag', 'recurring']);
 
 /*
  * Felterne pr. slags. En EKSPLICIT hvidliste, ikke en sortliste.
@@ -329,9 +330,19 @@ const FELTER = {
     // Stjernen. `starredSeq` er IKKE pynt: den ER listens raekkefoelge, og den
     // saettes af serveren i /star-ruten, saa to klienter ikke kan blive
     // uenige om, hvad "sidst markeret" betyder.
-    'starred', 'starredSeq'],
+    'starred', 'starredSeq',
+    // Skabelonen, der lavede opgaven (Recurring). Lukkes opgaven, rulles
+    // skabelonens forfald - se koerGentagelse().
+    'recurringId'],
   comment: ['taskId', 'text'],
   tag: ['name', 'color'],
+  // Skabelonen bag en gentagen opgave. De foerste felter er dem, opgaven
+  // arver (SKABELON_FELTER); resten er planen. `taskId` er den ENE aabne
+  // forekomst, `undo` er det, »Undo« efter en afslutning stiller tilbage.
+  recurring: ['title', 'note', 'projectId', 'sectionId', 'estimateMinutes', 'priority', 'tagIds',
+    'links', 'caseNumber', 'position',
+    'schedule', 'every', 'unit', 'nextDue', 'anchor', 'leadDays', 'paused', 'lastDone',
+    'taskId', 'undo'],
 };
 
 // Opgavens tilstande. 'doing' findes, fordi Planner har den ('I gang') - uden
@@ -1210,8 +1221,19 @@ function renseItem(kind, raa) {
       case 'caseNumber':
       case 'customer': case 'plannerPlanName': case 'color': case 'icon':
       case 'sectionId': case 'parentTaskId': case 'projectId': case 'taskId':
-      case 'plannerPlanId': case 'plannerTaskId':
+      case 'plannerPlanId': case 'plannerTaskId': case 'recurringId':
         ud[felt] = str(v, 200); break;
+      case 'schedule': ud[felt] = v === 'completion' ? 'completion' : 'fixed'; break;
+      case 'every': ud[felt] = tal(v, 1, 999); break;
+      case 'unit': ud[felt] = beregn.GENTAG_ENHEDER.includes(v) ? v : 'month'; break;
+      case 'nextDue': case 'anchor': case 'lastDone': ud[felt] = dato(v); break;
+      case 'leadDays': ud[felt] = tal(v, 0, 365); break;
+      case 'paused': ud[felt] = (v === true || v === 1 || v === 'true'); break;
+      case 'undo':
+        ud[felt] = (v && typeof v === 'object')
+          ? { nextDue: dato(v.nextDue), lastDone: dato(v.lastDone), taskId: str(v.taskId, 64) }
+          : null;
+        break;
       case 'note': case 'text': ud[felt] = str(v, 20000); break;
       case 'estimateMinutes': ud[felt] = tal(v, 1, 365 * 24 * 60); break;
       case 'budgetHours': {
@@ -1907,6 +1929,172 @@ function naesteForekomst(userId, item) {
   return ny;
 }
 
+
+/* ------------------------------------------- gentagne opgaver (Recurring) */
+
+/*
+ * En skabelon (kind `recurring`) laver en opgave `leadDays` dage foer sit
+ * forfald - »skift kodeord paa alle forbindelser hver 3. maaned«. Modellen er
+ * hutis vedligeholdsplaner, og reglerne er de samme:
+ *
+ *  1. **Kun ÉN aaben forekomst** (`taskId`). Den naeste oprettes foerst, naar
+ *     den nuvaerende er lukket - ellers ville en glemt opgave formere sig.
+ *  2. **Forfaldet GEMMES og rulles**, naar forekomsten lukkes. Regningen bor i
+ *     beregn.gentagNaeste (fast plan eller efter udfoert).
+ *  3. **Slettes forekomsten, er den sprunget over**: planen rulles uden at
+ *     `lastDone` flytter sig.
+ *
+ * Motoren SER paa forekomsten i stedet for at blive kaldt fra hver vej, der kan
+ * lukke en opgave (afkrydsning, PATCH, MCP, bulk). Saa er der ingen vej, der
+ * kan glemme den - den naeste koersel opdager lukningen alligevel.
+ */
+const SKABELON_FELTER = ['title', 'note', 'projectId', 'sectionId', 'estimateMinutes', 'priority',
+  'tagIds', 'links', 'caseNumber'];
+
+function isoFraTid(sek) {
+  const d = new Date(sek * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function opretForekomst(userId, s) {
+  const opgave = {
+    kind: 'task', status: 'open', recurringId: s.id, dueDate: s.nextDue,
+    position: naestePosition(userId, 'task'),
+  };
+  for (const f of SKABELON_FELTER) if (s[f] !== undefined && s[f] !== null) opgave[f] = s[f];
+  // Projektet kan vaere slettet siden. Saa lander opgaven uden projekt i
+  // stedet for at pege paa noget, ingen visning kan finde.
+  if (opgave.projectId) {
+    const p = hentItem(userId, opgave.projectId);
+    if (!p || p.kind !== 'project') { delete opgave.projectId; delete opgave.sectionId; }
+  }
+  opgave.title = opgave.title || 'Recurring task';
+  const ny = gemItem(userId, opgave);
+  audit('gentagelse-opgave', s.id, s.nextDue);
+  return ny;
+}
+
+/**
+ * Bringer ÉN skabelon a jour: ruller planen, hvis forekomsten er lukket eller
+ * slettet, og opretter den naeste, naar dens dag er kommet.
+ * @param {boolean} [nu] opret forekomsten i dag, uanset varslingen (»Create now«)
+ */
+function koerGentagelse(userId, s, nu) {
+  const dag = iDag();
+  let sk = s;
+  let aendret = false;
+  if (sk.taskId) {
+    const t = hentItems(userId, { ids: [sk.taskId], medSlettede: true })[0];
+    if (t && !t.deletedAt && t.status !== 'done') return { skabelon: sk, oprettet: null };
+    const lukket = t && !t.deletedAt;
+    const udfoert = lukket && t.completedAt ? isoFraTid(t.completedAt) : dag;
+    sk = Object.assign({}, sk, {
+      undo: { nextDue: sk.nextDue, lastDone: sk.lastDone || null, taskId: sk.taskId },
+      lastDone: lukket ? udfoert : (sk.lastDone || null),
+      nextDue: beregn.gentagNaeste(sk, udfoert),
+      taskId: null,
+    });
+    aendret = true;
+  }
+  let oprettet = null;
+  if (!sk.paused && sk.nextDue && !sk.taskId) {
+    const fra = beregn.gentagOprettes(sk);
+    if (nu || (fra && fra <= dag)) {
+      oprettet = opretForekomst(userId, sk);
+      sk = Object.assign({}, sk, { taskId: oprettet.id });
+      aendret = true;
+    }
+  }
+  if (aendret) sk = gemItem(userId, sk);
+  return { skabelon: sk, oprettet };
+}
+
+function koerGentagelserFor(userId) {
+  const oprettet = [];
+  for (const s of hentItems(userId, { kind: 'recurring' })) {
+    try {
+      const r = koerGentagelse(userId, s);
+      if (r.oprettet) oprettet.push(r.oprettet);
+    } catch (err) {
+      logError(`gentagelse ${s.id}: ${err.message}`);
+    }
+  }
+  return oprettet;
+}
+
+/** Alle brugere. Koeres ved opstart og hver time. */
+function koerAlleGentagelser() {
+  try {
+    const brugere = db.prepare("SELECT DISTINCT user_id FROM items WHERE kind = 'recurring'").all();
+    for (const r of brugere) koerGentagelserFor(r.user_id);
+  } catch (err) {
+    logError(`gentagelserne fejlede: ${err.message}`);
+  }
+}
+
+/**
+ * »Undo« efter en afslutning: stil planen tilbage, som den stod, og fjern
+ * den naeste forekomst igen - men kun hvis ingen har roert den (ingen timer,
+ * stadig aaben). En opgave med tid paa er arbejde, og arbejde sletter vi ikke.
+ */
+function fortrydGentagelse(userId, opgave) {
+  const s = opgave.recurringId ? hentItem(userId, opgave.recurringId) : null;
+  if (!s || s.kind !== 'recurring' || !s.undo || s.undo.taskId !== opgave.id) return;
+  if (s.taskId && s.taskId !== opgave.id) {
+    const naeste = hentItem(userId, s.taskId);
+    if (naeste && naeste.status !== 'done' && !hentPoster(userId, { taskId: naeste.id }).length) {
+      sletItem(userId, naeste.id);
+    }
+  }
+  gemItem(userId, Object.assign({}, s, {
+    nextDue: s.undo.nextDue || s.nextDue, lastDone: s.undo.lastDone, taskId: opgave.id, undo: null,
+  }));
+}
+
+/**
+ * Renser en skabelon fra Recurring-siden. Den generelle rensning (renseItem)
+ * klarer typerne; HER staar det, en skabelon skal have for at kunne koere.
+ */
+function skabelonFraKrop(userId, body, gammel) {
+  const sk = Object.assign({}, gammel || {}, body, { kind: 'recurring' });
+  delete sk.taskId; delete sk.undo; delete sk.lastDone; delete sk.anchor;
+  if (gammel) { sk.taskId = gammel.taskId; sk.undo = gammel.undo; sk.lastDone = gammel.lastDone; sk.anchor = gammel.anchor; }
+  sk.title = str(sk.title, 500);
+  if (!sk.title) throw Object.assign(new Error('A recurring task needs a title.'), { status: 400 });
+  if (!dato(sk.nextDue)) throw Object.assign(new Error('Pick the next due date.'), { status: 400 });
+  if (sk.unit !== undefined && !beregn.GENTAG_ENHEDER.includes(sk.unit)) {
+    throw Object.assign(new Error('The interval must be days, weeks, months or years.'), { status: 400 });
+  }
+  if (typeof sk.estimateMinutes === 'string') sk.estimateMinutes = beregn.parseVarighed(sk.estimateMinutes);
+  sk.every = sk.every || 1;
+  sk.unit = sk.unit || 'month';
+  sk.schedule = sk.schedule || 'fixed';
+  if (sk.leadDays === undefined || sk.leadDays === null || sk.leadDays === '') sk.leadDays = 7;
+  if (sk.projectId) {
+    const p = hentItem(userId, sk.projectId);
+    if (!p || p.kind !== 'project') throw Object.assign(new Error('No such project.'), { status: 404 });
+  } else { sk.projectId = null; sk.sectionId = null; }
+  // Ankeret er den dato, en fast plan regnes fra. Det flytter sig, naar
+  // planen eller datoen aendres - ellers ville en ny dato blive trukket
+  // tilbage til den gamle rytme.
+  const planAendret = !gammel || ['nextDue', 'every', 'unit', 'schedule'].some((f) => String(gammel[f]) !== String(sk[f]));
+  if (planAendret) sk.anchor = sk.nextDue;
+  if (!gammel) sk.position = naestePosition(userId, 'recurring');
+  return sk;
+}
+
+/** Skabelonen, som listen viser den: med de afledte felter. */
+function visSkabelon(userId, s) {
+  const t = s.taskId ? hentItem(userId, s.taskId) : null;
+  const aaben = t && t.status !== 'done' ? t : null;
+  return Object.assign({}, s, {
+    createOn: beregn.gentagOprettes(s),
+    state: beregn.gentagTilstand(s, iDag(), !!aaben),
+    describe: beregn.gentagBeskriv(s),
+    task: aaben ? { id: aaben.id, title: aaben.title, dueDate: aaben.dueDate, status: aaben.status } : null,
+  });
+}
+
 /**
  * Afslutter (eller genaabner) en opgave.
  *
@@ -1952,7 +2140,16 @@ function fuldfoer(userId, item, luk = true) {
     completedAt: luk ? now() : null,
   }));
   const next = luk ? naesteForekomst(userId, opdateret) : null;
-  return { item: next ? hentItem(userId, opdateret.id) : opdateret, next };
+  // En opgave fra Recurring: planen rulles NU (og den naeste oprettes, hvis
+  // dens dag er kommet) - ikke foerst ved naeste timekoersel.
+  let recurring = null;
+  if (opdateret.recurringId) {
+    if (luk) {
+      const s = hentItem(userId, opdateret.recurringId);
+      if (s && s.kind === 'recurring' && s.taskId === opdateret.id) recurring = koerGentagelse(userId, s).oprettet;
+    } else fortrydGentagelse(userId, opdateret);
+  }
+  return { item: next ? hentItem(userId, opdateret.id) : opdateret, next, recurring };
 }
 
 /*
@@ -3494,6 +3691,28 @@ const ROUTES = {
     }));
   },
 
+  /* Recurring: listen koerer motoren foerst, saa det, man ser, er i dag. */
+  'GET /api/v1/recurring': (req, res) => {
+    const auth = godkend(req, res, 'read');
+    if (!auth) return;
+    koerGentagelserFor(auth.user.id);
+    const liste = hentItems(auth.user.id, { kind: 'recurring' })
+      .map((s) => visSkabelon(auth.user.id, s))
+      .sort((a, b) => String(a.nextDue || '9999').localeCompare(String(b.nextDue || '9999'))
+        || String(a.title).localeCompare(String(b.title)));
+    sendJson(res, 200, { recurring: liste, today: iDag() });
+  },
+
+  'POST /api/v1/recurring': async (req, res) => {
+    const auth = godkend(req, res, 'write');
+    if (!auth) return;
+    const body = await readJsonBody(req, auth.viaToken);
+    delete body.id;
+    const gemt = gemItem(auth.user.id, skabelonFraKrop(auth.user.id, body, null));
+    const r = koerGentagelse(auth.user.id, gemt);
+    sendJson(res, 200, { recurring: visSkabelon(auth.user.id, r.skabelon), created: r.oprettet });
+  },
+
   'GET /api/v1/items': (req, res, ctx) => {
     const auth = godkend(req, res, 'read');
     if (!auth) return;
@@ -3544,6 +3763,46 @@ const ROUTES = {
 
 /* Ruter med parametre. Prefikset er altid /api/v1/ paa dataruterne. */
 const MOENSTRE = [
+  {
+    metode: 'PATCH', re: /^\/api\/v1\/recurring\/([0-9a-f-]{8,64})$/,
+    kald: async (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const body = await readJsonBody(req, auth.viaToken);
+      const gammel = hentItem(auth.user.id, ctx.params[0]);
+      if (!gammel || gammel.kind !== 'recurring') { apiFejl(res, 404, 'not_found', 'No such recurring task.'); return; }
+      delete body.id;
+      const sk = skabelonFraKrop(auth.user.id, body, gammel);
+      // Flyttes forfaldet, mens der staar en aaben opgave, flytter den med -
+      // ellers viser listen én dato og opgaven en anden.
+      if (gammel.taskId && sk.nextDue !== gammel.nextDue) {
+        const t = hentItem(auth.user.id, gammel.taskId);
+        if (t && t.status !== 'done' && t.dueDate === gammel.nextDue) {
+          gemItem(auth.user.id, Object.assign({}, t, { dueDate: sk.nextDue }));
+        }
+      }
+      const r = koerGentagelse(auth.user.id, gemItem(auth.user.id, sk));
+      sendJson(res, 200, { recurring: visSkabelon(auth.user.id, r.skabelon), created: r.oprettet });
+    },
+  },
+  {
+    // »Create now«: forekomsten oprettes i dag, uanset varslingen. Staar der
+    // allerede en aaben, er der intet at oprette (reglen om én).
+    metode: 'POST', re: /^\/api\/v1\/recurring\/([0-9a-f-]{8,64})\/now$/,
+    kald: (req, res, ctx) => {
+      const auth = godkend(req, res, 'write');
+      if (!auth) return;
+      const s = hentItem(auth.user.id, ctx.params[0]);
+      if (!s || s.kind !== 'recurring') { apiFejl(res, 404, 'not_found', 'No such recurring task.'); return; }
+      const r = koerGentagelse(auth.user.id, s, true);
+      if (!r.oprettet) {
+        apiFejl(res, 409, 'already_open', r.skabelon.paused
+          ? 'It is paused — resume it first.' : 'There is already an open task for this one.');
+        return;
+      }
+      sendJson(res, 200, { recurring: visSkabelon(auth.user.id, r.skabelon), created: r.oprettet });
+    },
+  },
   {
     metode: 'GET', re: /^\/api\/v1\/items\/([0-9a-f-]{8,64})$/,
     kald: (req, res, ctx) => {
@@ -4148,6 +4407,10 @@ migrate();
 computeInlineHash();
 sweep();
 setInterval(sweep, 6 * 3600 * 1000).unref();
+// Gentagne opgaver: ved opstart og hver time. Opgaven skal staa der om
+// morgenen, ogsaa selv om ingen har aabnet Recurring-siden.
+koerAlleGentagelser();
+setInterval(koerAlleGentagelser, 3600 * 1000).unref();
 
 server.listen(BIND_PORT, () => {
   // Den port, der FAKTISK blev bundet - ikke variablen. At skrive sit eget

@@ -2582,3 +2582,16 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 @media print {
   .printsheet h2 { font-size: 14pt; margin: 6mm 0 2mm; color: #000; }
 }
+
+/* Recurring (gentagne opgaver). Raekken laaner .item-row; ikonet staar, hvor
+   en opgave har sit flueben, for en skabelon kan ikke krydses af. */
+.gentag-raekke { cursor: pointer; }
+.gentag-ikon { flex: none; width: 22px; display: flex; justify-content: center; color: var(--muted); }
+.btn.small { padding: 4px 10px; font-size: 13px; flex: none; }
+.gentag-plan .field { flex: 1; min-width: 90px; }
+.gentagliste { margin-top: 14px; }
+.gentag-varsel { align-items: flex-end; }
+.gentag-varsel .field { flex: none; width: 110px; }
+.gentag-hint { font-size: 14px; color: var(--muted); padding-bottom: 26px; }
+.radio { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 14px; cursor: pointer; }
+.radio input[type="radio"] { appearance: auto; -webkit-appearance: auto; flex: none; width: 16px; height: 16px; margin: 0; }

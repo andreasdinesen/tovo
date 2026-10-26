@@ -113,6 +113,21 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v44 — Recurring: opgaver, der kommer igen af sig selv
+
+- Ny side **Recurring** i menuen (`/recurring`). Her lægger du det, du skal huske en gang
+  imellem — skift kodeord på alle forbindelser hver 3. måned, opdatér timeregistreringen
+  hver måned — og tovo sætter opgaven på din liste et antal dage før, den forfalder
+  (standard 7).
+- Interval i dage, uger, måneder eller år. **Fast plan** holder rytmen (den 31. bliver den
+  31.); **fra afslutning** regner videre fra den dag, du blev færdig.
+- Der står højst én åben opgave pr. gentagelse. Krydser du den af, planlægges den næste;
+  sletter du den, er den gang sprunget over. »Undo« efter en afkrydsning stiller planen
+  tilbage. Opgaven arver titel, projekt, estimat og noter og er mærket ↻ i listerne.
+- *Create now* lægger den på listen i dag; *Pause* stopper nye opgaver, til du genoptager.
+- Bygget efter vedligeholdsplanerne i huti. Den gamle `!every …` på en enkelt opgave
+  virker som før.
+
 ### v43 — Planner-opgaver kan pege på en ServiceNow-sag
 
 - Skriv sagens nummer i *Case number* på en opgave fra Planner, så lander dens timer under

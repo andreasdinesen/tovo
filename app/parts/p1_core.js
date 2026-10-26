@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 43;
+const APP_VERSION = 44;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -337,6 +337,7 @@ const ICONS = {
   chevron: '<path d="M9 6l6 6-6 6"/>',
   kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
   tags: '<path d="M5 9.5h14M5 14.5h14M10.5 4.5L8.5 19.5M15.5 4.5l-2 15"/>',
+  gentag: '<path d="M17 3.5l3 3-3 3"/><path d="M4.5 11.5v-1a4 4 0 014-4H20"/><path d="M7 20.5l-3-3 3-3"/><path d="M19.5 12.5v1a4 4 0 01-4 4H4"/>',
   // Ordret de samme to stjerner som Sagu bruger, saa en markering ser ens ud
   // i de to apps, der staar aabne ved siden af hinanden.
   stjerne: '<path d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.6-5 2.6.9-5.6-4-4 5.6-.8z"/>',
@@ -356,6 +357,7 @@ const VIEWS = [
   { id: 'week', label: 'Week', icon: 'kalender', group: 1 },
   { id: 'projects', label: 'Projects', icon: 'projects', group: 1 },
   { id: 'tags', label: 'Tags', icon: 'tags', group: 2 },
+  { id: 'recurring', label: 'Recurring', icon: 'gentag', group: 2 },
   { id: 'report', label: 'Report', icon: 'report', group: 2 },
   // group: 0 = staar IKKE i navigationen. Settings naas fra menuen paa
   // brugerknappen, hvor kontoen i forvejen bor - to indgange til det samme
@@ -371,6 +373,7 @@ const BESKRIVELSER = {
   today: 'What you have registered today, and what is running right now.',
   week: 'The week as a grid — drag in it to log time.',
   tags: 'Your labels, and how much carries each one.',
+  recurring: 'Tasks that come back on their own — every 3 months, every year — a few days before they are due.',
   projects: 'Estimate, budget and hours spent — per project.',
   report: 'Hours per project and task for a week you choose.',
   settings: 'Appearance, account and access.',
@@ -1462,6 +1465,7 @@ async function tegnSelveSiden(host) {
   if (state.view === 'projects') { await tegnProjekter(); return; }
   if (state.view === 'week') { await tegnKalender(); return; }
   if (state.view === 'tags') { await tegnTags(); return; }
+  if (state.view === 'recurring') { await tegnGentagelser(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
   if (state.view === 'guide') { host.innerHTML = sideGuide(); bindGuide(); return; }
   host.innerHTML = `<div class="page">

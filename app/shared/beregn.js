@@ -720,8 +720,97 @@
     };
   }
 
+  /* ------------------------------------------- gentagne opgaver (Recurring)
+   *
+   * En gentagelse er en SKABELON, der laver en opgave et antal dage foer
+   * forfald - »skift kodeord hver 3. maaned«. Modellen er hutis
+   * vedligeholdsplaner: naeste forfald GEMMES og rulles, naar forekomsten
+   * lukkes, og der er aldrig mere end én aaben forekomst ad gangen.
+   *
+   * Datoerne regnes paa (aar, maaned, dag) i lokal tid - aldrig paa
+   * millisekunder (samme regel som parse.naesteForekomst).
+   */
+  const GENTAG_ENHEDER = ['day', 'week', 'month', 'year'];
+
+  function isoDel(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+    return m ? [Number(m[1]), Number(m[2]) - 1, Number(m[3])] : null;
+  }
+
+  function somIso(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  /** iso + n dage/uger/maaneder/aar. 31/1 + 1 maaned = 28/2 (klemt, aldrig marts). */
+  function plusInterval(iso, n, enhed) {
+    const del = isoDel(iso);
+    if (!del) return null;
+    const [aa, mm, dd] = del;
+    if (enhed === 'day') return somIso(new Date(aa, mm, dd + n));
+    if (enhed === 'week') return somIso(new Date(aa, mm, dd + 7 * n));
+    const maaneder = enhed === 'year' ? 12 * n : n;
+    const sidste = new Date(aa, mm + maaneder + 1, 0).getDate();
+    return somIso(new Date(aa, mm + maaneder, Math.min(dd, sidste)));
+  }
+
+  function gentagRegel(r) {
+    const every = Math.max(1, Math.min(999, Math.round(Number(r && r.every)) || 1));
+    const unit = GENTAG_ENHEDER.includes(r && r.unit) ? r.unit : 'month';
+    return { every, unit };
+  }
+
+  /**
+   * Naeste forfald, naar forekomsten er lukket paa datoen `udfoert`.
+   *
+   * - `completion` (efter udfoert): udfoert + interval.
+   * - `fixed` (fast plan): ankeret + k·interval for det mindste k, der ligger
+   *   EFTER baade det nuvaerende forfald og udfoerelsen. For sent springer de
+   *   forpassede gange over; foer tid rykker planen ét skridt. Hver dato
+   *   regnes fra ankeret (ikke kaedet), saa den 31. bliver ved med at vaere
+   *   den 31. - kaedet ville den blive til den 28. for altid efter februar.
+   */
+  function gentagNaeste(r, udfoert) {
+    const { every, unit } = gentagRegel(r);
+    if (!isoDel(udfoert)) return null;
+    if (r.schedule === 'completion' || !isoDel(r.nextDue)) return plusInterval(udfoert, every, unit);
+    const anker = isoDel(r.anchor) && r.anchor <= r.nextDue ? r.anchor : r.nextDue;
+    // Loftet holder selv »hver dag« gennem tyve aars efterslaeb.
+    for (let k = 1; k <= 10000; k++) {
+      const d = plusInterval(anker, k * every, unit);
+      if (d > r.nextDue && d > udfoert) return d;
+    }
+    return null;
+  }
+
+  /** Den dag, opgaven oprettes: forfald minus varslingen. */
+  function gentagOprettes(r) {
+    if (!r || !isoDel(r.nextDue)) return null;
+    const dage = Math.max(0, Math.min(365, Math.round(Number(r.leadDays)) || 0));
+    return plusInterval(r.nextDue, -dage, 'day');
+  }
+
+  /**
+   * Tilstanden, listen sorterer og farver efter.
+   * `paused` · `open` (der staar en opgave) · `due` (oprettes ved naeste koersel)
+   * · `waiting` (venter paa sin dag).
+   */
+  function gentagTilstand(r, iDag, harAabenOpgave) {
+    if (r.paused) return 'paused';
+    if (harAabenOpgave) return 'open';
+    const fra = gentagOprettes(r);
+    return fra && fra <= iDag ? 'due' : 'waiting';
+  }
+
+  /** »Every 3 months · fixed schedule« - interfacet er engelsk. */
+  function gentagBeskriv(r) {
+    const { every, unit } = gentagRegel(r);
+    const s = every === 1 ? `Every ${unit}` : `Every ${every} ${unit}s`;
+    return s + (r.schedule === 'completion' ? ' · from completion' : ' · fixed schedule');
+  }
+
   return {
     parseVarighed, formatVarighed, formatDecimal, formatUr, parseTidsrum, placerVarighed,
     tidspunkt, afrund, minutterFraAndre, opret,
+    GENTAG_ENHEDER, plusInterval, gentagNaeste, gentagOprettes, gentagTilstand, gentagBeskriv,
   };
 }));

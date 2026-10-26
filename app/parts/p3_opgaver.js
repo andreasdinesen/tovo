@@ -25,6 +25,7 @@ function opgaveRaekke(it, opt) {
     const tag = (state.tags || []).find((t) => t.id === id);
     if (tag) dele.push(`#${esc(tag.name)}`);
   }
+  if (it.recurringId) dele.push('<span title="Made by a recurring task">↻</span>');
   if ((it.links || []).length) dele.push(`${(it.links || []).length} link${it.links.length > 1 ? 's' : ''}`);
 
   // Forbrugt tid pr. opgave kommer fra serveren (som regner med beregn.js),

@@ -76,6 +76,22 @@ projekt i stedet for at love et nyt.
 - **`Column` i opgaveruden, ikke `Priority`.** Feltet udelades, når projektet ingen kolonner
   har, og `sectionId` sendes så slet ikke: PATCH fletter, så et udeladt felt bevares, mens
   `null` ville rydde det. Samme grund til, at `priority` ikke sendes med.
+- **Recurring (v44)** er noget andet end `!every` nedenfor: en SKABELON (kind `recurring`,
+  ikke en opgave), som laver en opgave `leadDays` dage før `nextDue`. Modellen er hutis
+  vedligehold (`huti/claude-noter/vedligehold.md`). Datoregningen bor i `beregn.js`
+  (`gentagNaeste`, `gentagOprettes`, `gentagTilstand`, `plusInterval`); motoren
+  (`koerGentagelse`) i server.js koerer ved opstart, hver time, på `GET /api/v1/recurring`
+  og når en forekomst lukkes i `fuldfoer`.
+  - Motoren SER på forekomsten (`taskId`): lukket → rul fra `completedAt`; slettet → sprunget
+    over (rul fra i dag, `lastDone` uændret). Derfor rulles planen også, hvis opgaven lukkes
+    ad en anden vej (PATCH, bulk) — senest ved næste timekørsel.
+  - Fast plan regnes fra `anchor` (sættes = `nextDue`, når plan eller dato rettes), så den
+    31. ikke kædes ned til den 28.
+  - Undo (genåbning) bruger `undo` på skabelonen og sletter den nye forekomst, men kun hvis
+    den er åben og uden tidsposter.
+  - Opgaven bærer `recurringId` (på FELTER.task) og vises med ↻. Kopiering tager den ikke med.
+  - Tests: `tests/gentagelser.test.mjs` (dato, én åben, undo, spring over, pause, isolation).
+  - Ikke gjort: MCP-værktøj til skabelonerne, tags i dialogen (feltet gemmes, hvis det sendes).
 - **Gentagelser:** kun én åben forekomst; den næste materialiseres, når den nuværende lukkes,
   og den lukkede beholder ikke reglen. Estimat, projekt, sektion, links og tags arves.
 - **Foldbare afsnit:** »Everything else« og »Done« begynder sammenfoldede, når listen er over

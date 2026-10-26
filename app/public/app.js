@@ -721,9 +721,98 @@
     };
   }
 
+  /* ------------------------------------------- gentagne opgaver (Recurring)
+   *
+   * En gentagelse er en SKABELON, der laver en opgave et antal dage foer
+   * forfald - »skift kodeord hver 3. maaned«. Modellen er hutis
+   * vedligeholdsplaner: naeste forfald GEMMES og rulles, naar forekomsten
+   * lukkes, og der er aldrig mere end én aaben forekomst ad gangen.
+   *
+   * Datoerne regnes paa (aar, maaned, dag) i lokal tid - aldrig paa
+   * millisekunder (samme regel som parse.naesteForekomst).
+   */
+  const GENTAG_ENHEDER = ['day', 'week', 'month', 'year'];
+
+  function isoDel(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+    return m ? [Number(m[1]), Number(m[2]) - 1, Number(m[3])] : null;
+  }
+
+  function somIso(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  /** iso + n dage/uger/maaneder/aar. 31/1 + 1 maaned = 28/2 (klemt, aldrig marts). */
+  function plusInterval(iso, n, enhed) {
+    const del = isoDel(iso);
+    if (!del) return null;
+    const [aa, mm, dd] = del;
+    if (enhed === 'day') return somIso(new Date(aa, mm, dd + n));
+    if (enhed === 'week') return somIso(new Date(aa, mm, dd + 7 * n));
+    const maaneder = enhed === 'year' ? 12 * n : n;
+    const sidste = new Date(aa, mm + maaneder + 1, 0).getDate();
+    return somIso(new Date(aa, mm + maaneder, Math.min(dd, sidste)));
+  }
+
+  function gentagRegel(r) {
+    const every = Math.max(1, Math.min(999, Math.round(Number(r && r.every)) || 1));
+    const unit = GENTAG_ENHEDER.includes(r && r.unit) ? r.unit : 'month';
+    return { every, unit };
+  }
+
+  /**
+   * Naeste forfald, naar forekomsten er lukket paa datoen `udfoert`.
+   *
+   * - `completion` (efter udfoert): udfoert + interval.
+   * - `fixed` (fast plan): ankeret + k·interval for det mindste k, der ligger
+   *   EFTER baade det nuvaerende forfald og udfoerelsen. For sent springer de
+   *   forpassede gange over; foer tid rykker planen ét skridt. Hver dato
+   *   regnes fra ankeret (ikke kaedet), saa den 31. bliver ved med at vaere
+   *   den 31. - kaedet ville den blive til den 28. for altid efter februar.
+   */
+  function gentagNaeste(r, udfoert) {
+    const { every, unit } = gentagRegel(r);
+    if (!isoDel(udfoert)) return null;
+    if (r.schedule === 'completion' || !isoDel(r.nextDue)) return plusInterval(udfoert, every, unit);
+    const anker = isoDel(r.anchor) && r.anchor <= r.nextDue ? r.anchor : r.nextDue;
+    // Loftet holder selv »hver dag« gennem tyve aars efterslaeb.
+    for (let k = 1; k <= 10000; k++) {
+      const d = plusInterval(anker, k * every, unit);
+      if (d > r.nextDue && d > udfoert) return d;
+    }
+    return null;
+  }
+
+  /** Den dag, opgaven oprettes: forfald minus varslingen. */
+  function gentagOprettes(r) {
+    if (!r || !isoDel(r.nextDue)) return null;
+    const dage = Math.max(0, Math.min(365, Math.round(Number(r.leadDays)) || 0));
+    return plusInterval(r.nextDue, -dage, 'day');
+  }
+
+  /**
+   * Tilstanden, listen sorterer og farver efter.
+   * `paused` · `open` (der staar en opgave) · `due` (oprettes ved naeste koersel)
+   * · `waiting` (venter paa sin dag).
+   */
+  function gentagTilstand(r, iDag, harAabenOpgave) {
+    if (r.paused) return 'paused';
+    if (harAabenOpgave) return 'open';
+    const fra = gentagOprettes(r);
+    return fra && fra <= iDag ? 'due' : 'waiting';
+  }
+
+  /** »Every 3 months · fixed schedule« - interfacet er engelsk. */
+  function gentagBeskriv(r) {
+    const { every, unit } = gentagRegel(r);
+    const s = every === 1 ? `Every ${unit}` : `Every ${every} ${unit}s`;
+    return s + (r.schedule === 'completion' ? ' · from completion' : ' · fixed schedule');
+  }
+
   return {
     parseVarighed, formatVarighed, formatDecimal, formatUr, parseTidsrum, placerVarighed,
     tidspunkt, afrund, minutterFraAndre, opret,
+    GENTAG_ENHEDER, plusInterval, gentagNaeste, gentagOprettes, gentagTilstand, gentagBeskriv,
   };
 }));
 
@@ -1806,6 +1895,7 @@
     ['week', 'week', ['uge', 'kalender', 'calendar']],
     ['projects', 'projects', ['projekter', 'projekt', 'project']],
     ['tags', 'tags', ['tag', 'maerkater', 'maerkat']],
+    ['recurring', 'recurring', ['gentagelser', 'gentagne', 'tilbagevendende', 'repeat']],
     ['report', 'report', ['rapport', 'ugerapport', 'timeseddel']],
     ['settings', 'settings', ['indstillinger']],
     ['guide', 'guide', ['vejledning', 'hjaelp', 'help']],
@@ -2578,7 +2668,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 43;
+const APP_VERSION = 44;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -2910,6 +3000,7 @@ const ICONS = {
   chevron: '<path d="M9 6l6 6-6 6"/>',
   kalender: '<rect x="4" y="5.5" width="16" height="14" rx="2"/><path d="M4 10h16M9 3.5v4M15 3.5v4"/>',
   tags: '<path d="M5 9.5h14M5 14.5h14M10.5 4.5L8.5 19.5M15.5 4.5l-2 15"/>',
+  gentag: '<path d="M17 3.5l3 3-3 3"/><path d="M4.5 11.5v-1a4 4 0 014-4H20"/><path d="M7 20.5l-3-3 3-3"/><path d="M19.5 12.5v1a4 4 0 01-4 4H4"/>',
   // Ordret de samme to stjerner som Sagu bruger, saa en markering ser ens ud
   // i de to apps, der staar aabne ved siden af hinanden.
   stjerne: '<path d="M12 3.8l2.5 5.1 5.6.8-4 4 .9 5.6-5-2.6-5 2.6.9-5.6-4-4 5.6-.8z"/>',
@@ -2929,6 +3020,7 @@ const VIEWS = [
   { id: 'week', label: 'Week', icon: 'kalender', group: 1 },
   { id: 'projects', label: 'Projects', icon: 'projects', group: 1 },
   { id: 'tags', label: 'Tags', icon: 'tags', group: 2 },
+  { id: 'recurring', label: 'Recurring', icon: 'gentag', group: 2 },
   { id: 'report', label: 'Report', icon: 'report', group: 2 },
   // group: 0 = staar IKKE i navigationen. Settings naas fra menuen paa
   // brugerknappen, hvor kontoen i forvejen bor - to indgange til det samme
@@ -2944,6 +3036,7 @@ const BESKRIVELSER = {
   today: 'What you have registered today, and what is running right now.',
   week: 'The week as a grid — drag in it to log time.',
   tags: 'Your labels, and how much carries each one.',
+  recurring: 'Tasks that come back on their own — every 3 months, every year — a few days before they are due.',
   projects: 'Estimate, budget and hours spent — per project.',
   report: 'Hours per project and task for a week you choose.',
   settings: 'Appearance, account and access.',
@@ -4035,6 +4128,7 @@ async function tegnSelveSiden(host) {
   if (state.view === 'projects') { await tegnProjekter(); return; }
   if (state.view === 'week') { await tegnKalender(); return; }
   if (state.view === 'tags') { await tegnTags(); return; }
+  if (state.view === 'recurring') { await tegnGentagelser(); return; }
   if (state.view === 'report') { await tegnRapport(); return; }
   if (state.view === 'guide') { host.innerHTML = sideGuide(); bindGuide(); return; }
   host.innerHTML = `<div class="page">
@@ -5392,6 +5486,7 @@ function opgaveRaekke(it, opt) {
     const tag = (state.tags || []).find((t) => t.id === id);
     if (tag) dele.push(`#${esc(tag.name)}`);
   }
+  if (it.recurringId) dele.push('<span title="Made by a recurring task">↻</span>');
   if ((it.links || []).length) dele.push(`${(it.links || []).length} link${it.links.length > 1 ? 's' : ''}`);
 
   // Forbrugt tid pr. opgave kommer fra serveren (som regner med beregn.js),
@@ -10228,4 +10323,233 @@ function kopierMedHaendelse(html, tekst) {
     document.removeEventListener('copy', lyt, true);
     felt.remove();
   }
+}
+
+/* ---- ph_gentagelser.js ---- */
+'use strict';
+/* tovo - gentagne opgaver (Recurring).
+ *
+ * En skabelon bliver til en opgave et antal dage foer sit forfald: »skift
+ * kodeord paa alle forbindelser hver 3. maaned«. Serveren goer arbejdet (ved
+ * opstart, hver time og naar en forekomst lukkes) - siden her viser planen og
+ * retter i den. Ingen datoregning her: naeste dato, oprettelsesdagen og
+ * tilstanden kommer fra beregn.js via serveren.
+ */
+
+const GENTAG_ENHED_NAVN = { day: 'days', week: 'weeks', month: 'months', year: 'years' };
+
+const GENTAG_TILSTAND = {
+  open: 'Task is open',
+  due: 'Being created',
+  waiting: 'Waiting',
+  paused: 'Paused',
+};
+
+async function tegnGentagelser() {
+  const host = document.getElementById('pageHost');
+  const d = await api('GET', '/api/v1/recurring');
+  const liste = d.recurring;
+
+  host.innerHTML = `<div class="page">
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h1>Recurring</h1>
+      <button class="btn" id="gtNy">${icon('plus', 15)} New recurring task</button>
+    </div>
+    <p class="lead">${esc(BESKRIVELSER.recurring)}</p>
+
+    ${liste.length ? `<div class="gentagliste">${liste.map(gentagRaekke).join('')}</div>`
+    : `<div class="empty"><p class="empty-title">Nothing recurring yet</p>
+      <p>Things you must remember now and then — change the passwords on every connection,
+      update the time sheet — go here. tovo puts them on your list a few days before they are due.</p></div>`}
+  </div>`;
+
+  document.getElementById('gtNy').addEventListener('click', () => aabnGentagelse(null));
+  host.querySelectorAll('[data-gentag]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      aabnGentagelse(liste.find((x) => x.id === el.dataset.gentag));
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target === el) aabnGentagelse(liste.find((x) => x.id === el.dataset.gentag));
+    });
+  });
+  host.querySelectorAll('[data-gtopgave]').forEach((el) => {
+    el.addEventListener('click', () => aabnOpgave(el.dataset.gtopgave));
+  });
+  host.querySelectorAll('[data-gtnu]').forEach((el) => {
+    el.addEventListener('click', () => opretGentagelseNu(el.dataset.gtnu));
+  });
+}
+
+function gentagRaekke(s) {
+  const projekt = state.projects.find((p) => p.id === s.projectId);
+  const dele = [esc(s.describe)];
+  if (projekt) dele.push(esc(projekt.name));
+  if (s.estimateMinutes) dele.push(`~${esc(tovoBeregn.formatVarighed(s.estimateMinutes))}`);
+
+  let naar;
+  if (s.state === 'paused') naar = 'Paused';
+  else if (s.task) {
+    naar = `Due ${esc(visDato(s.task.dueDate))}`;
+  } else {
+    naar = `Due ${esc(visDato(s.nextDue))} · on your list ${esc(visDato(s.createOn))}`;
+  }
+  const forsinket = s.task && s.task.dueDate && s.task.dueDate < state.today;
+
+  return `<div class="item-row gentag-raekke${s.paused ? ' dim' : ''}" tabindex="0" data-gentag="${esc(s.id)}">
+    <span class="gentag-ikon" aria-hidden="true">${icon('gentag', 16)}</span>
+    <div class="item-main">
+      <div class="item-title">${esc(s.title)}</div>
+      <div class="item-meta meta">${dele.join(' · ')}</div>
+      <div class="item-meta meta"><span class="${forsinket ? 'overdue' : ''}">${naar}</span>
+        ${s.lastDone ? ` · last done ${esc(visDato(s.lastDone))}` : ''}</div>
+    </div>
+    ${s.task
+    ? `<button class="btn small" data-gtopgave="${esc(s.task.id)}" title="Open the task">Open task</button>`
+    : (s.paused ? '' : `<button class="btn small" data-gtnu="${esc(s.id)}"
+        title="Put it on your list today instead of waiting">Create now</button>`)}
+  </div>`;
+}
+
+async function opretGentagelseNu(id) {
+  try {
+    const d = await api('POST', `/api/v1/recurring/${id}/now`);
+    await genindlaes();
+    toast(`“${d.created.title}” is on your list.`);
+  } catch (ex) { toast(ex.message); }
+}
+
+function aabnGentagelse(s) {
+  const ny = !s;
+  const r = s || { every: 3, unit: 'month', schedule: 'fixed', leadDays: 7, nextDue: '' };
+  const host = document.createElement('div');
+  host.className = 'modal';
+  host.innerHTML = `
+    <div class="modal-card" role="dialog" aria-label="${ny ? 'New recurring task' : 'Edit recurring task'}">
+      <h2>${ny ? 'New recurring task' : 'Edit recurring task'}</h2>
+      <label class="field"><span>Title</span>
+        <input class="input" id="gtTitel" placeholder="Change the passwords on every connection"
+          value="${esc(r.title || '')}"></label>
+
+      <div class="row gentag-plan">
+        <label class="field"><span>Every</span>
+          <input class="input" id="gtAntal" type="number" min="1" max="999" inputmode="numeric"
+            value="${esc(r.every || 1)}"></label>
+        <label class="field"><span>&nbsp;</span>
+          <select class="input" id="gtEnhed">
+            ${Object.entries(GENTAG_ENHED_NAVN).map(([k, v]) =>
+    `<option value="${k}"${r.unit === k ? ' selected' : ''}>${v}</option>`).join('')}
+          </select></label>
+        <label class="field" style="flex:1.4"><span>Next due</span>
+          <input class="input" id="gtDato" type="date" value="${esc(r.nextDue || '')}"></label>
+      </div>
+
+      <div class="field"><span>Count from</span>
+        <label class="radio"><input type="radio" name="gtPlan" value="fixed"${r.schedule !== 'completion' ? ' checked' : ''}>
+          the plan — the same rhythm no matter when you finish</label>
+        <label class="radio"><input type="radio" name="gtPlan" value="completion"${r.schedule === 'completion' ? ' checked' : ''}>
+          the day you finish it</label>
+      </div>
+
+      <div class="row gentag-varsel">
+        <label class="field"><span>Put it on the list</span>
+          <input class="input" id="gtVarsel" type="number" min="0" max="365" inputmode="numeric"
+            value="${esc(r.leadDays === undefined || r.leadDays === null ? 7 : r.leadDays)}"></label>
+        <span class="gentag-hint">days before it is due</span>
+      </div>
+
+      <div class="row">
+        <label class="field" style="flex:1.4"><span>Project</span>
+          <select class="input" id="gtProjekt">
+            <option value="">No project</option>
+            ${state.projects.map((p) => `<option value="${esc(p.id)}"${p.id === r.projectId ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
+          </select></label>
+        <label class="field" style="flex:1"><span>Estimate</span>
+          <input class="input" id="gtEst" placeholder="30m · 1t"
+            value="${esc(r.estimateMinutes ? tovoBeregn.formatVarighed(r.estimateMinutes) : '')}"></label>
+      </div>
+
+      <label class="field"><span>Notes</span>
+        <textarea class="input" id="gtNote" placeholder="Which connections, where the list lives …">${esc(r.note || '')}</textarea></label>
+
+      ${!ny && r.task ? `<p class="meta">The open task is due ${esc(visDato(r.task.dueDate))}. When you complete it,
+        the next one is planned.</p>` : ''}
+
+      <div class="modal-foot">
+        <button class="btn primary" id="gtGem" title="⌘↵ / Ctrl+↵">Save <span class="genvejstip">⌘↵</span></button>
+        <button class="btn" id="gtLuk">Cancel</button>
+        <span style="flex:1"></span>
+        ${ny ? '' : `<button class="btn" id="gtPause">${r.paused ? 'Resume' : 'Pause'}</button>
+          <button class="btn" id="gtSlet">Delete</button>`}
+      </div>
+    </div>`;
+  document.body.appendChild(host);
+  const luk = () => host.remove();
+  host.addEventListener('click', (e) => { if (e.target === host) luk(); });
+  host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
+  document.getElementById('gtLuk').addEventListener('click', luk);
+
+  const gem = async () => {
+    const val = (id) => document.getElementById(id).value;
+    const est = val('gtEst').trim();
+    const minutter = est ? tovoBeregn.parseVarighed(est) : null;
+    if (est && !minutter) { toast(`"${est}" is not a duration.`); return; }
+    const krop = {
+      title: val('gtTitel').trim(),
+      every: Number(val('gtAntal')) || 1,
+      unit: val('gtEnhed'),
+      nextDue: val('gtDato'),
+      schedule: host.querySelector('input[name="gtPlan"]:checked').value,
+      leadDays: val('gtVarsel') === '' ? 0 : Number(val('gtVarsel')),
+      projectId: val('gtProjekt') || null,
+      estimateMinutes: minutter,
+      note: val('gtNote'),
+    };
+    if (!krop.title) { toast('Give it a title.'); return; }
+    if (!krop.nextDue) { toast('Pick the next due date.'); return; }
+    try {
+      const d = ny ? await api('POST', '/api/v1/recurring', krop)
+        : await api('PATCH', `/api/v1/recurring/${r.id}`, krop);
+      luk();
+      await genindlaes();
+      toast(d.created ? `Saved — “${d.created.title}” is on your list now.` : 'Saved.');
+    } catch (ex) { toast(ex.message); }
+  };
+  document.getElementById('gtGem').addEventListener('click', gem);
+  bindGemGenvej(host, gem);
+
+  if (!ny) {
+    document.getElementById('gtPause').addEventListener('click', async () => {
+      try {
+        await api('PATCH', `/api/v1/recurring/${r.id}`, { paused: !r.paused });
+        luk();
+        await genindlaes();
+        toast(r.paused ? 'Resumed.' : 'Paused — no new tasks until you resume it.');
+      } catch (ex) { toast(ex.message); }
+    });
+    document.getElementById('gtSlet').addEventListener('click', async () => {
+      try {
+        await api('DELETE', `/api/v1/items/${r.id}`);
+        luk();
+        await genindlaes();
+        // Fortrydelsen laver planen igen med de samme felter. Den aabne
+        // opgave kender den ikke laengere - den staar paa listen alligevel.
+        toast(`“${r.title}” deleted. Tasks it already made stay on your list.`, {
+          label: 'Undo',
+          run: async () => {
+            try {
+              await api('POST', '/api/v1/recurring', {
+                title: r.title, note: r.note, every: r.every, unit: r.unit, schedule: r.schedule,
+                nextDue: r.nextDue, leadDays: r.leadDays, projectId: r.projectId,
+                estimateMinutes: r.estimateMinutes, paused: r.paused, tagIds: r.tagIds,
+                links: r.links, caseNumber: r.caseNumber, sectionId: r.sectionId, priority: r.priority,
+              });
+              await genindlaes();
+            } catch (ex2) { toast(ex2.message); }
+          },
+        });
+      } catch (ex) { toast(ex.message); }
+    });
+  }
+  document.getElementById('gtTitel').focus();
 }
