@@ -113,6 +113,16 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v45 — tovo holder sig selv opdateret
+
+- Starter eller stopper du et ur på én computer, dukker det op på den anden uden en
+  genindlæsning — også når den anden har sovet, har skiftet net eller har ligget i baggrunden.
+- Serveren tæller dine ændringer og sender tallet med i hver besked. Er fanen bagud (et vink
+  gik tabt, mens forbindelsen var nede), henter den selv.
+- En død forbindelse efter dvale opdages: er der tavst i 70 sekunder, forbinder tovo igen og
+  henter. Når fanen kommer frem eller vinduet får fokus, sker det med det samme.
+- Siden tegnes stadig ikke om, mens du skriver i et felt eller har en dialog åben.
+
 ### v44 — Recurring: opgaver, der kommer igen af sig selv
 
 - Ny side **Recurring** i menuen (`/recurring`). Her lægger du det, du skal huske en gang

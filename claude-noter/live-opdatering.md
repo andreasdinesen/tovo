@@ -24,6 +24,27 @@ serialiseres et sted mere — og så er der to steder, der skal blive enige.
   det, hånden er i gang med.
 
 
+## Tabte vink og døde forbindelser (v45)
+
+Andreas så det på to computere: et ur stoppet på den ene dukkede først op på den anden
+efter en genindlæsning. SSE alene var ikke nok, af to grunde:
+
+- **Et vink, der sendes, mens strømmen er nede, er væk.** EventSource genforbinder efter
+  dvale/netskift, men ved ikke, at den gik glip af noget. Kuren: en **ændringstæller pr.
+  bruger** i `live.js` (`rev`), der stiger ved hvert `varsko` — også uden lyttere. Den står i
+  hvert `hej` (ved tilslutning), hvert `hjerte` og hvert `aendring`, og i `/api/v1/state`
+  som `liveRev`. Fladen henter, når tallet er et andet end det, den sidst hentede ved.
+  I hukommelsen med vilje: efter en genstart er tallet 0 ≠ fladens, og den henter.
+- **En halvdød forbindelse efter dvale står stadig som OPEN.** Hjerteslaget var en
+  kommentarlinje, som EventSource ikke kan se. Nu er det en navngiven hændelse, og
+  **vagten** (hvert 15. s, kun mens fanen er synlig) river strømmen ned og åbner den igen,
+  hvis der har været tavst i 70 s — og henter state, men tegner kun om, hvis tælleren rykkede.
+  Det er også nettet under nettet, hvis en proxy holder SSE tilbage.
+- **Fanen kommer frem / vinduet får fokus / nettet er tilbage** (`vaagnLive`): har strømmen
+  været tavs i over 30 s, genforbindes der straks i stedet for at vente på vagten.
+
+Tælleren er brugerens EGEN — testen viser, at Andreas' ændring ikke rykker Bodils.
+
 ## Fra byggeplanen (v24, stadig gyldigt)
 
 - **SSE og ikke websockets.** Beskeden går kun én vej, og `text/event-stream` er det mindste,

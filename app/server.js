@@ -3018,6 +3018,9 @@ const ROUTES = {
          kunne se, at en lukket fane faktisk ryddes - ellers ville en leak
          foerst vise sig som en server, der aeder hukommelse over uger. */
       liveListeners: live.antal(auth.user.id),
+      /* Brugerens aendringstaeller (live.js). Fladen husker den og henter
+         igen, naar stroemmen melder et andet tal. */
+      liveRev: live.rev(auth.user.id),
     });
   },
 

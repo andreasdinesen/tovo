@@ -46,6 +46,18 @@
 function opret({ hjerteslagMs = 25000 } = {}) {
   /** userId -> Set(res) */
   const lyttere = new Map();
+  /**
+   * userId -> aendringstaeller. Stiger ved HVERT vink - ogsaa naar ingen
+   * lytter, for saa er det netop dét, en fane skal kunne opdage bagefter.
+   *
+   * Et vink, der sendes, mens en baerbar sover, naar aldrig frem; EventSource
+   * genforbinder, men ved ikke, at den gik glip af noget. Med taelleren i
+   * hvert hej og hvert hjerteslag kan fladen selv se, at den er bagud.
+   * I hukommelsen med vilje: efter en genstart staar den paa 0, fladen ser
+   * et andet tal end sit eget og henter - hvilket er rigtigt efter en genstart.
+   */
+  const revs = new Map();
+  const rev = (userId) => revs.get(userId) || 0;
 
   function tilslut(req, res, userId) {
     res.writeHead(200, {
@@ -60,14 +72,19 @@ function opret({ hjerteslagMs = 25000 } = {}) {
     /* `retry` er browserens ventetid foer den genforbinder. EventSource
        genforbinder selv; her siger vi bare hvor hurtigt. */
     res.write('retry: 3000\n\n');
+    /* Hej med taelleren: en fane, der genforbinder efter dvale, ser her,
+       om der skete noget, mens den var vaek. */
+    res.write(`event: hej\ndata: ${rev(userId)}\n\n`);
 
     if (!lyttere.has(userId)) lyttere.set(userId, new Set());
     lyttere.get(userId).add(res);
 
     const hjerte = setInterval(() => {
-      /* En kommentarlinje. Den naar frem gennem enhver proxy og bliver
-         ignoreret af EventSource - men holder forbindelsen i live. */
-      try { res.write(': hjerteslag\n\n'); } catch { luk(); }
+      /* En navngiven haendelse og ikke en kommentarlinje: en kommentar
+         holder forbindelsen i live, men fladen kan ikke SE den - og saa kan
+         den heller ikke opdage en halvdoed forbindelse efter dvale.
+         Taelleren er med, saa et tabt vink indhentes ved naeste slag. */
+      try { res.write(`event: hjerte\ndata: ${rev(userId)}\n\n`); } catch { luk(); }
     }, hjerteslagMs);
     /* Uden unref holder intervallet processen i live - i en test betyder det,
        at node --test aldrig slutter. */
@@ -101,9 +118,10 @@ function opret({ hjerteslagMs = 25000 } = {}) {
    * saa ryddes den, og resten faar stadig deres vink.
    */
   function varsko(userId, hvad = 'aendring') {
+    revs.set(userId, rev(userId) + 1);
     const saet = lyttere.get(userId);
     if (!saet || !saet.size) return 0;
-    const linje = `event: ${hvad}\ndata: ${Date.now()}\n\n`;
+    const linje = `event: ${hvad}\ndata: ${rev(userId)}\n\n`;
     let naaet = 0;
     for (const res of [...saet]) {
       try { res.write(linje); naaet += 1; } catch {
@@ -133,7 +151,7 @@ function opret({ hjerteslagMs = 25000 } = {}) {
     lyttere.clear();
   }
 
-  return { tilslut, varsko, antal, lukAlle };
+  return { tilslut, varsko, antal, lukAlle, rev };
 }
 
 module.exports = { opret };

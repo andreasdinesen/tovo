@@ -93,10 +93,32 @@ test('en anden brugers aendring vinker IKKE - heller ikke at der SKETE noget', a
      paa noget. Det er ikke hendes data, men det er stadig hans dag. */
   const sB = await lyt(b.klient);
   await vent(50);
+  const foer = (await b.klient.kald('GET', '/api/v1/state')).data.liveRev;
   await a.klient.kald('POST', '/api/v1/capture', { text: 'andreas arbejder' });
   await vent(250);
-  assert.deepEqual(sB.beskeder, [], `Bodil saa Andreas arbejde: ${JSON.stringify(sB.raa)}`);
+  /* Kun hendes eget hej ved tilslutningen - intet vink. */
+  assert.deepEqual([...new Set(sB.beskeder)], ['hej'], `Bodil saa Andreas arbejde: ${JSON.stringify(sB.raa)}`);
+  /* Og taelleren er HENDES: Andreas' aendring rykker den ikke. Ellers kunne
+     hun aflaese hans dag paa hjerteslagene. */
+  const efter = (await b.klient.kald('GET', '/api/v1/state')).data.liveRev;
+  assert.equal(efter, foer, 'Bodils taeller fulgte Andreas');
   sB.luk();
+});
+
+test('et vink, der gaar tabt, mens fanen er vaek, indhentes ved genforbindelsen', async () => {
+  /* Den baerbare sover: ingen lytter, mens timeren startes paa den anden
+     maskine. Naar den vaagner og genforbinder, skal hej-beskeden baere et
+     andet tal end det, fladen sidst hentede ved - saa ved den, at den er bagud. */
+  const foer = (await a.klient.kald('GET', '/api/v1/state')).data.liveRev;
+  await a.klient.kald('POST', '/api/v1/capture', { text: 'mens den sov' });
+  const s = await lyt(a.klient);
+  await vent(80);
+  const m = /event: hej\ndata: (\d+)/.exec(s.raa);
+  assert.ok(m, `intet hej: ${JSON.stringify(s.raa)}`);
+  assert.ok(Number(m[1]) > foer, `hej bar ${m[1]}, fladen havde ${foer}`);
+  const nu = (await a.klient.kald('GET', '/api/v1/state')).data.liveRev;
+  assert.equal(Number(m[1]), nu, 'hej og /state er uenige om taelleren');
+  s.luk();
 });
 
 test('en timer startet et sted vinker til de andre faner', async () => {
@@ -127,4 +149,21 @@ test('en lukket fane ryddes - ellers vokser serveren for hver genindlaesning', a
   await vent(250);
   const uden = await a.klient.kald('GET', '/api/v1/state');
   assert.equal(uden.data.liveListeners, 0, 'den lukkede fane blev liggende');
+});
+
+test('hjerteslaget er en haendelse med taelleren - ikke en kommentar', async () => {
+  /* En kommentarlinje kan EventSource ikke se, og saa kan fladen ikke
+     opdage en forbindelse, der doede under dvale. */
+  const { opret } = await import('../app/live.js');
+  const nav = opret({ hjerteslagMs: 20 });
+  const skrevet = [];
+  const res = { writeHead() {}, write: (t) => skrevet.push(t), end() {}, on() {} };
+  const req = { on() {} };
+  nav.varsko(7); nav.varsko(7);
+  const luk = nav.tilslut(req, res, 7);
+  await vent(60);
+  luk();
+  assert.ok(skrevet.includes('event: hej\ndata: 2\n\n'), JSON.stringify(skrevet));
+  assert.ok(skrevet.includes('event: hjerte\ndata: 2\n\n'), JSON.stringify(skrevet));
+  assert.equal(nav.rev(8), 0, 'en anden brugers taeller rykkede sig');
 });

@@ -5,7 +5,7 @@
    NB: interfacet er ENGELSK (som i doda - aeoeaa er besvaerligt at taste),
    men koden, kommentarerne og dokumenterne er dansk. */
 
-const APP_VERSION = 44;
+const APP_VERSION = 45;
 
 /* Mobilgraensen bor to steder: her og i style.css. Holdes de ikke i trit,
    folder menuknappen sidebaren sammen paa en iPad, hvor CSS'en tror den er
@@ -1256,7 +1256,18 @@ window.addEventListener('popstate', () => {
  * `EventSource` genforbinder selv, naar nettet blinker eller maskinen vaagner
  * - det er hele grunden til, at det er den og ikke en haandholdt socket.
  */
-const liveState = { kilde: null, ventende: null, forsoeg: null };
+const liveState = { kilde: null, ventende: null, forsoeg: null, vagt: null, sidst: 0, rev: null };
+
+/*
+ * Hvor laenge stroemmen maa vaere tavs, foer den regnes for doed. Serveren
+ * slaar hvert 25. sekund, saa 70 s er to tabte slag og lidt til.
+ *
+ * Det er dvalen, der kraever det: laaget lukkes, TCP-forbindelsen doer i den
+ * anden ende, og naar maskinen vaagner, staar EventSource stadig som OPEN -
+ * og lytter til ingenting. Saa saa man ikke en timer, der blev stoppet paa
+ * den anden computer, foer man trykkede opdater.
+ */
+const LIVE_TAVS_MS = 70000;
 
 /*
  * Maa siden tegnes om LIGE NU?
@@ -1273,11 +1284,15 @@ function maaTegneNu() {
   return true;
 }
 
-async function liveOpdater() {
+async function liveOpdater(kunHvisNyt = false) {
   /* Data hentes ALTID. Det er kun OPTEGNINGEN af siden, der kan vente:
      timerbjaelken og taellerne staar i skallen og maa gerne rykke sig, mens
      man skriver - det er dem, hele oevelsen handler om. */
+  const foer = liveState.rev;
   await hentState();
+  /* Vagtens sikkerhedshentning tegner kun om, hvis der faktisk ER noget
+     nyt - ellers ville siden blinke hvert 70. sekund for ingenting. */
+  if (kunHvisNyt && liveState.rev === foer) return;
   tegnTimerBjaelke();
   opdaterNav();
 
@@ -1293,30 +1308,84 @@ async function liveOpdater() {
   liveState.forsoeg = setTimeout(() => { liveOpdater(); }, 1500);
 }
 
-function startLive() {
-  if (liveState.kilde || !state.user || typeof EventSource === 'undefined') return;
+/*
+ * Hver besked fra serveren baerer brugerens aendringstaeller. Er den en
+ * anden end den, vi sidst hentede ved, er vi bagud - et vink kan vaere gaaet
+ * tabt, mens forbindelsen var nede - og saa hentes der.
+ */
+function liveBesked(e) {
+  liveState.sidst = Date.now();
+  const rev = Number(e && e.data);
+  if (!Number.isFinite(rev) || rev === liveState.rev) return;
+  /* Flere aendringer i streg (en import, en bulk) giver flere vink.
+     Vent et oejeblik og hent EN gang. */
+  clearTimeout(liveState.ventende);
+  liveState.ventende = setTimeout(() => { liveOpdater(); }, 250);
+}
+
+function aabnStroem() {
   const kilde = new EventSource('/api/v1/stream');
   liveState.kilde = kilde;
+  liveState.sidst = Date.now();
+  for (const navn of ['hej', 'hjerte', 'aendring']) kilde.addEventListener(navn, liveBesked);
+  /* Ingen genforbindelse i haanden ved en almindelig fejl: EventSource goer
+     det selv med den `retry`, serveren sendte. At lukke og aabne ved hver
+     fejl ville kappe dens tilbagetrapning over og give et stormloeb, naar
+     serveren er nede. Kun VAGTEN nedenfor river den ned - og hoejst hvert
+     70. sekund. */
+}
 
-  kilde.addEventListener('aendring', () => {
-    /* Flere aendringer i streg (en import, en bulk) giver flere vink.
-       Vent et oejeblik og hent EN gang. */
-    clearTimeout(liveState.ventende);
-    liveState.ventende = setTimeout(() => { liveOpdater(); }, 250);
-  });
+/*
+ * Vagten: er stroemmen tavs for laenge, rives den ned og aabnes igen - og
+ * staten hentes, saa intet gaar tabt, selv hvis en proxy holder stroemmen
+ * tilbage. Det sidste er nettet under nettet: virker SSE slet ikke, bliver
+ * tovo stadig opdateret, bare hvert 70. sekund i stedet for med det samme.
+ *
+ * Kun mens fanen er synlig. En skjult fane faar sin opdatering, naar den
+ * kommer frem igen (vaagnLive), og bruger ikke serveren imens.
+ */
+function liveVagt() {
+  if (!liveState.kilde || document.visibilityState !== 'visible') return;
+  if (Date.now() - liveState.sidst < LIVE_TAVS_MS) return;
+  liveState.kilde.close();
+  aabnStroem();
+  liveOpdater(true);
+}
 
-  /* Ingen genforbindelse i haanden: EventSource goer det selv med den
-     `retry`, serveren sendte. At lukke og aabne her ville kappe dens egen
-     tilbagetrapning over og give et stormloeb, naar serveren er nede. */
+/*
+ * Fanen kommer frem, vinduet faar fokus, eller nettet er tilbage.
+ * Er stroemmen frisk, er intet tabt. Har den vaeret tavs i mere end et par
+ * hjerteslag (dvale, et skjult vindue, et netskift), genforbindes der med det
+ * samme i stedet for at vente paa vagten - hej-beskeden fortaeller saa, om
+ * der skete noget imens.
+ */
+function vaagnLive() {
+  if (!liveState.kilde || document.visibilityState !== 'visible') return;
+  if (Date.now() - liveState.sidst < 30000 && liveState.kilde.readyState === 1) return;
+  liveState.kilde.close();
+  aabnStroem();
+}
+
+function startLive() {
+  if (liveState.kilde || !state.user || typeof EventSource === 'undefined') return;
+  aabnStroem();
+  liveState.vagt = setInterval(liveVagt, 15000);
 }
 
 function stopLive() {
   if (liveState.kilde) { liveState.kilde.close(); liveState.kilde = null; }
   clearTimeout(liveState.ventende);
   clearTimeout(liveState.forsoeg);
+  clearInterval(liveState.vagt);
   liveState.ventende = null;
   liveState.forsoeg = null;
+  liveState.vagt = null;
 }
+
+document.addEventListener('visibilitychange', vaagnLive);
+window.addEventListener('focus', vaagnLive);
+window.addEventListener('online', vaagnLive);
+window.addEventListener('pageshow', vaagnLive);
 
 async function genindlaes() {
   await hentState();
@@ -1340,6 +1409,9 @@ async function hentState() {
     // Den koerende timer foelger med hvert state-kald, saa bjaelken er rigtig
     // i enhver visning - ogsaa hvis timeren blev startet fra en anden fane.
     timerState.data = d.timer || null;
+    // Den taeller, denne state svarer til. Melder stroemmen et andet tal,
+    // er der sket noget siden (startLive).
+    if (Number.isFinite(d.liveRev)) liveState.rev = d.liveRev;
     tegnTimerBjaelke();
     if (d.global) state.config.allowRegistration = d.global.allowRegistration;
   } catch (ex) {
