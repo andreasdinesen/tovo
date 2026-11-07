@@ -860,10 +860,12 @@ async function aabnOpgave(id) {
   let it;
   let kommentarer = [];
   let startLink = null;
+  let skabelon = null;
   try {
     const d = await api('GET', `/api/v1/items/${id}`);
     it = d.item;
     startLink = d.link;
+    skabelon = d.recurring || null;
     kommentarer = (await api('GET', `/api/v1/tasks/${id}/comments`)).comments;
   } catch (ex) { toast(ex.message); return; }
 
@@ -906,7 +908,7 @@ async function aabnOpgave(id) {
 
       <div class="meta">${esc(projekt ? projekt.name : 'No project')}</div>
 
-      <label class="field" style="margin-top:12px"><span>Repeats</span>
+      ${skabelon && !it.recurrenceRule ? skabelonFeltHtml(skabelon) : `<label class="field" style="margin-top:12px"><span>Repeats</span>
         <input class="input" id="dGentag" placeholder="every monday at 9 · every 2 weeks · every! friday"
           value="${esc(it.recurrenceRule ? tovoParse.beskrivGentagelse(it.recurrenceRule).split(' · ')[0] : '')}"></label>
       <p class="meta">${it.recurrenceRule
@@ -916,7 +918,7 @@ async function aabnOpgave(id) {
         one, and the hours you log add up on each occurrence separately.
         <code>every!</code> counts from when you finish, not from the plan.</p>
       ${it.recurrenceRule ? `<div class="row"><button class="linkbtn" id="dStopGentag">Stop repeating</button>
-        <span class="meta">The task stays — only the rule goes away.</span></div>` : ''}
+        <span class="meta">The task stays — only the rule goes away.</span></div>` : ''}`}
       ${it.dueDate ? `<div class="row" style="margin-top:8px">
         <button class="btn" id="dIcs">Add to calendar</button>
         <span class="meta">One-off .ics — the feed in Settings keeps everything in sync.</span>
@@ -964,7 +966,7 @@ async function aabnOpgave(id) {
       </div>
     </div>`;
   document.body.appendChild(host);
-  bindDetalje(host, it, startLink);
+  bindDetalje(host, it, startLink, skabelon);
 }
 
 /**
@@ -998,7 +1000,7 @@ function linkHtml(l) {
   return `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(l.label || l.url)}</a>`;
 }
 
-function bindDetalje(host, it, startLink) {
+function bindDetalje(host, it, startLink, skabelon) {
   const luk = () => { host.remove(); detailState.id = null; };
   bindStjerneKnapper(host);
 
@@ -1060,6 +1062,11 @@ function bindDetalje(host, it, startLink) {
   document.getElementById('dClose').addEventListener('click', luk);
   host.addEventListener('keydown', (e) => { if (e.key === 'Escape') luk(); });
 
+  const tilSkabelon = document.getElementById('dSkabelon');
+  if (tilSkabelon) {
+    tilSkabelon.addEventListener('click', () => { luk(); aabnGentagelse(skabelon); });
+  }
+
   const stopGentag = document.getElementById('dStopGentag');
   if (stopGentag) {
     stopGentag.addEventListener('click', async () => {
@@ -1085,8 +1092,11 @@ function bindDetalje(host, it, startLink) {
 
     // Gentagelsen tolkes af den SAMME parser som `!every …` i soegefeltet.
     // To tolkninger ville betyde, at det samme skrevne kunne give to regler.
-    const raaRegel = document.getElementById('dGentag').value.trim();
-    if (raaRegel) {
+    // Er opgaven lavet af en Recurring-skabelon, er feltet erstattet af
+    // skabelonens regel - saa sendes recurrenceRule slet ikke (PATCH fletter).
+    const regelFelt = document.getElementById('dGentag');
+    const raaRegel = regelFelt ? regelFelt.value.trim() : '';
+    if (!regelFelt) { /* skabelonen styrer gentagelsen */ } else if (raaRegel) {
       const regel = tovoParse.tolkGentagelse(raaRegel);
       if (!regel) {
         toast(`I did not understand "${raaRegel}". Try "every monday at 9" or "every 2 weeks".`);

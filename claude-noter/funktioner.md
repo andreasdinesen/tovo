@@ -90,6 +90,8 @@ projekt i stedet for at love et nyt.
   - Undo (genåbning) bruger `undo` på skabelonen og sletter den nye forekomst, men kun hvis
     den er åben og uden tidsposter.
   - Opgaven bærer `recurringId` (på FELTER.task) og vises med ↻. Kopiering tager den ikke med.
+  - Opgaveruden viser skabelonens regel (`GET /api/v1/items/:id` sender `recurring` = `visSkabelon`)
+    i stedet for `!every`-feltet, med »Edit recurring task«. Uden feltet sendes `recurrenceRule` ikke.
   - Tests: `tests/gentagelser.test.mjs` (dato, én åben, undo, spring over, pause, isolation).
   - Ikke gjort: MCP-værktøj til skabelonerne, tags i dialogen (feltet gemmes, hvis det sendes).
 - **Gentagelser:** kun én åben forekomst; den næste materialiseres, når den nuværende lukkes,

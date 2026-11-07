@@ -3816,9 +3816,13 @@ const MOENSTRE = [
       // at id'et findes.
       if (!item) { apiFejl(res, 404, 'not_found', 'No such item.'); return; }
       const rad = item.kind === 'task' ? hentStartTokenFor(auth.user.id, item.id) : null;
+      // Skabelonen bag en Recurring-forekomst, saa ruden kan vise reglen.
+      // hentItem filtrerer selv paa bruger; en slettet skabelon giver null.
+      const skabelon = item.recurringId ? hentItem(auth.user.id, item.recurringId) : null;
       sendJson(res, 200, {
         item,
         link: rad ? { token: rad.token, mode: rad.mode, url: `${basisUrl(req)}/s/${rad.token}` } : null,
+        recurring: skabelon && skabelon.kind === 'recurring' ? visSkabelon(auth.user.id, skabelon) : null,
       });
     },
   },

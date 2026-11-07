@@ -2595,3 +2595,4 @@ table.timeseddel td:nth-child(2) { max-width: 22rem; }
 .gentag-hint { font-size: 14px; color: var(--muted); padding-bottom: 26px; }
 .radio { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 14px; cursor: pointer; }
 .radio input[type="radio"] { appearance: auto; -webkit-appearance: auto; flex: none; width: 16px; height: 16px; margin: 0; }
+.gentag-regel { display: flex; align-items: center; gap: 8px; color: var(--muted); cursor: default; }

@@ -225,3 +225,21 @@ function aabnGentagelse(s) {
   }
   document.getElementById('gtTitel').focus();
 }
+
+/*
+ * Opgaveruden for en forekomst: reglen kommer fra skabelonen, ikke fra
+ * `recurrenceRule`, saa feltet viser skabelonens plan (laest, ikke redigerbar)
+ * og en vej ind til skabelonen. `describe` er regnet af beregn.js paa serveren.
+ */
+function skabelonFeltHtml(s) {
+  const varsel = Number(s.leadDays) || 0;
+  const dele = [varsel === 0 ? 'on your list the day it is due'
+    : `on your list ${varsel} day${varsel === 1 ? '' : 's'} before it is due`];
+  if (s.paused) dele.push('paused');
+  else if (!s.task && s.nextDue) dele.push(`next one due ${esc(visDato(s.nextDue))}`);
+  return `<div class="field" style="margin-top:12px"><span>Repeats</span>
+      <div class="input gentag-regel" title="Set by the recurring task">${icon('gentag', 15)} ${esc(s.describe)}</div></div>
+    <p class="meta">Made by the recurring task “${esc(s.title)}” — ${dele.join(' · ')}.
+      Change the rhythm there, not on the task.</p>
+    <div class="row"><button class="linkbtn" id="dSkabelon">Edit recurring task</button></div>`;
+}

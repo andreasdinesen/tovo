@@ -113,6 +113,14 @@ videre panelets »Opdater tovo«.
 
 ## Versionshistorik
 
+### v46 — se gentagelsen på en Recurring-opgave
+
+- En opgave lavet af en skabelon på **Recurring** viser nu skabelonens regel i feltet
+  **Repeats** (fx »Every week · fixed schedule«) i stedet for et tomt felt.
+- Under feltet står, hvilken skabelon der lavede opgaven, og hvor mange dage før forfald den
+  kommer på listen. **Edit recurring task** åbner skabelonen, hvor rytmen rettes.
+- At gemme opgaven rører ikke gentagelsen.
+
 ### v45 — tovo holder sig selv opdateret
 
 - Starter eller stopper du et ur på én computer, dukker det op på den anden uden en
